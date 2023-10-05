@@ -1,0 +1,62 @@
+from darts.models import AutoARIMA
+from spinesUtils import generate_function_kwargs
+
+from PipelineTS.base import DartsForecastMixin, StatisticModelMixin, IntervalEstimationMixin
+
+
+class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimationMixin):
+    def __init__(
+            self,
+            time_col,
+            target_col,
+            start_p=8,
+            max_p=12,
+            start_q=1,
+            seasonal=False,
+            quantile=0.9,
+            seasonal_length=12,
+            n_jobs=-1,
+            **darts_auto_arima_configs
+    ):
+        super().__init__()
+
+        self.all_configs['model_configs'] = generate_function_kwargs(
+            AutoARIMA,
+            start_p=start_p,
+            max_p=max_p,
+            start_q=start_q,
+            seasonal=seasonal,
+            seasonal_length=seasonal_length,
+            n_jobs=n_jobs,
+            **darts_auto_arima_configs
+        )
+
+        self.model = AutoARIMA(**self.all_configs['model_configs'])
+
+        self.all_configs.update(
+            {
+                'quantile': quantile,
+                'time_col': time_col,
+                'target_col': target_col,
+                'lower_limit': 0,
+                'higher_limit': 0,
+            }
+        )
+
+    def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
+        super().fit(
+            data,
+            convert_dataframe_kwargs=convert_dataframe_kwargs,
+            fit_kwargs=fit_kwargs
+        )
+
+        self.all_configs['lower_limit'], self.all_configs['higher_limit'] = \
+            self.calculate_confidence_interval(data, estimator=AutoARIMA, cv=cv, fit_kwargs=fit_kwargs)
+
+        return self
+
+    def predict(self, n, **kwargs):
+        res = super().predict(n, **kwargs)
+        res = self.interval_predict(res)
+
+        return res
