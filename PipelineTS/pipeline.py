@@ -127,6 +127,7 @@ class PipelineTS:
                 axis=0, ignore_index=True)
 
         self.leader_board = res.sort_values(by='metric', ascending=self.metric_less_is_better).reset_index(drop=True)
+        self.leader_board.columns.name = 'Leaderboard'
         return self.leader_board
 
     def predict(self, model, n):
