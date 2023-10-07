@@ -122,12 +122,15 @@ class StatisticModelMixin:
 
 
 class NNModelMixin:
-    def __init__(self):
+    def __init__(self, device=None):
         self.all_configs = {'model_configs': {}}
-        if sys.platform == 'darwin':
-            self.device = 'cpu'
+        if device is None:
+            if sys.platform == 'darwin':
+                self.device = 'cpu'
+            else:
+                self.device = 'auto'
         else:
-            self.device = 'auto'
+            self.device = device
 
 
 class IntervalEstimationMixin:

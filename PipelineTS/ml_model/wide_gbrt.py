@@ -2,7 +2,6 @@ from copy import deepcopy
 
 import numpy as np
 import pandas as pd
-import scipy.stats as sp
 from sklearn.model_selection import TimeSeriesSplit
 from spinesTS.ml_model import (
     GBRTPreprocessing,
@@ -167,15 +166,16 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         np.ndarray, which has 2 dims
 
         """
+
         assert isinstance(n, int)
         assert x.ndim == 2
 
         current_res = self.model.predict(x)
 
         if n is None:
-            return current_res
+            return current_res.squeeze().tolist()
         elif n <= current_res.shape[1]:
-            return current_res[:, :n]
+            return current_res[-1][:n].tolist()
         else:
             res = current_res.squeeze().tolist()
             last_data = self.last_lags_dataframe
@@ -193,18 +193,18 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
                 last_dt = last_data[self.all_configs['time_col']].max()
 
-                x = pd.DataFrame(
+                to_predict_x = pd.DataFrame(
                     self._data_preprocess(last_data, 'predict')
                 ).iloc[-1:, :]
 
-                current_res = self.model.predict(x).squeeze()
+                current_res = self.model.predict(to_predict_x).squeeze()
                 res.append(current_res[0])
 
             return res
 
     def predict(self, n):
         x = self.x.values
-        res = self._extend_predict(x, n) # list
+        res = self._extend_predict(x, n)  # list
         assert len(res) == n
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
         res[self.all_configs['time_col']] = \

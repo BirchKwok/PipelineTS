@@ -36,8 +36,9 @@ class NLinearModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             pl_trainer_kwargs=None,
             quantile=0.9,
             random_state=None,
+            accelerator='auto'
     ):
-        super().__init__()
+        super().__init__(device=accelerator)
 
         if pl_trainer_kwargs is not None and 'accelerator' not in pl_trainer_kwargs:
             pl_trainer_kwargs.update({'accelerator': self.device})
