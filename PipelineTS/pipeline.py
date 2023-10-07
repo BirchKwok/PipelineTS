@@ -4,8 +4,10 @@ from spinesUtils.asserts import augmented_isinstance
 from spinesUtils.utils import Logger
 import pandas as pd
 
-from PipelineTS.statistic_model import ProphetModel
 
+# TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
+# TODO: 模型依次对数据进行预测，并将结果进行评估，默认评价函数为MAE和WMAPE，评价函数可选
+# TODO: 输出预测模型评价结果，按评价结果排序
 
 class BasePipeline:
     @ParameterTypeAssert({

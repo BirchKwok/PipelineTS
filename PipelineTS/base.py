@@ -2,7 +2,6 @@ import sys
 
 from spinesUtils.asserts import *
 import numpy as np
-import scipy.stats as sp
 from sklearn.model_selection import TimeSeriesSplit
 from copy import deepcopy
 
@@ -161,24 +160,22 @@ class IntervalEstimationMixin:
 
             res = model.predict(len(test_v)).pd_dataframe()
 
-            residuals.extend(np.abs(res[self.all_configs['target_col']].values - test_v).tolist())
+            error_rate = np.abs((res[self.all_configs['target_col']].values - test_v) / test_v)
+            error_rate = np.where((error_rate == np.inf) | (error_rate == np.nan), 0., error_rate)
 
-        sample_mean = np.mean(residuals)
-        sample_std = np.std(residuals)
+            residuals.extend(error_rate.tolist())
 
-        n = len(residuals)
-        # 使用正态分布的累积分布函数的逆函数（ppf）计算出临界值（crit_value），用于计算置信区间
-        z_score = sp.norm.ppf(self.all_configs['quantile'])
-        lower_limit = sample_mean - (z_score * (sample_std / np.sqrt(n)))
-        higher_limit = sample_mean + (z_score * (sample_std / np.sqrt(n)))
+        quantile = np.percentile(residuals, self.all_configs['quantile'])
+        if isinstance(quantile, (list, np.ndarray)):
+            quantile = quantile[0]
 
-        return abs(lower_limit), abs(higher_limit)
+        return quantile
 
     def interval_predict(self, res):
         res[f"{self.all_configs['target_col']}_lower"] = \
-            res[self.all_configs['target_col']].values - self.all_configs['lower_limit']
+            res[self.all_configs['target_col']].values * (1 - self.all_configs['quantile_error'])
         res[f"{self.all_configs['target_col']}_upper"] = \
-            res[self.all_configs['target_col']].values + self.all_configs['higher_limit']
+            res[self.all_configs['target_col']].values * (1 + self.all_configs['quantile_error'])
 
         chosen_cols = [
             self.all_configs['time_col'],

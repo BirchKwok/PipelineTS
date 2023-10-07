@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import numpy as np
 import pandas as pd
 import scipy.stats as sp
@@ -28,6 +30,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             moving_avg_n=0,
             extend_daily_target_features=True,
             use_standard_scaler=True,
+            linear_tree=False,
             **lightgbm_model_configs
     ):
         super().__init__()
@@ -36,10 +39,12 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             LGBMRegressor,
             n_estimators=n_estimators,
             random_state=random_state,
+            linear_tree=linear_tree,
             **lightgbm_model_configs
         )
 
         self.last_dt = None
+        self.last_lags_dataframe = None
 
         self.all_configs.update(
             {
@@ -47,8 +52,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'lower_limit': 0,
-                'higher_limit': 0,
+                'quantile_error': 0,
                 'differential_n': differential_n,
                 'moving_avg_n': moving_avg_n,
                 'extend_daily_target_features': extend_daily_target_features,
@@ -74,18 +78,18 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
     def _define_model(self):
         if self.all_configs['use_standard_scaler']:
             model = Pipeline([
-                        ('scaler', StandardScaler()),
-                        ('estimator', MultiOutputRegressor(
-                            LGBMRegressor(**self.all_configs['model_configs'])
-                        ))
-                    ])
+                ('scaler', StandardScaler()),
+                ('estimator', MultiOutputRegressor(
+                    LGBMRegressor(**self.all_configs['model_configs'])
+                ))
+            ])
         else:
             model = Pipeline([
-                        ('scaler', MinMaxScaler()),
-                        ('estimator', MultiOutputRegressor(
-                            LGBMRegressor(**self.all_configs['model_configs'])
-                        ))
-                    ])
+                ('scaler', MinMaxScaler()),
+                ('estimator', MultiOutputRegressor(
+                    LGBMRegressor(**self.all_configs['model_configs'])
+                ))
+            ])
 
         return model
 
@@ -117,22 +121,22 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             model = self._define_model()
 
             model.fit(train_x, train_y, eval_set=None, **fit_kwargs)
-            res = model.predict(test_x)
+            res = model.predict(test_x).flatten()
+            test_y = test_y.values.flatten()
+            error_rate = np.abs((test_y - res) / test_y)
+            error_rate = np.where((error_rate == np.inf) | (error_rate == np.nan), 0., error_rate)
 
-            residuals.append(np.mean(np.abs(test_y - res)))
+            residuals.extend(error_rate.tolist())
 
-        sample_mean = np.mean(residuals)
-        sample_std = np.std(residuals)
+        quantile = np.percentile(residuals, self.all_configs['quantile'])
 
-        n = len(residuals)
-        # 使用正态分布的累积分布函数的逆函数（ppf）计算出临界值（crit_value），用于计算置信区间
-        z_score = sp.norm.ppf(self.all_configs['quantile'])
-        lower_limit = sample_mean - (z_score * (sample_std / np.sqrt(n)))
-        higher_limit = sample_mean + (z_score * (sample_std / np.sqrt(n)))
-
-        return abs(lower_limit), abs(higher_limit)
+        return quantile
 
     def fit(self, data, cv=5, fit_kwargs=None):
+        data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
+
+        self.last_lags_dataframe = data.iloc[-(2 * self.all_configs['lags'] + 1):, :]
+
         if fit_kwargs is None:
             fit_kwargs = {}
 
@@ -145,18 +149,66 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
         self.model.fit(x, y, eval_set=None, **fit_kwargs)
 
-        self.all_configs['lower_limit'], self.all_configs['higher_limit'] = \
+        self.all_configs['quantile_error'] = \
             self.calculate_confidence_interval_gbrt(data, cv=cv, fit_kwargs=fit_kwargs)
 
         return self
 
+    def _extend_predict(self, x, n):
+        """Extrapolation prediction.
+
+        Parameters
+        ----------
+        x: to_predict data, must be 2 dims data
+        n: predict steps, must be int
+
+        Returns
+        -------
+        np.ndarray, which has 2 dims
+
+        """
+        assert isinstance(n, int)
+        assert x.ndim == 2
+
+        current_res = self.model.predict(x)
+
+        if n is None:
+            return current_res
+        elif n <= current_res.shape[1]:
+            return current_res[:, :n]
+        else:
+            res = current_res.squeeze().tolist()
+            last_data = self.last_lags_dataframe
+            last_data[self.all_configs['time_col']] = pd.to_datetime(last_data[self.all_configs['time_col']])
+
+            last_dt = deepcopy(self.last_dt)
+            for i in range(n - self.all_configs['lags']):
+                tmp_data = pd.DataFrame(columns=[self.all_configs['time_col'], self.all_configs['target_col']])
+                tmp_data[self.all_configs['time_col']] = (last_dt +
+                                                          pd.to_timedelta(range(self.all_configs['lags'] + 1),
+                                                                          unit='D'))[1:]
+
+                tmp_data[self.all_configs['target_col']] = res[-self.all_configs['lags']:]
+                last_data = pd.concat((last_data.iloc[1:, :], tmp_data.iloc[:1, :]), axis=0)
+
+                last_dt = last_data[self.all_configs['time_col']].max()
+
+                x = pd.DataFrame(
+                    self._data_preprocess(last_data, 'predict')
+                ).iloc[-1:, :]
+
+                current_res = self.model.predict(x).squeeze()
+                res.append(current_res[0])
+
+            return res
+
     def predict(self, n):
         x = self.x.values
-        res = self.model.extend_predict(x, n).squeeze()  # numpy.ndarray
+        res = self._extend_predict(x, n) # list
         assert len(res) == n
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
         res[self.all_configs['time_col']] = \
-            self.last_dt + pd.to_timedelta(range(res.index.shape[0]+1), unit='D')[1:]
+            self.last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

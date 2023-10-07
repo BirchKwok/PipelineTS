@@ -1,10 +1,13 @@
-import torch
-from torch import nn
+import logging
 
+import torch
 from darts.models.forecasting.tcn_model import TCNModel as tcn
 from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
+
+logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
+logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
 
 
 class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
@@ -30,6 +33,8 @@ class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             n_epochs=100,
             nr_epochs_val_period=1,
             add_encoders=None,
+            enable_progress_bar=False,
+            enable_model_summary=False,
             pl_trainer_kwargs=None,
             quantile=0.9,
             random_state=None,
@@ -40,6 +45,11 @@ class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             pl_trainer_kwargs.update({'accelerator': self.device})
         elif pl_trainer_kwargs is None:
             pl_trainer_kwargs = {'accelerator': self.device}
+
+        if 'enable_progress_bar' not in pl_trainer_kwargs:
+            pl_trainer_kwargs.update({'enable_progress_bar': enable_progress_bar})
+        if 'enable_model_summary' not in pl_trainer_kwargs:
+            pl_trainer_kwargs.update({'enable_model_summary': enable_model_summary})
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             tcn,
@@ -72,13 +82,15 @@ class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
+                'enable_progress_bar': enable_progress_bar,
+                'enable_model_summary': enable_model_summary
             }
         )
 
     def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
-        self.all_configs['lower_limit'], self.all_configs['higher_limit'] = \
+        self.all_configs['quantile_error'] = \
             self.calculate_confidence_interval(
                 data, estimator=tcn, cv=cv, fit_kwargs=fit_kwargs
             )
@@ -87,7 +99,8 @@ class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
 
     def predict(self, n, **kwargs):
         res = super().predict(n, predict_likelihood_parameters=False, **kwargs)
+        res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
 
-        return self.rename_prediction(res)
+        return res

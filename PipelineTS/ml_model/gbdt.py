@@ -151,21 +151,21 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'lower_limit': 0,
-                'higher_limit': 0
+                'quantile_error': 0
             }
         )
 
     def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
-        self.all_configs['lower_limit'], self.all_configs['higher_limit'] = \
+        self.all_configs['quantile_error'] = \
             self.calculate_confidence_interval(data, estimator=XGB, cv=cv, fit_kwargs=fit_kwargs)
 
         return self
 
     def predict(self, n, **kwargs):
         res = self.model.predict(n, **kwargs).pd_dataframe()
+        res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
 
@@ -210,21 +210,21 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'lower_limit': 0,
-                'higher_limit': 0
+                'quantile_error': 0
             }
         )
 
     def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
-        self.all_configs['lower_limit'], self.all_configs['higher_limit'] = \
+        self.all_configs['quantile_error'] = \
             self.calculate_confidence_interval(data, estimator=RF, cv=cv, fit_kwargs=fit_kwargs)
 
         return self
 
     def predict(self, n, **kwargs):
         res = self.model.predict(n, **kwargs).pd_dataframe()
+        res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
 

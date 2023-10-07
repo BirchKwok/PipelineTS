@@ -1,7 +1,14 @@
+import logging
+
 from prophet import Prophet
 from spinesUtils import generate_function_kwargs
 
 from PipelineTS.base import StatisticModelMixin
+
+logger = logging.getLogger('cmdstanpy')
+logger.addHandler(logging.NullHandler())
+logger.propagate = False
+logger.setLevel(logging.CRITICAL)
 
 
 class ProphetModel(StatisticModelMixin):

@@ -38,8 +38,7 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'lower_limit': 0,
-                'higher_limit': 0,
+                'quantile_error': 0
             }
         )
 
@@ -50,13 +49,14 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
             fit_kwargs=fit_kwargs
         )
 
-        self.all_configs['lower_limit'], self.all_configs['higher_limit'] = \
+        self.all_configs['quantile_error'] = \
             self.calculate_confidence_interval(data, estimator=AutoARIMA, cv=cv, fit_kwargs=fit_kwargs)
 
         return self
 
     def predict(self, n, **kwargs):
         res = super().predict(n, **kwargs)
+        res = self.rename_prediction(res)
         res = self.interval_predict(res)
 
         return res
