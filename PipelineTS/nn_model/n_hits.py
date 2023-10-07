@@ -41,7 +41,7 @@ class NHitsModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             pl_trainer_kwargs=None,
             quantile=0.9,
             random_state=None,
-            accelerator='auto'
+            accelerator=None
     ):
         super().__init__(device=accelerator)
         if pl_trainer_kwargs is not None and 'accelerator' not in pl_trainer_kwargs:

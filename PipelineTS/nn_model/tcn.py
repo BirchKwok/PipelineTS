@@ -38,7 +38,7 @@ class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             pl_trainer_kwargs=None,
             quantile=0.9,
             random_state=None,
-            accelerator='auto'
+            accelerator=None
     ):
         super().__init__(device=accelerator)
 
