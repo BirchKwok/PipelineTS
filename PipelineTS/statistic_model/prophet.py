@@ -1,5 +1,7 @@
 import logging
+import random
 
+import numpy as np
 from prophet import Prophet
 from spinesUtils import generate_function_kwargs
 
@@ -16,8 +18,10 @@ class ProphetModel(StatisticModelMixin):
             self,
             time_col,
             target_col,
+            lags=None,
             country_holidays=None,
             quantile=0.9,
+            random_state=0,
             **prophet_configs
     ):
         super().__init__()
@@ -34,8 +38,13 @@ class ProphetModel(StatisticModelMixin):
         self.all_configs.update({
             'quantile': quantile,
             'time_col': time_col,
-            'target_col': target_col
+            'target_col': target_col,
+            'random_state': random_state,
+            'lags': lags,  # meanness, but only to follow coding conventions
         })
+
+        random.seed(random_state)
+        np.random.seed(random_state)
 
     @staticmethod
     def _prophet_preprocessing(df, time_col, target_col):
