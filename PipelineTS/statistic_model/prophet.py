@@ -1,11 +1,11 @@
 import logging
-import random
 
 import numpy as np
 from prophet import Prophet
 from spinesUtils import generate_function_kwargs
+from sklearn.model_selection import TimeSeriesSplit
 
-from PipelineTS.base import StatisticModelMixin
+from PipelineTS.base import StatisticModelMixin, IntervalEstimationMixin
 
 logger = logging.getLogger('cmdstanpy')
 logger.addHandler(logging.NullHandler())
@@ -13,7 +13,7 @@ logger.propagate = False
 logger.setLevel(logging.CRITICAL)
 
 
-class ProphetModel(StatisticModelMixin):
+class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
     def __init__(
             self,
             time_col,
@@ -28,7 +28,6 @@ class ProphetModel(StatisticModelMixin):
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             Prophet,
-            interval_width=quantile,
             holidays=country_holidays,
             **prophet_configs
         )
@@ -37,14 +36,12 @@ class ProphetModel(StatisticModelMixin):
 
         self.all_configs.update({
             'quantile': quantile,
+            'quantile_error': 0,
             'time_col': time_col,
             'target_col': target_col,
-            'random_state': random_state,
+            'random_state': random_state,  # meanness, but only to follow coding conventions
             'lags': lags,  # meanness, but only to follow coding conventions
         })
-
-        random.seed(random_state)
-        np.random.seed(random_state)
 
     @staticmethod
     def _prophet_preprocessing(df, time_col, target_col):
@@ -54,23 +51,65 @@ class ProphetModel(StatisticModelMixin):
 
         return df_
 
-    def fit(self, data, **kwargs):
+    def fit(self, data, freq='D', cv=5, **kwargs):
         data = self._prophet_preprocessing(data, self.all_configs['time_col'], self.all_configs['target_col'])
         self.model.fit(data, **kwargs)
+
+        self.all_configs['quantile_error'] = \
+            self.calculate_confidence_interval_prophet(data, cv=cv, fit_kwargs=kwargs)
         return self
 
+    def calculate_confidence_interval_prophet(self, data, cv=5, freq='D', fit_kwargs=None):
+        if fit_kwargs is None:
+            fit_kwargs = {}
+
+        tscv = TimeSeriesSplit(n_splits=cv)
+
+        data = data[['ds', 'y']]
+
+        residuals = []
+
+        for (train_index, test_index) in tscv.split(data):
+            train_ds = data.iloc[train_index, :]
+
+            test_v = data['y'].iloc[test_index].values
+            model = Prophet(**self.all_configs['model_configs'])
+
+            model.fit(train_ds, **fit_kwargs)
+
+            res = model.predict(
+                self.model.make_future_dataframe(
+                    periods=len(test_v),
+                    freq=freq,
+                    include_history=False,
+                ))[['ds', 'yhat']]
+
+            error_rate = np.abs((res['yhat'].values - test_v) / test_v)
+            error_rate = np.where((error_rate == np.inf) | (error_rate == np.nan), 0., error_rate)
+
+            residuals.extend(error_rate.tolist())
+
+        quantile = np.percentile(residuals, self.all_configs['quantile'])
+        if isinstance(quantile, (list, np.ndarray)):
+            quantile = quantile[0]
+
+        return quantile
+
     def predict(self, num_days, freq='D', include_history=False):
-        return self.model.predict(
+        res = self.model.predict(
             self.model.make_future_dataframe(
                 periods=num_days,
                 freq=freq,
                 include_history=include_history,
             )
-        )[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].rename(
+        )[['ds', 'yhat']].rename(
             columns={
                 'ds': self.all_configs['time_col'],
                 'yhat': self.all_configs['target_col'],
-                'yhat_lower': f"{self.all_configs['target_col']}_lower",
-                'yhat_upper': f"{self.all_configs['target_col']}_upper"
             }
         )
+
+        if self.all_configs['quantile'] is not None:
+            res = self.interval_predict(res)
+
+        return res
