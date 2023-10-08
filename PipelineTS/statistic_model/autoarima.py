@@ -18,7 +18,7 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
             n_jobs=-1,
             **darts_auto_arima_configs
     ):
-        super().__init__()
+        super().__init__(time_col=time_col, target_col=target_col)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             AutoARIMA,
@@ -49,14 +49,17 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
             fit_kwargs=fit_kwargs
         )
 
-        self.all_configs['quantile_error'] = \
-            self.calculate_confidence_interval(data, estimator=AutoARIMA, cv=cv, fit_kwargs=fit_kwargs)
+        if self.all_configs['quantile'] is not None:
+            self.all_configs['quantile_error'] = \
+                self.calculate_confidence_interval(data, estimator=AutoARIMA, cv=cv, fit_kwargs=fit_kwargs)
 
         return self
 
     def predict(self, n, **kwargs):
         res = super().predict(n, **kwargs)
         res = self.rename_prediction(res)
-        res = self.interval_predict(res)
 
-        return res
+        if self.all_configs['quantile'] is not None:
+            res = self.interval_predict(res)
+
+        return self.chosen_cols(res)

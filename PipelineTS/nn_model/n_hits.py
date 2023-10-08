@@ -43,7 +43,8 @@ class NHitsModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             random_state=None,
             accelerator=None
     ):
-        super().__init__(device=accelerator)
+        super().__init__(time_col=time_col, target_col=target_col, device=accelerator)
+
         if pl_trainer_kwargs is not None and 'accelerator' not in pl_trainer_kwargs:
             pl_trainer_kwargs.update({'accelerator': self.device})
         elif pl_trainer_kwargs is None:
@@ -96,10 +97,11 @@ class NHitsModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
     def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
-        self.all_configs['quantile_error'] = \
-            self.calculate_confidence_interval(
-                data, estimator=n_hits, cv=cv, fit_kwargs=fit_kwargs
-            )
+        if self.all_configs['quantile'] is not None:
+            self.all_configs['quantile_error'] = \
+                self.calculate_confidence_interval(
+                    data, estimator=n_hits, cv=cv, fit_kwargs=fit_kwargs
+                )
 
         return self
 
@@ -109,4 +111,4 @@ class NHitsModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
 
-        return res
+        return self.chosen_cols(res)

@@ -1,9 +1,10 @@
 import sys
+from copy import deepcopy
 
-from spinesUtils.asserts import *
 import numpy as np
 from sklearn.model_selection import TimeSeriesSplit
-from copy import deepcopy
+from spinesUtils.asserts import *
+from spinesTS.metrics import wmape
 
 
 def load_dataset_to_darts(
@@ -75,54 +76,71 @@ class DartsForecastMixin:
 
         data = data.reset_index(drop=True)
 
-        if self.all_configs['quantile'] < round(1 - self.all_configs['quantile'], 1):
-            ratio = self.all_configs['quantile']
-        else:
-            ratio = round(1 - self.all_configs['quantile'], 1)
-
-        if len(str(ratio).split('.')[-1]) == 1:
-            left_ratio = str(ratio) + '0'
-            right_ratio = str(1 - ratio) + '0'
-        else:
-            left_ratio = str(ratio)
-            right_ratio = str(1 - ratio)
-
         for i in data.columns:
             if i == f"{self.all_configs['target_col']}_q0.50":
                 data.rename(columns={i: f"{self.all_configs['target_col']}"}, inplace=True)
 
-            elif i == f"{self.all_configs['target_col']}_q{right_ratio}":
-                data.rename(columns={i: f"{self.all_configs['target_col']}_upper"}, inplace=True)
+        if self.all_configs['quantile'] is not None:
+            if self.all_configs['quantile'] < round(1 - self.all_configs['quantile'], 1):
+                ratio = self.all_configs['quantile']
+            else:
+                ratio = round(1 - self.all_configs['quantile'], 1)
 
-            elif i == f"{self.all_configs['target_col']}_q{left_ratio}":
-                data.rename(columns={i: f"{self.all_configs['target_col']}_lower"}, inplace=True)
+            if len(str(ratio).split('.')[-1]) == 1:
+                left_ratio = str(ratio) + '0'
+                right_ratio = str(1 - ratio) + '0'
+            else:
+                left_ratio = str(ratio)
+                right_ratio = str(1 - ratio)
 
-        chosen_cols = [
-            self.all_configs['time_col'],
-            f"{self.all_configs['target_col']}",
-            f"{self.all_configs['target_col']}_lower",
-            f"{self.all_configs['target_col']}_upper"
+            for i in data.columns:
+                if i == f"{self.all_configs['target_col']}_q{right_ratio}":
+                    data.rename(columns={i: f"{self.all_configs['target_col']}_upper"}, inplace=True)
+
+                elif i == f"{self.all_configs['target_col']}_q{left_ratio}":
+                    data.rename(columns={i: f"{self.all_configs['target_col']}_lower"}, inplace=True)
+
+        return self.chosen_cols(data)
+
+
+class GBDTModelMixin:
+    def __init__(self, time_col, target_col):
+        self.all_configs = {'model_configs': {}}
+        self.sorted_cols = [
+            time_col,
+            target_col,
+            f"{target_col}_lower",
+            f"{target_col}_upper"
         ]
 
-        if all(i in data.columns for i in chosen_cols):
-            return data[chosen_cols]
+    def chosen_cols(self, data):
+        if all(i in data.columns for i in self.sorted_cols):
+            return data[self.sorted_cols]
         else:
             return data[[self.all_configs['time_col'],
                          *[i for i in data.columns if i != self.all_configs['time_col']]]]
 
 
-class GBDTModelMixin:
-    def __init__(self):
-        self.all_configs = {'model_configs': {}}
-
-
 class StatisticModelMixin:
-    def __init__(self):
+    def __init__(self, time_col, target_col):
         self.all_configs = {'model_configs': {}}
+        self.sorted_cols = [
+            time_col,
+            target_col,
+            f"{target_col}_lower",
+            f"{target_col}_upper"
+        ]
+
+    def chosen_cols(self, data):
+        if all(i in data.columns for i in self.sorted_cols):
+            return data[self.sorted_cols]
+        else:
+            return data[[self.all_configs['time_col'],
+                         *[i for i in data.columns if i != self.all_configs['time_col']]]]
 
 
 class NNModelMixin:
-    def __init__(self, device=None):
+    def __init__(self, time_col, target_col, device=None):
         self.all_configs = {'model_configs': {}}
         if device is None:
             if sys.platform == 'darwin':
@@ -131,6 +149,20 @@ class NNModelMixin:
                 self.device = 'auto'
         else:
             self.device = device
+
+        self.sorted_cols = [
+            time_col,
+            target_col,
+            f"{target_col}_lower",
+            f"{target_col}_upper"
+        ]
+
+    def chosen_cols(self, data):
+        if all(i in data.columns for i in self.sorted_cols):
+            return data[self.sorted_cols]
+        else:
+            return data[[self.all_configs['time_col'],
+                         *[i for i in data.columns if i != self.all_configs['time_col']]]]
 
 
 class IntervalEstimationMixin:
@@ -163,10 +195,9 @@ class IntervalEstimationMixin:
 
             res = model.predict(len(test_v)).pd_dataframe()
 
-            error_rate = np.abs((res[self.all_configs['target_col']].values - test_v) / test_v)
-            error_rate = np.where((error_rate == np.inf) | (error_rate == np.nan), 0., error_rate)
+            error_rate = wmape(res[self.all_configs['target_col']].values, test_v)
 
-            residuals.extend(error_rate.tolist())
+            residuals.append(error_rate)
 
         quantile = np.percentile(residuals, self.all_configs['quantile'])
         if isinstance(quantile, (list, np.ndarray)):
@@ -180,11 +211,4 @@ class IntervalEstimationMixin:
         res[f"{self.all_configs['target_col']}_upper"] = \
             res[self.all_configs['target_col']].values * (1 + self.all_configs['quantile_error'])
 
-        chosen_cols = [
-            self.all_configs['time_col'],
-            f"{self.all_configs['target_col']}",
-            f"{self.all_configs['target_col']}_lower",
-            f"{self.all_configs['target_col']}_upper"
-        ]
-
-        return res[chosen_cols]
+        return self.chosen_cols(res)

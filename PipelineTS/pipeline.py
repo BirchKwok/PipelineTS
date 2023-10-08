@@ -1,20 +1,28 @@
 import time
+from copy import deepcopy
 
 from frozendict import frozendict
+import pandas as pd
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+
 from spinesTS.metrics import mae
 from spinesUtils import ParameterTypeAssert, ParameterValuesAssert, generate_function_kwargs
 from spinesUtils.asserts import check_obj_is_function
-from spinesUtils.utils import Logger
-import pandas as pd
+from spinesUtils.utils import (
+    Logger,
+    drop_duplicates_with_order,
+    reindex_iterable_object,
+    is_in_ipython
+)
+
+from tabulate import tabulate
+from IPython.display import display
 
 from PipelineTS.statistic_model import *
 from PipelineTS.ml_model import *
 from PipelineTS.nn_model import *
 
 # TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
-# TODO: 模型依次对数据进行预测，并将结果进行评估，默认评价函数为MAE和WMAPE，评价函数可选
-# TODO: 输出预测模型评价结果，按评价结果排序
-
 
 MODELS = frozendict({
     'prophet': ProphetModel,
@@ -28,26 +36,58 @@ MODELS = frozendict({
     'n_beats': NBeatsModel,
     'n_hits': NHitsModel,
     'tcn': TCNModel,
-    'tft': TFTModel
+    'tft': TFTModel,
+    'gau': GAUModel,
+    'stacking_rnn': StackingRNNModel,
+    'time2vec': Time2VecModel,
+    'multi_output_model': MultiOutputRegressorModel,
+    'multi_step_model': MultiStepRegressorModel
+
 })
 
 
 class PipelineConfigs:
     @ParameterTypeAssert({
-        'configs': dict
+        'configs': list
+    })
+    @ParameterValuesAssert({
+        'configs': lambda s: all(isinstance(i, tuple) and len(i) == 2 and isinstance(i[1], dict) for i in s)
     })
     def __init__(self, configs):
-        self.configs = configs
-        self.check_configs()
+        self.sub_configs = {'init_configs': {}, 'fit_configs': {}, 'predict_configs': {}}
 
-    def check_configs(self):
-        assert all(i in MODELS for i in self.configs)
+        _to_process_configs = drop_duplicates_with_order(configs)
 
-        configs_level2_keys = ('init_configs', 'fit_configs', 'predict_configs')
-        assert all(i in configs_level2_keys for i in j for j in self.configs)
+        self.configs = []
+        for models_group in reindex_iterable_object(_to_process_configs, key=lambda s: s[0], index_start=1):
+            for (index, (model_name, model_configs)) in models_group:
+                if not all(i in self.sub_configs for i in model_configs):
+                    raise KeyError
 
-    def get_configs(self, model_name):
-        return self.configs.get(model_name)
+                if model_name not in MODELS:
+                    raise KeyError
+
+                if len(model_configs) < 3:
+                    model_configs.update({k: self.sub_configs[k]
+                                          for k in self.sub_configs if k not in model_configs})
+
+                self.configs.append((model_name, f"{model_name}_{index}", model_configs))
+
+        if is_in_ipython():
+            display(
+                tabulate(self.configs, headers=['model_name', 'model_name_with_index', 'model_configs'],
+                         tablefmt='html', colalign=("right", "left", "left"), showindex='always')
+            )
+        else:
+            print(
+                tabulate(self.configs, headers=['model_name', 'model_name_with_index', 'model_configs'],
+                         tablefmt='pretty', colalign=("right", "left", "left"), showindex='always')
+            )
+
+    def get_configs(self, model_name_with_index):
+        for (model_name, mnwi, model_configs) in self.configs:
+            if model_name_with_index == mnwi:
+                return model_configs
 
 
 class PipelineTS:
@@ -55,9 +95,13 @@ class PipelineTS:
         'time_col': str,
         'target_col': str,
         'lags': int,
+        'models': (None, list),
+        'metric_less_is_better': bool,
         'configs': (None, PipelineConfigs),
-        'random_state': int,
-        'verbose': bool
+        'random_state': (int, None),
+        'verbose': bool,
+        'include_init_config_model': bool,
+        'use_standard_scale': (bool, None)
     }, 'Pipeline')
     @ParameterValuesAssert({
         'metric': lambda s: check_obj_is_function(s)
@@ -67,11 +111,15 @@ class PipelineTS:
             time_col,
             target_col,
             lags,
+            with_quantile_prediction=False,
+            models=None,
             metric=mae,
             metric_less_is_better=True,
             configs=None,
             random_state=0,
-            verbose=True
+            verbose=True,
+            include_init_config_model=True,
+            use_standard_scale=None  # otherwise, MinMaxScaler
     ):
         self.logger = Logger(name='PipelineTS', verbose=verbose)
 
@@ -82,54 +130,194 @@ class PipelineTS:
         self.metric_less_is_better = metric_less_is_better
         self.random_state = random_state
         self.configs = configs
+        self._given_models = models
+        self.with_quantile_prediction = with_quantile_prediction
 
-        self.models = dict(MODELS)
+        self.include_init_config_model = include_init_config_model
 
-        for model_name, model in self.models.items():
+        if use_standard_scale is not None:
+            self.scaler = StandardScaler() if use_standard_scale else MinMaxScaler()
+        else:
+            self.scaler = use_standard_scale
+
+        self.models_ = []
+        self.leader_board_ = None
+        self.best_model_ = None
+
+    def _initial_models(self):
+        initial_models = []
+        ms = tuple(MODELS.items()) if self._given_models is None else (
+            drop_duplicates_with_order([(k, MODELS[k]) for k in self._given_models]))
+
+        # 模型训练顺序
+        for (model_name, model) in ms:
             model_kwargs = generate_function_kwargs(
                 model,
                 time_col=self.time_col,
                 target_col=self.target_col,
                 lags=self.lags,
-                random_state=random_state
+                random_state=self.random_state,
+                quantile=0.9 if self.with_quantile_prediction else None
             )
 
-            if self.configs is not None and \
-                    self.configs.get_configs(model_name).get('init_configs') is not None:
-                model_kwargs.update(self.configs.get_configs(model_name).get('init_configs'))
+            continue_signal = False
+            if self.configs is not None:
+                for (model_name_in_config, model_name_with_index_in_config, model_configs_in_config) \
+                        in self.configs.configs:
+                    if model_name_in_config == model_name:
+                        new_model_kwargs = deepcopy(model_kwargs)
 
-            self.models[model_name] = model(**model_kwargs)
+                        new_model_kwargs.update(
+                            self.configs.get_configs(model_name_with_index_in_config).get('init_configs')
+                        )
 
-        self.leader_board = None
+                        if not self.include_init_config_model:
+                            initial_models.append([model_name_with_index_in_config, model(**new_model_kwargs)])
 
-    def fit_and_eval(self, df, valid_df=None):
-        res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
+                        else:
+                            if [model_name, model(**new_model_kwargs)] not in initial_models:
+                                initial_models.append([model_name, model(**new_model_kwargs)])
+                            initial_models.append([model_name_with_index_in_config, model(**new_model_kwargs)])
+
+                        continue_signal = True
+
+                if continue_signal:
+                    continue
+
+                initial_models.append([model_name, model(**model_kwargs)])
+            else:
+                initial_models.append([model_name, model(**model_kwargs)])
+
+        return initial_models
+
+    @classmethod
+    def list_models(cls):
+        return list(MODELS.keys())
+
+    def _scale_data(self, df, valid_df):
+        if self.scaler is not None:
+            df[self.target_col] = self.scaler.fit_transform(
+                df[self.target_col].values.reshape(-1, 1)
+            ).squeeze()
+
+            if valid_df is not None:
+                valid_df[self.target_col] = self.scaler.transform(
+                    valid_df[self.target_col].values.reshape(-1, 1)).squeeze()
+
+        return df, valid_df
+
+    def _inverse_data(self, df):
+        if self.scaler is not None:
+            df[self.target_col] = self.scaler.inverse_transform(
+                df[self.target_col].values.reshape(-1, 1)
+            ).squeeze()
+
+        return df
+
+    def _fit(self, model_name, model, train_df, valid_df, res_df):
+        tik = time.time()
+        model.fit(train_df)
+        tok = time.time()
+        train_cost = tok - tik
+
+        tik = time.time()
+        eval_res = model.predict(valid_df.shape[0])
+        if self.scaler is not None:
+            eval_res = self._inverse_data(eval_res)
+
+            metric = self.metric(
+                self.scaler.inverse_transform(
+                    valid_df[self.target_col].values.reshape(-1, 1)
+                ).squeeze(),
+                eval_res[self.target_col].values
+            )
+        else:
+            metric = self.metric(
+                valid_df[self.target_col].values,
+                eval_res[self.target_col].values
+            )
+
+        tok = time.time()
+        eval_cost = tok - tik
+        res_df = pd.concat(
+            (res_df, pd.DataFrame([[model_name, train_cost, eval_cost, metric]],
+                                  columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])),
+            axis=0, ignore_index=True)
+
+        return model_name, model, res_df
+
+    def fit_cv(self, df, cv=5):
+        """fit all models with cv"""
+        if df.shape[0] <= self.lags:
+            raise ValueError(f'length of df must be greater than lags, df length = {df.shape[0]}, lags = {self.lags}')
+
+        cv_res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
+
+        from sklearn.model_selection import TimeSeriesSplit
+
+        for cv_idx, (train_idx, test_idx) in enumerate(TimeSeriesSplit(n_splits=cv).split(df)):
+            train_df, valid_df = df.iloc[train_idx, :], df.iloc[test_idx, :]
+
+            train_df, valid_df = self._scale_data(train_df, valid_df)
+
+            res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
+
+            for (model_name, model) in self._initial_models():
+                self.logger.print(f"cross validation {cv_idx}: fitting and evaluating {model_name}...")
+
+                model_name, model, res = self._fit(model_name, model, train_df, valid_df, res)
+
+            cv_res = pd.concat((cv_res, res), axis=0, ignore_index=True)
+
+        cv_res = pd.DataFrame(cv_res.groupby(by='model', as_index=False).mean())
+
+        self.leader_board_ = cv_res.sort_values(
+            by='metric', ascending=self.metric_less_is_better
+        ).reset_index(drop=True)
+
+        self.leader_board_.columns.name = 'Leaderboard'
+
+        self.fit(df, df, update_leaderboard=False)
+
+        return self.leader_board_
+
+    def fit(self, df, valid_df=None, update_leaderboard=True):
+        """fit all models"""
+        if df.shape[0] <= self.lags:
+            raise ValueError(f'length of df must be greater than lags, df length = {df.shape[0]}, lags = {self.lags}')
 
         if valid_df is not None:
             assert df.columns.tolist() == valid_df.columns.tolist()
+        else:
+            df, valid_df = df.iloc[:-self.lags, :], df.iloc[-self.lags:, :]
 
-        for model_name, model in self.models.items():
+        df, valid_df = self._scale_data(df, valid_df)
+
+        res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
+
+        for (model_name, model) in self._initial_models():
             self.logger.print(f"fitting and evaluating {model_name}...")
 
-            tik = time.time()
-            model.fit(df)
-            tok = time.time()
-            train_cost = tok - tik
+            model_name, model, res = self._fit(model_name, model, df, valid_df, res)
+            self.models_.append((model_name, model))
 
-            tik = time.time()
-            eval_res = model.predict(valid_df.shape[0])
-            metric = self.metric(valid_df[self.target_col].values, eval_res[self.target_col].values)
-            tok = time.time()
-            eval_cost = tok - tik
-            res = pd.concat(
-                (res, pd.DataFrame([[model_name, train_cost, eval_cost, metric]],
-                                   columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])),
-                axis=0, ignore_index=True)
+        if update_leaderboard:
+            self.leader_board_ = res.sort_values(
+                by='metric', ascending=self.metric_less_is_better
+            ).reset_index(drop=True)
 
-        self.leader_board = res.sort_values(by='metric', ascending=self.metric_less_is_better).reset_index(drop=True)
-        self.leader_board.columns.name = 'Leaderboard'
-        return self.leader_board
+            self.leader_board_.columns.name = 'Leaderboard'
 
-    def predict(self, model, n):
-        return self.models[model].predict(n)
+        self.best_model_ = self.get_models(self.leader_board_.iloc[0, :]['model'])
+        return self.leader_board_
 
+    def get_models(self, model_name):
+        for (md_name, model) in self.models_:
+            if model_name == md_name:
+                return model
+
+    def predict(self, n, model_name=None):
+        """默认使用最好的模型预测"""
+        if model_name is not None:
+            return self.get_models(model_name).predict(n)
+        return self.best_model_.predict(n)

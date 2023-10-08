@@ -24,7 +24,7 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             random_state=0,
             **prophet_configs
     ):
-        super().__init__()
+        super().__init__(time_col=time_col, target_col=target_col)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             Prophet,
@@ -55,8 +55,9 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         data = self._prophet_preprocessing(data, self.all_configs['time_col'], self.all_configs['target_col'])
         self.model.fit(data, **kwargs)
 
-        self.all_configs['quantile_error'] = \
-            self.calculate_confidence_interval_prophet(data, cv=cv, fit_kwargs=kwargs)
+        if self.all_configs['quantile'] is not None:
+            self.all_configs['quantile_error'] = \
+                self.calculate_confidence_interval_prophet(data, cv=cv, fit_kwargs=kwargs)
         return self
 
     def calculate_confidence_interval_prophet(self, data, cv=5, freq='D', fit_kwargs=None):
@@ -112,4 +113,4 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
 
-        return res
+        return self.chosen_cols(res)

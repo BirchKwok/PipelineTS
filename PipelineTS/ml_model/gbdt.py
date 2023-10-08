@@ -24,7 +24,7 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin):
             use_static_covariates=True,
             **darts_catboost_model_configs
     ):
-        super().__init__()
+        super().__init__(time_col=time_col, target_col=target_col)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             CBT,
@@ -33,8 +33,8 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin):
             lags_future_covariates=lags_future_covariates,
             output_chunk_length=lags,
             add_encoders=add_encoders,
-            likelihood='quantile',
-            quantiles=[0.5, quantile, 1-quantile],
+            likelihood='quantile' if quantile is not None else None,
+            quantiles=[0.5, quantile, 1 - quantile] if quantile is not None else None,
             random_state=random_state,
             multi_models=multi_models,
             use_static_covariates=use_static_covariates,
@@ -51,9 +51,14 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin):
         )
 
     def predict(self, n, predict_likelihood_parameters=True, **kwargs):
-        res = super().predict(n, predict_likelihood_parameters=predict_likelihood_parameters, **kwargs)
+        if self.all_configs['quantile'] is not None:
+            res = super().predict(n, predict_likelihood_parameters=predict_likelihood_parameters, **kwargs)
+        else:
+            res = super().predict(n, predict_likelihood_parameters=False, **kwargs)
 
-        return self.rename_prediction(res)
+        res = self.rename_prediction(res)
+
+        return self.chosen_cols(res)
 
 
 class LightGBMModel(DartsForecastMixin, GBDTModelMixin):
@@ -74,7 +79,7 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin):
             categorical_static_covariates=None,
             **darts_lightgbm_model_configs
     ):
-        super().__init__()
+        super().__init__(time_col=time_col, target_col=target_col)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             LGB,
@@ -83,8 +88,8 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin):
             lags_future_covariates=lags_future_covariates,
             output_chunk_length=lags,
             add_encoders=add_encoders,
-            likelihood='quantile',
-            quantiles=[0.5, quantile, 1 - quantile],
+            likelihood='quantile' if quantile is not None else None,
+            quantiles=[0.5, quantile, 1 - quantile] if quantile is not None else None,
             random_state=random_state,
             multi_models=multi_models,
             use_static_covariates=use_static_covariates,
@@ -104,9 +109,14 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin):
         )
 
     def predict(self, n, predict_likelihood_parameters=True, **kwargs):
-        res = super().predict(n, predict_likelihood_parameters=predict_likelihood_parameters, **kwargs)
+        if self.all_configs['quantile'] is not None:
+            res = super().predict(n, predict_likelihood_parameters=predict_likelihood_parameters, **kwargs)
+        else:
+            res = super().predict(n, predict_likelihood_parameters=False, **kwargs)
 
-        return self.rename_prediction(res)
+        res = self.rename_prediction(res)
+
+        return self.chosen_cols(res)
 
 
 class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
@@ -127,7 +137,7 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
             categorical_static_covariates=None,
             **darts_xgboost_model_configs
     ):
-        super().__init__()
+        super().__init__(time_col=time_col, target_col=target_col)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             XGB,
@@ -158,8 +168,9 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
     def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
-        self.all_configs['quantile_error'] = \
-            self.calculate_confidence_interval(data, estimator=XGB, cv=cv, fit_kwargs=fit_kwargs)
+        if self.all_configs['quantile'] is not None:
+            self.all_configs['quantile_error'] = \
+                self.calculate_confidence_interval(data, estimator=XGB, cv=cv, fit_kwargs=fit_kwargs)
 
         return self
 
@@ -169,7 +180,7 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
 
-        return res
+        return self.chosen_cols(res)
 
 
 class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
@@ -188,7 +199,7 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
             use_static_covariates=True,
             **darts_random_forest_model_configs
     ):
-        super().__init__()
+        super().__init__(time_col=time_col, target_col=target_col)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             RF,
@@ -217,8 +228,9 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
     def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
-        self.all_configs['quantile_error'] = \
-            self.calculate_confidence_interval(data, estimator=RF, cv=cv, fit_kwargs=fit_kwargs)
+        if self.all_configs['quantile'] is not None:
+            self.all_configs['quantile_error'] = \
+                self.calculate_confidence_interval(data, estimator=RF, cv=cv, fit_kwargs=fit_kwargs)
 
         return self
 
@@ -228,4 +240,4 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
 
-        return res
+        return self.chosen_cols(res)

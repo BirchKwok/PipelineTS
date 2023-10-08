@@ -3,15 +3,17 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from lightgbm import LGBMRegressor
+
 from spinesTS.ml_model import (
     GBRTPreprocessing,
     MultiOutputRegressor
 )
-
+from spinesTS.metrics import wmape
 from spinesTS.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from spinesUtils import generate_function_kwargs
-from lightgbm import LGBMRegressor
+
 
 from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin
 
@@ -32,7 +34,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             linear_tree=False,
             **lightgbm_model_configs
     ):
-        super().__init__()
+        super().__init__(time_col=time_col, target_col=target_col)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             LGBMRegressor,
@@ -92,9 +94,11 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
         return model
 
-    def _data_preprocess(self, data, mode='train'):
+    def _data_preprocess(self, data, mode='train', update_last_dt=False):
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
-        self.last_dt = data[self.all_configs['time_col']].max()
+        if update_last_dt:
+            self.last_dt = data[self.all_configs['time_col']].max()
+
         if mode == 'train':
             self.processor.fit(data)
 
@@ -122,10 +126,9 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             model.fit(train_x, train_y, eval_set=None, **fit_kwargs)
             res = model.predict(test_x).flatten()
             test_y = test_y.values.flatten()
-            error_rate = np.abs((test_y - res) / test_y)
-            error_rate = np.where((error_rate == np.inf) | (error_rate == np.nan), 0., error_rate)
+            error_rate = wmape(test_y, res)
 
-            residuals.extend(error_rate.tolist())
+            residuals.append(error_rate)
 
         quantile = np.percentile(residuals, self.all_configs['quantile'])
 
@@ -139,7 +142,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         if fit_kwargs is None:
             fit_kwargs = {}
 
-        x, y = self._data_preprocess(data, 'train')
+        x, y = self._data_preprocess(data, 'train', update_last_dt=True)
         x = pd.DataFrame(x)
 
         self.x = pd.DataFrame(
@@ -148,8 +151,9 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
         self.model.fit(x, y, eval_set=None, **fit_kwargs)
 
-        self.all_configs['quantile_error'] = \
-            self.calculate_confidence_interval_gbrt(data, cv=cv, fit_kwargs=fit_kwargs)
+        if self.all_configs['quantile'] is not None:
+            self.all_configs['quantile_error'] = \
+                self.calculate_confidence_interval_gbrt(data, cv=cv, fit_kwargs=fit_kwargs)
 
         return self
 
@@ -170,15 +174,16 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         assert isinstance(n, int)
         assert x.ndim == 2
 
-        current_res = self.model.predict(x)
+        current_res = self.model.predict(x)  # np.ndarray
 
         if n is None:
             return current_res.squeeze().tolist()
         elif n <= current_res.shape[1]:
-            return current_res[-1][:n].tolist()
+            return current_res.squeeze().tolist()[:n]
         else:
             res = current_res.squeeze().tolist()
-            last_data = self.last_lags_dataframe
+            last_data = self.last_lags_dataframe.copy()
+
             last_data[self.all_configs['time_col']] = pd.to_datetime(last_data[self.all_configs['time_col']])
 
             last_dt = deepcopy(self.last_dt)
@@ -213,4 +218,4 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
 
-        return res
+        return self.chosen_cols(res)
