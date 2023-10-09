@@ -22,6 +22,7 @@ from IPython.display import display
 from PipelineTS.statistic_model import *
 from PipelineTS.ml_model import *
 from PipelineTS.nn_model import *
+from PipelineTS.metrics import quantile_acc
 
 # TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
 
@@ -96,11 +97,12 @@ class PipelineTS:
         'time_col': str,
         'target_col': str,
         'lags': int,
+        'with_quantile_prediction': bool,
         'models': (None, list),
         'metric_less_is_better': bool,
         'configs': (None, PipelineConfigs),
         'random_state': (int, None),
-        'verbose': bool,
+        'verbose': (bool, int),
         'include_init_config_model': bool,
         'use_standard_scale': (bool, None)
     }, 'Pipeline')
@@ -112,7 +114,7 @@ class PipelineTS:
             time_col,
             target_col,
             lags,
-            with_quantile_prediction=False,
+            with_quantile_prediction=False,  # the quantile prediction switch
             models=None,
             metric=mae,
             metric_less_is_better=True,
@@ -141,13 +143,15 @@ class PipelineTS:
         else:
             self.scaler = use_standard_scale
 
+        self._temp_scaler = deepcopy(self.scaler)
+
         self.models_ = []
         self.leader_board_ = None
         self.best_model_ = None
 
     def _initial_models(self):
         initial_models = []
-        ms = tuple(MODELS.items()) if self._given_models is None else (
+        ms = tuple(sorted(MODELS.items(), key=lambda s: s[0])) if self._given_models is None else (
             drop_duplicates_with_order([(k, MODELS[k]) for k in self._given_models]))
 
         # 模型训练顺序
@@ -195,27 +199,40 @@ class PipelineTS:
     def list_models(cls):
         return list(MODELS.keys())
 
-    def _scale_data(self, df, valid_df):
-        if self.scaler is not None:
-            df[self.target_col] = self.scaler.fit_transform(
+    def _scale_data(self, df, valid_df, refit_scaler=True):
+        if refit_scaler:
+            scaler = self.scaler
+        else:
+            scaler = self._temp_scaler
+
+        if scaler is not None:
+            df[self.target_col] = scaler.fit_transform(
                 df[self.target_col].values.reshape(-1, 1)
             ).squeeze()
 
             if valid_df is not None:
-                valid_df[self.target_col] = self.scaler.transform(
+                valid_df[self.target_col] = scaler.transform(
                     valid_df[self.target_col].values.reshape(-1, 1)).squeeze()
 
         return df, valid_df
 
-    def _inverse_data(self, df):
-        if self.scaler is not None:
-            df[self.target_col] = self.scaler.inverse_transform(
-                df[self.target_col].values.reshape(-1, 1)
+    def _inverse_data(self, df, columns=None, use_scaler=True):
+        if use_scaler:
+            scaler = self.scaler
+        else:
+            scaler = self._temp_scaler
+
+        if columns is None:
+            columns = self.target_col
+
+        if scaler is not None:
+            df[columns] = scaler.inverse_transform(
+                df[columns].values.reshape(-1, 1)
             ).squeeze()
 
         return df
 
-    def _fit(self, model_name_after_rename, model, train_df, valid_df, res_df):
+    def _fit(self, model_name_after_rename, model, train_df, valid_df, res_df, use_scaler=True):
         tik = time.time()
 
         # -------------------- fitting -------------------------
@@ -251,51 +268,90 @@ class PipelineTS:
         else:
             eval_res = model.predict(valid_df.shape[0])
 
-        if self.scaler is not None:
-            eval_res = self._inverse_data(eval_res)
+        if use_scaler:
+            scaler = self.scaler
+        else:
+            scaler = self._temp_scaler
 
-            metric = self.metric(
-                self.scaler.inverse_transform(
+        metric = self.metric(
+            scaler.inverse_transform(
+                valid_df[self.target_col].values.reshape(-1, 1)
+            ).squeeze(),
+            scaler.inverse_transform(
+                eval_res[self.target_col].values.reshape(-1, 1)
+            ).squeeze()
+
+        )
+
+        if self.with_quantile_prediction:
+            res_quantile_acc = quantile_acc(
+                yt=scaler.inverse_transform(
                     valid_df[self.target_col].values.reshape(-1, 1)
                 ).squeeze(),
-                eval_res[self.target_col].values
-            )
-        else:
-            metric = self.metric(
-                valid_df[self.target_col].values,
-                eval_res[self.target_col].values
+                left_pred=scaler.inverse_transform(
+                    eval_res[f"{self.target_col}_lower"].values.reshape(-1, 1)
+                ).squeeze(),
+                right_pred=scaler.inverse_transform(
+                    eval_res[f"{self.target_col}_upper"].values.reshape(-1, 1)
+                ).squeeze()
             )
 
         tok = time.time()
         eval_cost = tok - tik
 
-        res_df = pd.concat(
-            (res_df, pd.DataFrame([[model_name_after_rename, train_cost, eval_cost, metric]],
-                                  columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])),
-            axis=0, ignore_index=True)
+        if self.with_quantile_prediction:
+            res_df = pd.concat(
+                (res_df, pd.DataFrame(
+                    [[model_name_after_rename, train_cost, eval_cost, metric, res_quantile_acc]],
+                    columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])),
+                axis=0, ignore_index=True)
+        else:
+            res_df = pd.concat(
+                (res_df, pd.DataFrame([[model_name_after_rename, train_cost, eval_cost, metric]],
+                                      columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])),
+                axis=0, ignore_index=True)
 
         return model_name_after_rename, model, res_df
 
-    def fit_cv(self, df, cv=5):
+    @ParameterTypeAssert({
+        'data': pd.DataFrame,
+        'cv': int
+    })
+    def fit_cv(self, data, cv=5):
         """fit all models with cv"""
+        df = data.copy()
+
         if df.shape[0] <= self.lags:
             raise ValueError(f'length of df must be greater than lags, df length = {df.shape[0]}, lags = {self.lags}')
 
-        cv_res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
+        if self.with_quantile_prediction:
+            cv_res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])
+        else:
+            cv_res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
 
         from sklearn.model_selection import TimeSeriesSplit
+
+        self.logger.print(f"There are {cv} rounds of cross-validation, "
+                          f"with a total of {len(self._initial_models())} models to be trained in each round.")
 
         for cv_idx, (train_idx, test_idx) in enumerate(TimeSeriesSplit(n_splits=cv).split(df)):
             train_df, valid_df = df.iloc[train_idx, :], df.iloc[test_idx, :]
 
-            train_df, valid_df = self._scale_data(train_df, valid_df)
+            # 如果指定use_standard_scale，此语句会对数据缩放
+            train_df, valid_df = self._scale_data(train_df, valid_df, refit_scaler=False)
 
-            res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
+            if self.with_quantile_prediction:
+                res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])
+            else:
+                res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
 
-            for (model_name_after_rename, model) in self._initial_models():
-                self.logger.print(f"cross validation {cv_idx}: fitting and evaluating {model_name_after_rename}...")
+            for idx, (model_name_after_rename, model) in enumerate(self._initial_models()):
+                self.logger.print(f"[cv {cv_idx}, model {idx}] fitting and evaluating {model_name_after_rename}...")
 
-                model_name_after_rename, model, res = self._fit(model_name_after_rename, model, train_df, valid_df, res)
+                model_name_after_rename, model, res = self._fit(
+                    model_name_after_rename, model,
+                    train_df, valid_df, res, use_scaler=False
+                )
 
             cv_res = pd.concat((cv_res, res), axis=0, ignore_index=True)
 
@@ -311,8 +367,16 @@ class PipelineTS:
 
         return self.leader_board_
 
-    def fit(self, df, valid_df=None, update_leaderboard=True):
+    @ParameterTypeAssert({
+        'data': pd.DataFrame,
+        'valid_data': (None, pd.DataFrame),
+        'update_leaderboard': bool
+    })
+    def fit(self, data, valid_data=None, update_leaderboard=True):
         """fit all models"""
+
+        df, valid_df = data.copy(), valid_data.copy()
+
         if df.shape[0] <= self.lags:
             raise ValueError(f'length of df must be greater than lags, df length = {df.shape[0]}, lags = {self.lags}')
 
@@ -321,14 +385,25 @@ class PipelineTS:
         else:
             df, valid_df = df.iloc[:-self.lags, :], df.iloc[-self.lags:, :]
 
-        df, valid_df = self._scale_data(df, valid_df)
+        # 如果指定use_standard_scale，此语句会对数据缩放
+        df, valid_df = self._scale_data(df, valid_df, refit_scaler=True)
 
-        res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
+        if self.with_quantile_prediction:
+            res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])
+        else:
+            res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
 
-        for (model_name_after_rename, model) in self._initial_models():
-            self.logger.print(f"fitting and evaluating {model_name_after_rename}...")
+        models = self._initial_models()
+        self.logger.print(f"There are a total of {len(models)} models to be trained.")
 
-            model_name_after_rename, model, res = self._fit(model_name_after_rename, model, df, valid_df, res)
+        for idx, (model_name_after_rename, model) in enumerate(models):
+            self.logger.print(f"[model {idx}] fitting and evaluating {model_name_after_rename}...")
+
+            model_name_after_rename, model, res = self._fit(
+                model_name_after_rename, model, df, valid_df, res,
+                use_scaler=True
+            )
+
             self.models_.append((model_name_after_rename, model))
 
         if update_leaderboard:
@@ -341,13 +416,27 @@ class PipelineTS:
         self.best_model_ = self.get_models(self.leader_board_.iloc[0, :]['model'])
         return self.leader_board_
 
+    @ParameterTypeAssert({
+        'model_name': str
+    })
     def get_models(self, model_name):
         for (md_name, model) in self.models_:
             if model_name == md_name:
                 return model
 
+    @ParameterTypeAssert({
+        'n': int,
+        'model_name': (None, str)
+    })
     def predict(self, n, model_name=None):
         """默认使用最好的模型预测"""
         if model_name is not None:
-            return self.get_models(model_name).predict(n)
-        return self.best_model_.predict(n)
+            res = self.get_models(model_name).predict(n)
+        else:
+            res = self.best_model_.predict(n)
+
+        for i in res.columns:
+            if i.startswith(self.target_col):
+                res = self._inverse_data(res, columns=i)
+
+        return res

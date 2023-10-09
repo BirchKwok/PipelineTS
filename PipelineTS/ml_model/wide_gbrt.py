@@ -32,6 +32,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             extend_daily_target_features=True,
             use_standard_scaler=True,
             linear_tree=False,
+            verbose=-1,
             **lightgbm_model_configs
     ):
         super().__init__(time_col=time_col, target_col=target_col)
@@ -41,6 +42,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             n_estimators=n_estimators,
             random_state=random_state,
             linear_tree=linear_tree,
+            verbose=verbose,
             **lightgbm_model_configs
         )
 
