@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name='PipelineTS',
-    version="0.1.0",
+    version="0.1.1",
     description='One-stop time series analysis tool, supporting time series data preprocessing, '
                 'feature engineering, model training, model evaluation, and model prediction.',
     keywords='timeseries machine learning',
