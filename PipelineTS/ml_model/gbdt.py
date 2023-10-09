@@ -243,7 +243,6 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
 
         return self
 
-    @override
     def predict(self, n, predict_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}

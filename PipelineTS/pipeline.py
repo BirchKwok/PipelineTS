@@ -42,7 +42,8 @@ MODELS = frozendict({
     'stacking_rnn': StackingRNNModel,
     'time2vec': Time2VecModel,
     'multi_output_model': MultiOutputRegressorModel,
-    'multi_step_model': MultiStepRegressorModel
+    'multi_step_model': MultiStepRegressorModel,
+    'transformer': TransformerModel
 })
 
 

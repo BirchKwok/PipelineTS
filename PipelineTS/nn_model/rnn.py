@@ -27,7 +27,7 @@ class StackingRNNModel(SpinesNNModelMixin, NNModelMixin, IntervalEstimationMixin
             diff_n=1,
             learning_rate=0.001,
             device='cpu',
-            use_standard_scaler=None,
+            use_standard_scaler=False,
             verbose=False,
             epochs=1000,
             batch_size='auto',
