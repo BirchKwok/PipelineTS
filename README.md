@@ -5,7 +5,7 @@
 ## 安装
 
 ```bash
-pip install PipelineTS
+python3 -m pip install PipelineTS
 ```
 
 ## 快速开始
