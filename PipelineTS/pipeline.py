@@ -44,7 +44,8 @@ MODELS = frozendict({
     'time2vec': Time2VecModel,
     'multi_output_model': MultiOutputRegressorModel,
     'multi_step_model': MultiStepRegressorModel,
-    'transformer': TransformerModel
+    'transformer': TransformerModel,
+    'random_forest': RandomForestModel
 })
 
 

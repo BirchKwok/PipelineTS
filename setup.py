@@ -35,7 +35,9 @@ setup(
         'lightgbm>=3.3.5',
         'IPython>=8.12.1',
         'tabulate>=0.8.9',
-        'torch>=2.1.0'
+        'torch>=2.1.0',
+        'xgboost>=2.0.0',
+        'catboost>=1.2.2'
     ],
     zip_safe=False,
     include_package_data=True

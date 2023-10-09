@@ -9,7 +9,7 @@ from spinesUtils.asserts import generate_function_kwargs
 from PipelineTS.base import DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin
 
 
-class CatBoostModel(DartsForecastMixin, GBDTModelMixin):
+class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
     def __init__(
             self,
             time_col,
@@ -28,13 +28,11 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin):
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             CBT,
-            lags=lags,
+            lags=lags+1,
             lags_past_covariates=lags_past_covariates,
             lags_future_covariates=lags_future_covariates,
             output_chunk_length=lags,
             add_encoders=add_encoders,
-            likelihood='quantile' if quantile is not None else None,
-            quantiles=[0.5, quantile, 1 - quantile] if quantile is not None else None,
             random_state=random_state,
             multi_models=multi_models,
             use_static_covariates=use_static_covariates,
@@ -47,24 +45,32 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin):
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
+                'quantile_error': 0
             }
         )
+
+    def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
+        super().fit(data, convert_dataframe_kwargs, fit_kwargs)
+
+        if self.all_configs['quantile'] is not None:
+            self.all_configs['quantile_error'] = \
+                self.calculate_confidence_interval(data, estimator=CBT, cv=cv, fit_kwargs=fit_kwargs)
+
+        return self
 
     def predict(self, n, predict_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        if self.all_configs['quantile'] is not None:
-            res = super().predict(n, predict_likelihood_parameters=True, **predict_kwargs)
-        else:
-            res = super().predict(n, predict_likelihood_parameters=False, **predict_kwargs)
-
+        res = self.model.predict(n, **predict_kwargs).pd_dataframe()
         res = self.rename_prediction(res)
+        if self.all_configs['quantile'] is not None:
+            res = self.interval_predict(res)
 
         return self.chosen_cols(res)
 
 
-class LightGBMModel(DartsForecastMixin, GBDTModelMixin):
+class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
     def __init__(
             self,
             time_col,
@@ -91,8 +97,6 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin):
             lags_future_covariates=lags_future_covariates,
             output_chunk_length=lags,
             add_encoders=add_encoders,
-            likelihood='quantile' if quantile is not None else None,
-            quantiles=[0.5, quantile, 1 - quantile] if quantile is not None else None,
             random_state=random_state,
             multi_models=multi_models,
             use_static_covariates=use_static_covariates,
@@ -107,20 +111,28 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin):
             {
                 'quantile': quantile,
                 'time_col': time_col,
-                'target_col': target_col
+                'target_col': target_col,
+                'quantile_error': 0
             }
         )
+
+    def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
+        super().fit(data, convert_dataframe_kwargs, fit_kwargs)
+
+        if self.all_configs['quantile'] is not None:
+            self.all_configs['quantile_error'] = \
+                self.calculate_confidence_interval(data, estimator=LGB, cv=cv, fit_kwargs=fit_kwargs)
+
+        return self
 
     def predict(self, n, predict_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        if self.all_configs['quantile'] is not None:
-            res = super().predict(n, predict_likelihood_parameters=True, **predict_kwargs)
-        else:
-            res = super().predict(n, predict_likelihood_parameters=False, **predict_kwargs)
-
+        res = self.model.predict(n, **predict_kwargs).pd_dataframe()
         res = self.rename_prediction(res)
+        if self.all_configs['quantile'] is not None:
+            res = self.interval_predict(res)
 
         return self.chosen_cols(res)
 

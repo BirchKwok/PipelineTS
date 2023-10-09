@@ -182,12 +182,12 @@ class IntervalEstimationMixin:
         for (train_index, test_index) in tscv.split(data):
             if convert2dts_dataframe:
                 train_ds = self.convert2dts_dataframe(
-                    data.iloc[train_index, :],
+                    data.iloc[train_index, :].reset_index(drop=True),
                     time_col=self.all_configs['time_col'],
                     target_col=self.all_configs['target_col']
                 ).astype(np.float32)
             else:
-                train_ds = data.iloc[train_index, :].astype(np.float32)
+                train_ds = data.iloc[train_index, :].reset_index(drop=True).astype(np.float32)
 
             test_v = data[self.all_configs['target_col']].iloc[test_index].values
             est = deepcopy(estimator)
