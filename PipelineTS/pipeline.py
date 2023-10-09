@@ -118,7 +118,7 @@ class PipelineTS:
             configs=None,
             random_state=0,
             verbose=True,
-            include_init_config_model=True,
+            include_init_config_model=False,
             use_standard_scale=None  # otherwise, MinMaxScaler
     ):
         self.logger = Logger(name='PipelineTS', verbose=verbose)
