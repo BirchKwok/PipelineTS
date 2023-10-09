@@ -88,9 +88,7 @@ class MultiOutputRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
 
     def calculate_confidence_interval_mor(self, data, cv=5, fit_kwargs=None):
         if fit_kwargs is None:
-            kwargs = {}
-        else:
-            kwargs = deepcopy(fit_kwargs)
+            fit_kwargs = {}
 
         tscv = TimeSeriesSplit(n_splits=cv, test_size=self.all_configs['lags'])
 
@@ -108,9 +106,9 @@ class MultiOutputRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
             model = self._define_model()
 
             if hasattr(model.fit, 'eval_set'):
-                model.fit(train_x, train_y, eval_set=[(train_x, train_y)], **kwargs)
+                model.fit(train_x, train_y, eval_set=[(train_x, train_y)], **fit_kwargs)
             else:
-                model.fit(train_x, train_y, **kwargs)
+                model.fit(train_x, train_y, **fit_kwargs)
 
             res = model.predict(test_x).flatten()
 
@@ -145,7 +143,7 @@ class MultiOutputRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def _extend_predict(self, x, n):
+    def _extend_predict(self, x, n, predict_kwargs):
         """Extrapolation prediction.
 
         Parameters
@@ -162,7 +160,7 @@ class MultiOutputRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
         assert isinstance(n, int)
         assert x.ndim == 2
 
-        current_res = self.model.predict(x)
+        current_res = self.model.predict(x, **predict_kwargs)
 
         if n is None:
             return current_res.squeeze().tolist()
@@ -172,15 +170,18 @@ class MultiOutputRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
             res = current_res.squeeze().tolist()
             for i in range(n - self.all_configs['lags']):
                 x = np.concatenate((x[:, 1:], current_res[:, 0:1]), axis=1)
-                current_res = self.model.predict(x)
+                current_res = self.model.predict(x, **predict_kwargs)
 
                 res.append(current_res.squeeze().tolist()[-1])
 
             return res
 
-    def predict(self, n):
+    def predict(self, n, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
+
         x = self.x.values.reshape(1, -1)
-        res = self._extend_predict(x, n)  # list
+        res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
 
         assert len(res) == n
 
@@ -324,7 +325,7 @@ class MultiStepRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def _extend_predict(self, x, n):
+    def _extend_predict(self, x, n, predict_kwargs):
         """Extrapolation prediction.
 
         Parameters
@@ -341,7 +342,7 @@ class MultiStepRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
         assert isinstance(n, int)
         assert x.ndim == 2
 
-        current_res = self.model.predict(x).reshape(1, -1)
+        current_res = self.model.predict(x, **predict_kwargs).reshape(1, -1)
 
         if n is None:
             return current_res.squeeze().tolist()
@@ -351,15 +352,18 @@ class MultiStepRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
             res = current_res.squeeze().tolist()
             for i in range(n - self.all_configs['lags']):
                 x = np.concatenate((x[:, 1:], current_res[:, 0:1]), axis=1)
-                current_res = self.model.predict(x).reshape(1, -1)
+                current_res = self.model.predict(x, **predict_kwargs).reshape(1, -1)
 
                 res.append(current_res.squeeze().tolist()[-1])
 
             return res
 
-    def predict(self, n):
+    def predict(self, n, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
+
         x = self.x.values.reshape(1, -1)
-        res = self._extend_predict(x, n)  # list
+        res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
 
         assert len(res) == n
 

@@ -95,8 +95,11 @@ class DLinearModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def predict(self, n, **kwargs):
-        res = super().predict(n, predict_likelihood_parameters=False, **kwargs)
+    def predict(self, n, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
+
+        res = super().predict(n, predict_likelihood_parameters=False, **predict_kwargs)
         res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

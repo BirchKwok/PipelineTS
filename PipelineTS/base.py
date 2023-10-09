@@ -61,14 +61,16 @@ class DartsForecastMixin:
         self.model.fit(data, **fit_kwargs)
         return self
 
-    def predict(self, n, predict_likelihood_parameters=False, **kwargs):
+    def predict(self, n, predict_likelihood_parameters=False, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
         if 'predict_likelihood_parameters' in get_function_params_name(self.model.predict):
             return self.model.predict(
                 n,
                 predict_likelihood_parameters=predict_likelihood_parameters,
-                **kwargs
+                **predict_kwargs
             ).pd_dataframe()
-        return self.model.predict(n, **kwargs).pd_dataframe()
+        return self.model.predict(n, **predict_kwargs).pd_dataframe()
 
     def rename_prediction(self, data):
         data.columns.name = None

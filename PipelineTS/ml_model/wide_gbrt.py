@@ -157,7 +157,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def _extend_predict(self, x, n):
+    def _extend_predict(self, x, n, predict_kwargs):
         """Extrapolation prediction.
 
         Parameters
@@ -174,7 +174,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         assert isinstance(n, int)
         assert x.ndim == 2
 
-        current_res = self.model.predict(x)  # np.ndarray
+        current_res = self.model.predict(x, **predict_kwargs)  # np.ndarray
 
         if n is None:
             return current_res.squeeze().tolist()
@@ -202,14 +202,17 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
                     self._data_preprocess(last_data, 'predict')
                 ).iloc[-1:, :]
 
-                current_res = self.model.predict(to_predict_x).squeeze()
+                current_res = self.model.predict(to_predict_x, **predict_kwargs).squeeze()
                 res.append(current_res[0])
 
             return res
 
-    def predict(self, n):
+    def predict(self, n, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
+
         x = self.x.values
-        res = self._extend_predict(x, n)  # list
+        res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
         assert len(res) == n
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
         res[self.all_configs['time_col']] = \

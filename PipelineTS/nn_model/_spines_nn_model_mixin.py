@@ -100,7 +100,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def _extend_predict(self, x, n):
+    def _extend_predict(self, x, n, predict_kwargs):
         """Extrapolation prediction.
 
         Parameters
@@ -117,7 +117,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         assert isinstance(n, int)
         assert x.ndim == 2
 
-        current_res = self.model.predict(x)
+        current_res = self.model.predict(x, **predict_kwargs)
 
         if n is None:
             return current_res.squeeze().tolist()
@@ -127,15 +127,18 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             res = current_res.squeeze().tolist()
             for i in range(n - self.all_configs['lags']):
                 x = np.concatenate((x[:, 1:], current_res[:, 0:1]), axis=1)
-                current_res = self.model.predict(x)
+                current_res = self.model.predict(x, **predict_kwargs)
 
                 res.append(current_res.squeeze().tolist()[-1])
 
             return res
 
-    def predict(self, n):
+    def predict(self, n, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
+
         x = self.x.values.reshape(1, -1)
-        res = self._extend_predict(x, n)  # list
+        res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
 
         assert len(res) == n
 

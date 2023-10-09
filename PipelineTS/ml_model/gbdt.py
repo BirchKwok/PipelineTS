@@ -50,11 +50,14 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin):
             }
         )
 
-    def predict(self, n, predict_likelihood_parameters=True, **kwargs):
+    def predict(self, n, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
+
         if self.all_configs['quantile'] is not None:
-            res = super().predict(n, predict_likelihood_parameters=predict_likelihood_parameters, **kwargs)
+            res = super().predict(n, predict_likelihood_parameters=True, **predict_kwargs)
         else:
-            res = super().predict(n, predict_likelihood_parameters=False, **kwargs)
+            res = super().predict(n, predict_likelihood_parameters=False, **predict_kwargs)
 
         res = self.rename_prediction(res)
 
@@ -108,11 +111,14 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin):
             }
         )
 
-    def predict(self, n, predict_likelihood_parameters=True, **kwargs):
+    def predict(self, n, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
+
         if self.all_configs['quantile'] is not None:
-            res = super().predict(n, predict_likelihood_parameters=predict_likelihood_parameters, **kwargs)
+            res = super().predict(n, predict_likelihood_parameters=True, **predict_kwargs)
         else:
-            res = super().predict(n, predict_likelihood_parameters=False, **kwargs)
+            res = super().predict(n, predict_likelihood_parameters=False, **predict_kwargs)
 
         res = self.rename_prediction(res)
 
@@ -174,8 +180,11 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def predict(self, n, **kwargs):
-        res = self.model.predict(n, **kwargs).pd_dataframe()
+    def predict(self, n, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
+
+        res = self.model.predict(n, **predict_kwargs).pd_dataframe()
         res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
@@ -234,8 +243,12 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
 
         return self
 
-    def predict(self, n, **kwargs):
-        res = self.model.predict(n, **kwargs).pd_dataframe()
+    @override
+    def predict(self, n, predict_kwargs=None):
+        if predict_kwargs is None:
+            predict_kwargs = {}
+
+        res = self.model.predict(n, **predict_kwargs).pd_dataframe()
         res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

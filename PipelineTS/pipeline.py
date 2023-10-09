@@ -6,6 +6,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 from spinesTS.metrics import mae
+from spinesTS.utils import func_has_params
 from spinesUtils import ParameterTypeAssert, ParameterValuesAssert, generate_function_kwargs
 from spinesUtils.asserts import check_obj_is_function
 from spinesUtils.utils import (
@@ -42,7 +43,6 @@ MODELS = frozendict({
     'time2vec': Time2VecModel,
     'multi_output_model': MultiOutputRegressorModel,
     'multi_step_model': MultiStepRegressorModel
-
 })
 
 
@@ -84,9 +84,9 @@ class PipelineConfigs:
                          tablefmt='pretty', colalign=("right", "left", "left"), showindex='always')
             )
 
-    def get_configs(self, model_name_with_index):
+    def get_configs(self, model_name_after_rename):
         for (model_name, mnwi, model_configs) in self.configs:
-            if model_name_with_index == mnwi:
+            if model_name_after_rename == mnwi:
                 return model_configs
 
 
@@ -162,22 +162,22 @@ class PipelineTS:
 
             continue_signal = False
             if self.configs is not None:
-                for (model_name_in_config, model_name_with_index_in_config, model_configs_in_config) \
+                for (model_name_in_config, model_name_after_rename_in_config, model_configs_in_config) \
                         in self.configs.configs:
                     if model_name_in_config == model_name:
                         new_model_kwargs = deepcopy(model_kwargs)
 
                         new_model_kwargs.update(
-                            self.configs.get_configs(model_name_with_index_in_config).get('init_configs')
+                            self.configs.get_configs(model_name_after_rename_in_config).get('init_configs')
                         )
 
                         if not self.include_init_config_model:
-                            initial_models.append([model_name_with_index_in_config, model(**new_model_kwargs)])
+                            initial_models.append([model_name_after_rename_in_config, model(**new_model_kwargs)])
 
                         else:
                             if [model_name, model(**new_model_kwargs)] not in initial_models:
                                 initial_models.append([model_name, model(**new_model_kwargs)])
-                            initial_models.append([model_name_with_index_in_config, model(**new_model_kwargs)])
+                            initial_models.append([model_name_after_rename_in_config, model(**new_model_kwargs)])
 
                         continue_signal = True
 
@@ -214,14 +214,42 @@ class PipelineTS:
 
         return df
 
-    def _fit(self, model_name, model, train_df, valid_df, res_df):
+    def _fit(self, model_name_after_rename, model, train_df, valid_df, res_df):
         tik = time.time()
-        model.fit(train_df)
+
+        # -------------------- fitting -------------------------
+        if self.configs is not None:
+            if self.configs.get_configs(model_name_after_rename):
+                fit_kwargs = self.configs.get_configs(model_name_after_rename).get('fit_configs')
+            else:
+                fit_kwargs = {}
+        else:
+            fit_kwargs = {}
+
+        if func_has_params(model.fit, 'fit_kwargs'):
+            model.fit(train_df, fit_kwargs=fit_kwargs)
+        else:
+            model.fit(train_df)
+
         tok = time.time()
         train_cost = tok - tik
 
+        # -------------------- predicting -------------------------
         tik = time.time()
-        eval_res = model.predict(valid_df.shape[0])
+
+        if self.configs is not None:
+            if self.configs.get_configs(model_name_after_rename):
+                predict_kwargs = self.configs.get_configs(model_name_after_rename).get('predict_configs')
+            else:
+                predict_kwargs = {}
+        else:
+            predict_kwargs = {}
+
+        if func_has_params(model.predict, 'predict_kwargs'):
+            eval_res = model.predict(valid_df.shape[0], predict_kwargs=predict_kwargs)
+        else:
+            eval_res = model.predict(valid_df.shape[0])
+
         if self.scaler is not None:
             eval_res = self._inverse_data(eval_res)
 
@@ -239,12 +267,13 @@ class PipelineTS:
 
         tok = time.time()
         eval_cost = tok - tik
+
         res_df = pd.concat(
-            (res_df, pd.DataFrame([[model_name, train_cost, eval_cost, metric]],
+            (res_df, pd.DataFrame([[model_name_after_rename, train_cost, eval_cost, metric]],
                                   columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])),
             axis=0, ignore_index=True)
 
-        return model_name, model, res_df
+        return model_name_after_rename, model, res_df
 
     def fit_cv(self, df, cv=5):
         """fit all models with cv"""
@@ -262,10 +291,10 @@ class PipelineTS:
 
             res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
 
-            for (model_name, model) in self._initial_models():
-                self.logger.print(f"cross validation {cv_idx}: fitting and evaluating {model_name}...")
+            for (model_name_after_rename, model) in self._initial_models():
+                self.logger.print(f"cross validation {cv_idx}: fitting and evaluating {model_name_after_rename}...")
 
-                model_name, model, res = self._fit(model_name, model, train_df, valid_df, res)
+                model_name_after_rename, model, res = self._fit(model_name_after_rename, model, train_df, valid_df, res)
 
             cv_res = pd.concat((cv_res, res), axis=0, ignore_index=True)
 
@@ -295,11 +324,11 @@ class PipelineTS:
 
         res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
 
-        for (model_name, model) in self._initial_models():
-            self.logger.print(f"fitting and evaluating {model_name}...")
+        for (model_name_after_rename, model) in self._initial_models():
+            self.logger.print(f"fitting and evaluating {model_name_after_rename}...")
 
-            model_name, model, res = self._fit(model_name, model, df, valid_df, res)
-            self.models_.append((model_name, model))
+            model_name_after_rename, model, res = self._fit(model_name_after_rename, model, df, valid_df, res)
+            self.models_.append((model_name_after_rename, model))
 
         if update_leaderboard:
             self.leader_board_ = res.sort_values(

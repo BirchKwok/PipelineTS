@@ -51,13 +51,15 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
 
         return df_
 
-    def fit(self, data, freq='D', cv=5, **kwargs):
+    def fit(self, data, freq='D', cv=5, fit_kwargs=None):
+        if fit_kwargs is None:
+            fit_kwargs = {}
         data = self._prophet_preprocessing(data, self.all_configs['time_col'], self.all_configs['target_col'])
-        self.model.fit(data, **kwargs)
+        self.model.fit(data, **fit_kwargs)
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_prophet(data, cv=cv, fit_kwargs=kwargs)
+                self.calculate_confidence_interval_prophet(data, cv=cv, fit_kwargs=fit_kwargs)
         return self
 
     def calculate_confidence_interval_prophet(self, data, cv=5, freq='D', fit_kwargs=None):
