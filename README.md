@@ -5,7 +5,9 @@
 ## 安装
 
 ```bash
-python3 -m pip install PipelineTS
+conda install -c conda-forge prophet
+
+python -m pip install PipelineTS
 ```
 
 ## 快速开始
