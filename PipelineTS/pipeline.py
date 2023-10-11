@@ -332,8 +332,9 @@ class PipelineTS:
 
         from sklearn.model_selection import TimeSeriesSplit
 
+        models_num = len(self._initial_models())
         self.logger.print(f"There are {cv} rounds of cross-validation, "
-                          f"with a total of {len(self._initial_models())} models to be trained in each round.")
+                          f"with a total of {models_num} models to be trained in each round.")
 
         for cv_idx, (train_idx, test_idx) in enumerate(TimeSeriesSplit(n_splits=cv).split(df)):
             train_df, valid_df = df.iloc[train_idx, :], df.iloc[test_idx, :]
@@ -347,7 +348,8 @@ class PipelineTS:
                 res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
 
             for idx, (model_name_after_rename, model) in enumerate(self._initial_models()):
-                self.logger.print(f"[cv {cv_idx}, model {idx}] fitting and evaluating {model_name_after_rename}...")
+                self.logger.print(f"[cv {cv_idx:>{len(str(cv))}d}, model {idx:>{len(str(models_num))}d}] "
+                                  f"fitting and evaluating {model_name_after_rename}...")
 
                 model_name_after_rename, model, res = self._fit(
                     model_name_after_rename, model,
@@ -376,15 +378,15 @@ class PipelineTS:
     def fit(self, data, valid_data=None, update_leaderboard=True):
         """fit all models"""
 
-        df, valid_df = data.copy(), valid_data.copy()
-
-        if df.shape[0] <= self.lags:
+        if data.shape[0] <= self.lags:
             raise ValueError(f'length of df must be greater than lags, df length = {df.shape[0]}, lags = {self.lags}')
 
-        if valid_df is not None:
-            assert df.columns.tolist() == valid_df.columns.tolist()
+        if valid_data is not None:
+            assert data.columns.tolist() == valid_data.columns.tolist()
+            df, valid_df = data.copy(), valid_data.copy()
         else:
-            df, valid_df = df.iloc[:-self.lags, :], df.iloc[-self.lags:, :]
+            df, valid_df = data.iloc[:-self.lags, :], data.iloc[-self.lags:, :]
+            df, valid_df = df.copy(), valid_df.copy()
 
         # 如果指定use_standard_scale，此语句会对数据缩放
         df, valid_df = self._scale_data(df, valid_df, refit_scaler=True)
@@ -398,7 +400,8 @@ class PipelineTS:
         self.logger.print(f"There are a total of {len(models)} models to be trained.")
 
         for idx, (model_name_after_rename, model) in enumerate(models):
-            self.logger.print(f"[model {idx}] fitting and evaluating {model_name_after_rename}...")
+            self.logger.print(f"[model {idx:>{len(str(len(models)))}d}] fitting and "
+                              f"evaluating {model_name_after_rename}...")
 
             model_name_after_rename, model, res = self._fit(
                 model_name_after_rename, model, df, valid_df, res,
@@ -430,7 +433,15 @@ class PipelineTS:
         'model_name': (None, str)
     })
     def predict(self, n, model_name=None):
-        """默认使用最好的模型预测"""
+        """By default, the best model is used for prediction
+
+        :parameter
+        n: predict steps
+        model_name: str, model's name, specifying the model used, default None
+
+        :return
+        pd.DataFrame
+        """
         if model_name is not None:
             res = self.get_models(model_name).predict(n)
         else:
