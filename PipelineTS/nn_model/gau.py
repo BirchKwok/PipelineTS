@@ -4,11 +4,10 @@ from spinesTS.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from spinesUtils import generate_function_kwargs
 
-from PipelineTS.base import NNModelMixin, IntervalEstimationMixin
-from PipelineTS.nn_model._spines_nn_model_mixin import SpinesNNModelMixin
+from PipelineTS.nn_model.sps_nn_model_base import SpinesNNModelMixin
 
 
-class GAUModel(SpinesNNModelMixin, NNModelMixin, IntervalEstimationMixin):
+class GAUModel(SpinesNNModelMixin):
     def __init__(
             self,
             time_col,

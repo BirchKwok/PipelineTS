@@ -6,13 +6,12 @@ import numpy as np
 from spinesTS.nn import StackingRNN
 from spinesTS.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from spinesUtils import generate_function_kwargs, ParameterTypeAssert
+from spinesUtils import generate_function_kwargs
 
-from PipelineTS.base import NNModelMixin, IntervalEstimationMixin
-from PipelineTS.nn_model._spines_nn_model_mixin import SpinesNNModelMixin
+from PipelineTS.nn_model.sps_nn_model_base import SpinesNNModelMixin
 
 
-class StackingRNNModel(SpinesNNModelMixin, NNModelMixin, IntervalEstimationMixin):
+class StackingRNNModel(SpinesNNModelMixin):
     def __init__(
             self,
             time_col,
@@ -20,11 +19,10 @@ class StackingRNNModel(SpinesNNModelMixin, NNModelMixin, IntervalEstimationMixin
             lags=30,
             quantile=0.9,
             random_state=None,
-            stack_num=2,
-            num_layers=2,
+            stack_num=4,
+            num_layers=1,
             dropout=0.1,
             bidirectional=True,
-            diff_n=1,
             learning_rate=0.001,
             device='cpu',
             use_standard_scaler=False,
@@ -50,7 +48,6 @@ class StackingRNNModel(SpinesNNModelMixin, NNModelMixin, IntervalEstimationMixin
             bias=True,
             dropout=dropout,
             bidirectional=bidirectional,
-            diff_n=diff_n,
             learning_rate=learning_rate,
             random_seed=random_state,
             device=self.device,

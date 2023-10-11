@@ -5,24 +5,42 @@ import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
 from spinesTS.metrics import wmape
 from spinesTS.preprocessing import split_series
-from spinesUtils import ParameterTypeAssert
+from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
 
 from PipelineTS.base import NNModelMixin, IntervalEstimationMixin
 
 
 class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
+    def __init__(self, time_col, target_col, device=None):
+
+        super().__init__(time_col, target_col, device=device)
+        self.last_x = None
+
     def _define_model(self):
         raise NotImplementedError
 
-    def _data_preprocess(self, data, update_last_dt=False):
+    @ParameterValuesAssert({
+        'mode': ('train', 'predict')
+    })
+    def _data_preprocess(self, data, update_last_data=False, mode='train'):
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
-        if update_last_dt:
+        if update_last_data:
             self.last_dt = data[self.all_configs['time_col']].max()
 
-        # x_train, y_train
-        return split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
-                            window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
+        if mode == 'train':
+            if update_last_data:
+                self.last_x = data[self.all_configs['target_col']].iloc[-(2 * self.all_configs['lags']):]
+            # x_train, y_train
+            x_train, y_train = split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
+                                            window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
+
+            return x_train, y_train
+        else:
+            x, y = split_series(pd.concat((self.last_x, data[self.all_configs['target_col']])),
+                                pd.concat((self.last_x, data[self.all_configs['target_col']])),
+                                window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
+            return x, y
 
     def calculate_confidence_interval_nn(self, data, cv=5, fit_kwargs=None):
         if fit_kwargs is None:
@@ -36,7 +54,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
         residuals = []
 
-        data_x, data_y = self._data_preprocess(data)
+        data_x, data_y = self._data_preprocess(data, update_last_data=False, mode='train')
         data_x = pd.DataFrame(data_x)
         data_y = pd.DataFrame(data_y)
 
@@ -66,8 +84,6 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
     def fit(self, data, valid_data=None, cv=5, fit_kwargs=None):
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
-        assert valid_data is None or (valid_data.shape[0] >= (2 * self.all_configs['lags'] + 1))
-
         if fit_kwargs is None:
             fit_kwargs = {}
 
@@ -79,16 +95,14 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             if fit_param not in fit_kwargs:
                 fit_kwargs.update({fit_param: self.all_configs[fit_param]})
 
-        x, y = self._data_preprocess(data, update_last_dt=True)
+        x, y = self._data_preprocess(data, update_last_data=True, mode='train')
 
         self.x = data[self.all_configs['target_col']].iloc[-self.all_configs['lags']:]
 
         if valid_data is None:
             eval_set = [(x, y)]
         else:
-            valid_x, valid_y = self._data_preprocess(valid_data)
-            if valid_x.ndim == 1:
-                valid_x = valid_x.reshape(1, -1)
+            valid_x, valid_y = self._data_preprocess(valid_data, update_last_data=False, mode='predict')
 
             eval_set = [(valid_x, valid_y)]
 
