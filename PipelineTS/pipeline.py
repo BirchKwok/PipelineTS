@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from spinesTS.metrics import mae
 from spinesTS.utils import func_has_params
 from spinesUtils import ParameterTypeAssert, ParameterValuesAssert, generate_function_kwargs
-from spinesUtils.asserts import check_obj_is_function
+from spinesUtils.asserts import check_obj_is_function, augmented_isinstance
 from spinesUtils.utils import (
     Logger,
     drop_duplicates_with_order,
@@ -105,10 +105,14 @@ class PipelineTS:
         'random_state': (int, None),
         'verbose': (bool, int),
         'include_init_config_model': bool,
-        'use_standard_scale': (bool, None)
+        'use_standard_scale': (bool, None),
+        'device': (str, None)
     }, 'Pipeline')
     @ParameterValuesAssert({
-        'metric': lambda s: check_obj_is_function(s)
+        'metric': lambda s: check_obj_is_function(s),
+        'device': (
+                lambda s: s in ("cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto") or augmented_isinstance(s, None)
+        )
     }, 'Pipeline')
     def __init__(
             self,
@@ -123,7 +127,8 @@ class PipelineTS:
             random_state=0,
             verbose=True,
             include_init_config_model=False,
-            use_standard_scale=None  # otherwise, MinMaxScaler
+            use_standard_scale=None,  # otherwise, MinMaxScaler
+            device=None
     ):
         self.logger = Logger(name='PipelineTS', verbose=verbose)
 
@@ -149,6 +154,7 @@ class PipelineTS:
         self.models_ = []
         self.leader_board_ = None
         self.best_model_ = None
+        self.device = device
 
     def _initial_models(self):
         initial_models = []
@@ -166,7 +172,10 @@ class PipelineTS:
                 quantile=0.9 if self.with_quantile_prediction else None
             )
 
-            continue_signal = False
+            if func_has_params(model, 'device'):
+                model_kwargs.update({'device': self.device})
+
+            continue_signal = False  # 是否跳过添加默认模型
             if self.configs is not None:
                 for (model_name_in_config, model_name_after_rename_in_config, model_configs_in_config) \
                         in self.configs.configs:
