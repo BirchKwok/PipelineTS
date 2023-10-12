@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name='PipelineTS',
-    version="0.2.0",
+    version="0.2.1",
     description='One-stop time series analysis tool, supporting time series data preprocessing, '
                 'feature engineering, model training, model evaluation, and model prediction.',
     keywords='timeseries machine learning',
@@ -30,7 +30,7 @@ setup(
         'frozendict>=2.3.0',
         'darts>=0.24.0',
         'prophet>=1.1.4',
-        'spinesTS>=0.3.2',
+        'spinesTS>=0.3.6',
         'spinesUtils>=0.3.5',
         'lightgbm>=3.3.5',
         'IPython>=8.12.1',
