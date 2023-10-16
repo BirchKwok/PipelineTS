@@ -46,20 +46,41 @@ res = pipeline.predict(30)
 ### 数据准备
 
 ```python
-# load data with pandas
-import pandas as pd
-df = pd.read_csv('/path/to/your/data.csv')
 
+from PipelineTS.dataset import LoadMessagesSentDataSets
+import pandas as pd
 # convert time col, the date column is assumed to be date_col
 time_col = 'date_col'
-target_col = 'target'
+target_col = 'ta'
 lags = 30  # 往前的窗口大小，数据将会被切割成lags天的多条序列进行训练
 n = 30 # 需要预测多少步，在这个例子里为需要预测多少天
-df[time_col] = pd.to_datetime(df[time_col], format='%Y-%m-%d')
+
+# you can also load data with pandas
+# init_data = pd.read_csv('/path/to/your/data.csv')
+init_data = LoadMessagesSentDataSets()[[time_col, target_col]]
+
+init_data[time_col] = pd.to_datetime(init_data[time_col], format='%Y-%m-%d')
+
+# 划分训练集和测试集
+valid_data = init_data.iloc[-n:, :]
+data = init_data.iloc[:-n, :]
+print("data shape: ", data.shape, ", valid data shape: ", valid_data.shape)
+data.tail(5)
+
+# 数据可视化
+from PipelineTS.plot import plot_data_period
+plot_data_period(
+    data.iloc[-300:, :], 
+    valid_data, 
+    time_col=time_col, 
+    target_col=target_col, 
+    labels=['Train data', 'Valid_data']
+)
 
 ```
+![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic1.png)
 
-### 模型训练和预测
+### 单个模型的训练和预测
 
 ```python
 from PipelineTS.nn_model import TiDEModel
@@ -79,7 +100,7 @@ from catboost import CatBoostRegressor
 from PipelineTS.pipeline import PipelineTS, PipelineConfigs
 
 # list all models
-PipelineTS.list_models()
+print(PipelineTS.list_models())
 
 # 第一个为模型的名称，需要在PipelineTS.list_models()列表中，第二个为dict类型
 # dict可以有三个key: 'init_configs', 'fit_configs', 'predict_configs'，也可以任意一个，剩余的会自动补全为默认参数
@@ -116,7 +137,7 @@ from sklearn.metrics import mean_absolute_error
 
 from PipelineTS.pipeline import PipelineTS
 
-pipeline2 = PipelineTS(
+pipeline = PipelineTS(
     time_col=time_col, 
     target_col=target_col, 
     lags=lags, 
@@ -130,4 +151,22 @@ pipeline2 = PipelineTS(
     device=device,
     # models=['wide_gbrt']  # 支持指定模型
 )
+
+pipeline.fit(data, valid_data)
 ```
+
+### 获取PipelineTS中的模型参数
+```python
+# Gets all configurations for the specified model， default to best model
+pipeline.get_models().all_configs
+```
+
+### 绘制预测结果
+```python
+# use best model to predict next 30 steps data point
+prediction = pipeline.predict(n, model_name=None)  # 可以使用model_name指定pipeline中已训练好的模型
+
+plot_data_period(init_data.iloc[-100:, :], prediction, 
+                 time_col=time_col, target_col=target_col)
+```
+![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic2.png)
