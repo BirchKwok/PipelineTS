@@ -129,7 +129,7 @@ class PipelineTS:
             random_state=0,
             verbose=True,
             include_init_config_model=False,
-            use_standard_scale=None,  # otherwise, MinMaxScaler
+            use_standard_scale=False,  # otherwise, MinMaxScaler
             device=None,
             cv=5
     ):
