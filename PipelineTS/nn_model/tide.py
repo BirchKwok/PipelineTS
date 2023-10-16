@@ -1,7 +1,7 @@
 import logging
 
 import torch
-from darts.models.forecasting.tft_model import TFTModel as tft
+from darts.models.forecasting.tide_model import TiDEModel as TiDE
 from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
@@ -10,22 +10,22 @@ logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARN
 logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
 
 
-class TFTModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
+class TiDEModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
     def __init__(
             self,
             time_col,
             target_col,
             lags=6,
-            hidden_size=16,
-            lstm_layers=1,
-            num_attention_heads=4,
-            full_attention=False,
-            feed_forward='GatedResidualNetwork',
+            num_encoder_layers=1,
+            num_decoder_layers=1,
+            decoder_output_dim=16,
+            hidden_size=128,
+            temporal_width_past=4,
+            temporal_width_future=4,
+            temporal_decoder_hidden=32,
+            use_layer_norm=False,
             dropout=0.1,
-            hidden_continuous_size=8,
-            categorical_embedding_sizes=None,
-            add_relative_index=True,
-            norm_type='LayerNorm',
+            use_static_covariates=True,
             loss_fn=torch.nn.MSELoss(),
             torch_metrics=None,
             optimizer_cls=torch.optim.Adam,
@@ -57,20 +57,20 @@ class TFTModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             pl_trainer_kwargs.update({'enable_model_summary': enable_model_summary})
 
         self.all_configs['model_configs'] = generate_function_kwargs(
-            tft,
+            TiDE,
             input_chunk_length=lags,
             output_chunk_length=lags,
+            num_encoder_layers=num_encoder_layers,
+            num_decoder_layers=num_decoder_layers,
+            decoder_output_dim=decoder_output_dim,
             hidden_size=hidden_size,
-            lstm_layers=lstm_layers,
-            num_attention_heads=num_attention_heads,
-            full_attention=full_attention,
-            feed_forward=feed_forward,
+            temporal_width_past=temporal_width_past,
+            temporal_width_future=temporal_width_future,
+            temporal_decoder_hidden=temporal_decoder_hidden,
+            use_layer_norm=use_layer_norm,
             dropout=dropout,
-            hidden_continuous_size=hidden_continuous_size,
-            categorical_embedding_sizes=categorical_embedding_sizes,
-            add_relative_index=add_relative_index,
+            use_static_covariates=use_static_covariates,
             loss_fn=loss_fn,
-            norm_type=norm_type,
             torch_metrics=torch_metrics,
             optimizer_cls=optimizer_cls,
             optimizer_kwargs=optimizer_kwargs,
@@ -98,10 +98,11 @@ class TFTModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
         )
 
     def _define_model(self):
-        return tft(**self.all_configs['model_configs'])
+        return TiDE(**self.all_configs['model_configs'])
 
     def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None, convert_float32=True):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=convert_float32)
+
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
                 self.calculate_confidence_interval_darts(

@@ -7,7 +7,7 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 from spinesTS.metrics import mae
 from spinesTS.utils import func_has_params
-from spinesUtils import ParameterTypeAssert, ParameterValuesAssert, generate_function_kwargs
+from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
 from spinesUtils.asserts import check_obj_is_function, augmented_isinstance
 from spinesUtils.utils import (
     Logger,
@@ -45,7 +45,8 @@ MODELS = frozendict({
     'multi_output_model': MultiOutputRegressorModel,
     'multi_step_model': MultiStepRegressorModel,
     'transformer': TransformerModel,
-    'random_forest': RandomForestModel
+    'random_forest': RandomForestModel,
+    'tide': TiDEModel
 })
 
 
@@ -106,7 +107,8 @@ class PipelineTS:
         'verbose': (bool, int),
         'include_init_config_model': bool,
         'use_standard_scale': (bool, None),
-        'device': (str, None)
+        'device': (str, None),
+        'cv': int
     }, 'Pipeline')
     @ParameterValuesAssert({
         'metric': lambda s: check_obj_is_function(s),
@@ -128,8 +130,12 @@ class PipelineTS:
             verbose=True,
             include_init_config_model=False,
             use_standard_scale=None,  # otherwise, MinMaxScaler
-            device=None
+            device=None,
+            cv=5
     ):
+        if with_quantile_prediction:
+            assert cv > 1, "if with_quantile_prediction is True, cv must be greater than 1."
+
         self.logger = Logger(name='PipelineTS', verbose=verbose)
 
         self.target_col = target_col
@@ -155,6 +161,7 @@ class PipelineTS:
         self.leader_board_ = None
         self.best_model_ = None
         self.device = device
+        self.cv = cv
 
     def _initial_models(self):
         initial_models = []
@@ -163,17 +170,15 @@ class PipelineTS:
 
         # 模型训练顺序
         for (model_name, model) in ms:
-            model_kwargs = generate_function_kwargs(
-                model,
+            model_kwargs = self._fill_func_params(
+                func=model,
                 time_col=self.time_col,
                 target_col=self.target_col,
                 lags=self.lags,
                 random_state=self.random_state,
-                quantile=0.9 if self.with_quantile_prediction else None
+                quantile=0.9 if self.with_quantile_prediction else None,
+                device=self.device
             )
-
-            if func_has_params(model, 'device'):
-                model_kwargs.update({'device': self.device})
 
             continue_signal = False  # 是否跳过添加默认模型
             if self.configs is not None:
@@ -242,6 +247,15 @@ class PipelineTS:
 
         return df
 
+    def _fill_func_params(self, func, **kwargs):
+        init_kwargs = {}
+
+        for i in kwargs:
+            if func_has_params(func, i):
+                init_kwargs.update({i: kwargs[i]})
+
+        return init_kwargs
+
     def _fit(self, model_name_after_rename, model, train_df, valid_df, res_df, use_scaler=True):
         tik = time.time()
 
@@ -254,10 +268,8 @@ class PipelineTS:
         else:
             fit_kwargs = {}
 
-        if func_has_params(model.fit, 'fit_kwargs'):
-            model.fit(train_df, fit_kwargs=fit_kwargs)
-        else:
-            model.fit(train_df)
+        model_kwargs = self._fill_func_params(func=model.fit, data=train_df, fit_kwargs=fit_kwargs, cv=self.cv)
+        model.fit(**model_kwargs)
 
         tok = time.time()
         train_cost = tok - tik
@@ -325,62 +337,6 @@ class PipelineTS:
 
     @ParameterTypeAssert({
         'data': pd.DataFrame,
-        'cv': int
-    })
-    def fit_cv(self, data, cv=5):
-        """fit all models with cv"""
-        df = data.copy()
-
-        if df.shape[0] <= self.lags:
-            raise ValueError(f'length of df must be greater than lags, df length = {df.shape[0]}, lags = {self.lags}')
-
-        if self.with_quantile_prediction:
-            cv_res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])
-        else:
-            cv_res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
-
-        from sklearn.model_selection import TimeSeriesSplit
-
-        models_num = len(self._initial_models())
-        self.logger.print(f"There are {cv} rounds of cross-validation, "
-                          f"with a total of {models_num} models to be trained in each round.")
-
-        for cv_idx, (train_idx, test_idx) in enumerate(TimeSeriesSplit(n_splits=cv).split(df)):
-            train_df, valid_df = df.iloc[train_idx, :], df.iloc[test_idx, :]
-
-            # 如果指定use_standard_scale，此语句会对数据缩放
-            train_df, valid_df = self._scale_data(train_df, valid_df, refit_scaler=False)
-
-            if self.with_quantile_prediction:
-                res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])
-            else:
-                res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
-
-            for idx, (model_name_after_rename, model) in enumerate(self._initial_models()):
-                self.logger.print(f"[cv {cv_idx:>{len(str(cv))}d}, model {idx:>{len(str(models_num))}d}] "
-                                  f"fitting and evaluating {model_name_after_rename}...")
-
-                model_name_after_rename, model, res = self._fit(
-                    model_name_after_rename, model,
-                    train_df, valid_df, res, use_scaler=False
-                )
-
-            cv_res = pd.concat((cv_res, res), axis=0, ignore_index=True)
-
-        cv_res = pd.DataFrame(cv_res.groupby(by='model', as_index=False).mean())
-
-        self.leader_board_ = cv_res.sort_values(
-            by='metric', ascending=self.metric_less_is_better
-        ).reset_index(drop=True)
-
-        self.leader_board_.columns.name = 'Leaderboard'
-
-        self.fit(df, df, update_leaderboard=False)
-
-        return self.leader_board_
-
-    @ParameterTypeAssert({
-        'data': pd.DataFrame,
         'valid_data': (None, pd.DataFrame),
         'update_leaderboard': bool
     })
@@ -430,12 +386,15 @@ class PipelineTS:
         return self.leader_board_
 
     @ParameterTypeAssert({
-        'model_name': str
+        'model_name': (str, None)
     })
-    def get_models(self, model_name):
-        for (md_name, model) in self.models_:
-            if model_name == md_name:
-                return model
+    def get_models(self, model_name=None):
+        if model_name is None:
+            return self.best_model_
+        else:
+            for (md_name, model) in self.models_:
+                if model_name == md_name:
+                    return model
 
     @ParameterTypeAssert({
         'n': int,

@@ -1,15 +1,27 @@
+import pandas as pd
 from darts.models import (
     CatBoostModel as CBT,
     LightGBMModel as LGB,
     XGBModel as XGB,
     RandomForest as RF
 )
-from spinesUtils.asserts import generate_function_kwargs
+from spinesUtils.asserts import generate_function_kwargs, ParameterTypeAssert
 
 from PipelineTS.base import DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin
 
 
 class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
+    @ParameterTypeAssert({
+        'time_col': str,
+        'target_col': str,
+        'lags': int,
+        'lags_past_covariates': (None, int),
+        'lags_future_covariates': (None, int),
+        'quantile': (None, float),
+        'random_state': (None, int),
+        'multi_models': bool,
+        'use_static_covariates': bool
+    })
     def __init__(
             self,
             time_col,
@@ -38,10 +50,11 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
             use_static_covariates=use_static_covariates,
             **darts_catboost_model_configs
         )
-        self.model = CBT(**self.all_configs['model_configs'])
+        self.model = self._define_model()
 
         self.all_configs.update(
             {
+                'lags': lags,
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
@@ -49,15 +62,29 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
             }
         )
 
-    def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
+    def _define_model(self):
+        return CBT(**self.all_configs['model_configs'])
+
+    @ParameterTypeAssert({
+        'data': pd.DataFrame,
+        'convert_dataframe_kwargs': (None, dict),
+        'cv': int,
+        'fit_kwargs': (None, dict)
+    })
+    def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval(data, estimator=CBT, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_darts(data, fit_kwargs=fit_kwargs,
+                                                         convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
 
         return self
 
+    @ParameterTypeAssert({
+        'n': int,
+        'predict_kwargs': (None, dict)
+    })
     def predict(self, n, predict_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
@@ -105,10 +132,11 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
             categorical_static_covariates=categorical_static_covariates,
             **darts_lightgbm_model_configs
         )
-        self.model = LGB(**self.all_configs['model_configs'] )
+        self.model = self._define_model()
 
         self.all_configs.update(
             {
+                'lags': lags,
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
@@ -116,15 +144,29 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
             }
         )
 
+    def _define_model(self):
+        return LGB(**self.all_configs['model_configs'])
+
+    @ParameterTypeAssert({
+        'data': pd.DataFrame,
+        'convert_dataframe_kwargs': (None, dict),
+        'cv': int,
+        'fit_kwargs': (None, dict)
+    })
     def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval(data, estimator=LGB, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_darts(data, fit_kwargs=fit_kwargs,
+                                                         convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
 
         return self
 
+    @ParameterTypeAssert({
+        'n': int,
+        'predict_kwargs': (None, dict)
+    })
     def predict(self, n, predict_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
@@ -172,10 +214,11 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
             categorical_static_covariates=categorical_static_covariates,
             **darts_xgboost_model_configs
         )
-        self.model = XGB(**self.all_configs['model_configs'])
+        self.model = self._define_model()
 
         self.all_configs.update(
             {
+                'lags': lags,
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
@@ -183,15 +226,29 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
             }
         )
 
+    def _define_model(self):
+        return XGB(**self.all_configs['model_configs'])
+
+    @ParameterTypeAssert({
+        'data': pd.DataFrame,
+        'convert_dataframe_kwargs': (None, dict),
+        'cv': int,
+        'fit_kwargs': (None, dict)
+    })
     def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval(data, estimator=XGB, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_darts(data, fit_kwargs=fit_kwargs,
+                                                         convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
 
         return self
 
+    @ParameterTypeAssert({
+        'n': int,
+        'predict_kwargs': (None, dict)
+    })
     def predict(self, n, predict_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
@@ -235,10 +292,11 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
             use_static_covariates=use_static_covariates,
             **darts_random_forest_model_configs
         )
-        self.model = RF(**self.all_configs['model_configs'])
+        self.model = self._define_model()
 
         self.all_configs.update(
             {
+                'lags': lags,
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
@@ -246,15 +304,29 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
             }
         )
 
-    def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
+    def _define_model(self):
+        return RF(**self.all_configs['model_configs'])
+
+    @ParameterTypeAssert({
+        'data': pd.DataFrame,
+        'convert_dataframe_kwargs': (None, dict),
+        'cv': int,
+        'fit_kwargs': (None, dict)
+    })
+    def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None):
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval(data, estimator=RF, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_darts(data, fit_kwargs=fit_kwargs,
+                                                         convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
 
         return self
 
+    @ParameterTypeAssert({
+        'n': int,
+        'predict_kwargs': (None, dict)
+    })
     def predict(self, n, predict_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}

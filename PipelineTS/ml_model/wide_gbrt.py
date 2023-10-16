@@ -59,7 +59,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
                 'differential_n': differential_n,
                 'moving_avg_n': moving_avg_n,
                 'extend_daily_target_features': extend_daily_target_features,
-                'use_standard_scaler': use_standard_scaler
+                'use_standard_scaler': use_standard_scaler,
             }
         )
 
@@ -106,36 +106,6 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
         return self.processor.transform(data, mode=mode)  # X, y
 
-    def calculate_confidence_interval_gbrt(self, data, cv=5, fit_kwargs=None):
-        if fit_kwargs is None:
-            fit_kwargs = {}
-
-        tscv = TimeSeriesSplit(n_splits=cv)
-
-        residuals = []
-
-        data_x, data_y = self._data_preprocess(data, 'train')
-        data_x = pd.DataFrame(data_x)
-        data_y = pd.DataFrame(data_y)
-
-        for (train_index, test_index) in tscv.split(data_x, data_y):
-            train_x, train_y = data_x.iloc[train_index, :], data_y.iloc[train_index, :]
-
-            test_x, test_y = data_x.iloc[test_index, :], data_y.iloc[test_index, :]
-
-            model = self._define_model()
-
-            model.fit(train_x, train_y, eval_set=None, **fit_kwargs)
-            res = model.predict(test_x).flatten()
-            test_y = test_y.values.flatten()
-            error_rate = wmape(test_y, res)
-
-            residuals.append(error_rate)
-
-        quantile = np.percentile(residuals, self.all_configs['quantile'])
-
-        return quantile
-
     def fit(self, data, cv=5, fit_kwargs=None):
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
@@ -155,7 +125,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_gbrt(data, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_gbrt(data, fit_kwargs=fit_kwargs, cv=cv)
 
         return self
 

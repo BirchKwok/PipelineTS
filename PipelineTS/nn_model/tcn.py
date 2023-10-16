@@ -76,10 +76,11 @@ class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             pl_trainer_kwargs=pl_trainer_kwargs,
             random_state=random_state,
         )
-        self.model = tcn(**self.all_configs['model_configs'])
+        self.model = self._define_model()
 
         self.all_configs.update(
             {
+                'lags': lags,
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
@@ -88,12 +89,16 @@ class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             }
         )
 
-    def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
-        super().fit(data, convert_dataframe_kwargs, fit_kwargs)
+    def _define_model(self):
+        return tcn(**self.all_configs['model_configs'])
+
+    def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None, convert_float32=True):
+        super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=convert_float32)
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval(
-                    data, estimator=tcn, cv=cv, fit_kwargs=fit_kwargs
+                self.calculate_confidence_interval_darts(
+                    data, fit_kwargs=fit_kwargs, convert2dts_dataframe_kwargs=convert_dataframe_kwargs,
+                    cv=cv
                 )
 
         return self

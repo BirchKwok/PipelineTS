@@ -1,2 +1,2 @@
 from .prophet import ProphetModel
-from .autoarima import AutoARIMAModel
+from .auto_arima import AutoARIMAModel

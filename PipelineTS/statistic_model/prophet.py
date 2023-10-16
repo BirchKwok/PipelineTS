@@ -1,9 +1,7 @@
 import logging
 
-import numpy as np
 from prophet import Prophet
 from spinesUtils import generate_function_kwargs
-from sklearn.model_selection import TimeSeriesSplit
 
 from PipelineTS.base import StatisticModelMixin, IntervalEstimationMixin
 
@@ -18,7 +16,7 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             self,
             time_col,
             target_col,
-            lags=None,
+            lags=1,
             country_holidays=None,
             quantile=0.9,
             random_state=0,
@@ -32,7 +30,7 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             **prophet_configs
         )
 
-        self.model = Prophet(**self.all_configs['model_configs'])
+        self.model = self._define_model()
 
         self.all_configs.update({
             'quantile': quantile,
@@ -42,6 +40,9 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             'random_state': random_state,  # meanness, but only to follow coding conventions
             'lags': lags,  # meanness, but only to follow coding conventions
         })
+
+    def _define_model(self):
+        return Prophet(**self.all_configs['model_configs'])
 
     @staticmethod
     def _prophet_preprocessing(df, time_col, target_col):
@@ -59,44 +60,8 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_prophet(data, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_prophet(data, cv=cv, freq=freq, fit_kwargs=fit_kwargs)
         return self
-
-    def calculate_confidence_interval_prophet(self, data, cv=5, freq='D', fit_kwargs=None):
-        if fit_kwargs is None:
-            fit_kwargs = {}
-
-        tscv = TimeSeriesSplit(n_splits=cv)
-
-        data = data[['ds', 'y']]
-
-        residuals = []
-
-        for (train_index, test_index) in tscv.split(data):
-            train_ds = data.iloc[train_index, :]
-
-            test_v = data['y'].iloc[test_index].values
-            model = Prophet(**self.all_configs['model_configs'])
-
-            model.fit(train_ds, **fit_kwargs)
-
-            res = model.predict(
-                self.model.make_future_dataframe(
-                    periods=len(test_v),
-                    freq=freq,
-                    include_history=False,
-                ))[['ds', 'yhat']]
-
-            error_rate = np.abs((res['yhat'].values - test_v) / test_v)
-            error_rate = np.where((error_rate == np.inf) | (error_rate == np.nan), 0., error_rate)
-
-            residuals.extend(error_rate.tolist())
-
-        quantile = np.percentile(residuals, self.all_configs['quantile'])
-        if isinstance(quantile, (list, np.ndarray)):
-            quantile = quantile[0]
-
-        return quantile
 
     def predict(self, num_days, freq='D', include_history=False):
         res = self.model.predict(

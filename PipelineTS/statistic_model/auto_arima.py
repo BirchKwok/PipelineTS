@@ -9,6 +9,7 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
             self,
             time_col,
             target_col,
+            lags=1,
             start_p=8,
             max_p=12,
             start_q=1,
@@ -31,16 +32,20 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
             **darts_auto_arima_configs
         )
 
-        self.model = AutoARIMA(**self.all_configs['model_configs'])
+        self.model = self._define_model()
 
         self.all_configs.update(
             {
+                'lags': lags,   # meanness, but only to follow coding conventions
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
                 'quantile_error': 0
             }
         )
+
+    def _define_model(self):
+        return AutoARIMA(**self.all_configs['model_configs'])
 
     def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
         super().fit(
@@ -51,7 +56,8 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval(data, estimator=AutoARIMA, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_darts(data, fit_kwargs=fit_kwargs,
+                                                         convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
 
         return self
 

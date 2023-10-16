@@ -1,9 +1,5 @@
-from copy import deepcopy
-
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import TimeSeriesSplit
-from spinesTS.metrics import wmape
 from spinesTS.preprocessing import split_series
 from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
 
@@ -42,42 +38,6 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                                 window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
             return x, y
 
-    def calculate_confidence_interval_nn(self, data, cv=5, fit_kwargs=None):
-        if fit_kwargs is None:
-            kwargs = {}
-        else:
-            kwargs = deepcopy(fit_kwargs)
-
-        kwargs.update({'verbose': False})
-
-        tscv = TimeSeriesSplit(n_splits=cv, test_size=self.all_configs['lags'])
-
-        residuals = []
-
-        data_x, data_y = self._data_preprocess(data, update_last_data=False, mode='train')
-        data_x = pd.DataFrame(data_x)
-        data_y = pd.DataFrame(data_y)
-
-        for (train_index, test_index) in tscv.split(data_x, data_y):
-            train_x, train_y = data_x.iloc[train_index, :].values, data_y.iloc[train_index, :].values
-
-            test_x, test_y = data_x.iloc[test_index, :].values, data_y.iloc[test_index, :].values
-
-            model = self._define_model()
-
-            model.fit(train_x, train_y, eval_set=[(train_x, train_y)], **kwargs)
-            res = model.predict(test_x).flatten()
-
-            test_y = test_y.flatten()
-
-            error_rate = wmape(test_y, res)
-
-            residuals.append(error_rate)
-
-        quantile = np.percentile(residuals, self.all_configs['quantile'])
-
-        return quantile
-
     @ParameterTypeAssert({
         'valid_data': (None, pd.DataFrame)
     })
@@ -110,7 +70,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_nn(data, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_nn(data, fit_kwargs=fit_kwargs, cv=cv)
 
         return self
 

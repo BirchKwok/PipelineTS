@@ -1,13 +1,10 @@
-from sklearn.model_selection import TimeSeriesSplit
 from spinesTS.ml_model import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
-from copy import deepcopy
 
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from lightgbm import LGBMRegressor
 
-from spinesTS.metrics import wmape
 from spinesTS.pipeline import Pipeline
 from spinesTS.preprocessing import split_series
 from spinesUtils import generate_function_kwargs
@@ -86,42 +83,6 @@ class MultiOutputRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
         return split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
                             window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
 
-    def calculate_confidence_interval_mor(self, data, cv=5, fit_kwargs=None):
-        if fit_kwargs is None:
-            fit_kwargs = {}
-
-        tscv = TimeSeriesSplit(n_splits=cv, test_size=self.all_configs['lags'])
-
-        residuals = []
-
-        data_x, data_y = self._data_preprocess(data)
-        data_x = pd.DataFrame(data_x)
-        data_y = pd.DataFrame(data_y)
-
-        for (train_index, test_index) in tscv.split(data_x, data_y):
-            train_x, train_y = data_x.iloc[train_index, :].values, data_y.iloc[train_index, :].values
-
-            test_x, test_y = data_x.iloc[test_index, :].values, data_y.iloc[test_index, :].values
-
-            model = self._define_model()
-
-            if hasattr(model.fit, 'eval_set'):
-                model.fit(train_x, train_y, eval_set=[(train_x, train_y)], **fit_kwargs)
-            else:
-                model.fit(train_x, train_y, **fit_kwargs)
-
-            res = model.predict(test_x).flatten()
-
-            test_y = test_y.flatten()
-
-            error_rate = wmape(test_y, res)
-
-            residuals.append(error_rate)
-
-        quantile = np.percentile(residuals, self.all_configs['quantile'])
-
-        return quantile
-
     def fit(self, data, cv=5, fit_kwargs=None):
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
@@ -139,7 +100,7 @@ class MultiOutputRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_mor(data, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_mor(data, fit_kwargs=fit_kwargs, cv=cv)
 
         return self
 
@@ -266,44 +227,6 @@ class MultiStepRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
         return split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
                             window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
 
-    def calculate_confidence_interval_mor(self, data, cv=5, fit_kwargs=None):
-        if fit_kwargs is None:
-            kwargs = {}
-        else:
-            kwargs = deepcopy(fit_kwargs)
-
-        tscv = TimeSeriesSplit(n_splits=cv, test_size=self.all_configs['lags'])
-
-        residuals = []
-
-        data_x, data_y = self._data_preprocess(data)
-        data_x = pd.DataFrame(data_x)
-        data_y = pd.DataFrame(data_y)
-
-        for (train_index, test_index) in tscv.split(data_x, data_y):
-            train_x, train_y = data_x.iloc[train_index, :].values, data_y.iloc[train_index, :].values
-
-            test_x, test_y = data_x.iloc[test_index, :].values, data_y.iloc[test_index, :].values
-
-            model = self._define_model()
-
-            if hasattr(model.fit, 'eval_set'):
-                model.fit(train_x, train_y, eval_set=[(train_x, train_y)], **kwargs)
-            else:
-                model.fit(train_x, train_y, **kwargs)
-
-            res = model.predict(test_x).flatten()
-
-            test_y = test_y.flatten()
-
-            error_rate = wmape(test_y, res)
-
-            residuals.append(error_rate)
-
-        quantile = np.percentile(residuals, self.all_configs['quantile'])
-
-        return quantile
-
     def fit(self, data, cv=5, fit_kwargs=None):
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
@@ -321,7 +244,7 @@ class MultiStepRegressorModel(GBDTModelMixin, IntervalEstimationMixin):
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_mor(data, cv=cv, fit_kwargs=fit_kwargs)
+                self.calculate_confidence_interval_mor(data, fit_kwargs=fit_kwargs, cv=cv)
 
         return self
 

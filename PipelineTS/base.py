@@ -2,7 +2,6 @@ import sys
 from copy import deepcopy
 
 import numpy as np
-from sklearn.model_selection import TimeSeriesSplit
 from spinesUtils.asserts import *
 from spinesTS.metrics import wmape
 
@@ -168,42 +167,145 @@ class NNModelMixin:
 
 
 class IntervalEstimationMixin:
-    def calculate_confidence_interval(self, data, estimator, cv=5,
-                                      fit_kwargs=None, convert2dts_dataframe=True):
+    def check_data(self, data):
+        from darts.timeseries import TimeSeries
+        if isinstance(data, TimeSeries):
+            data = data.pd_dataframe()
+
+        if len(data) < 3 * self.all_configs['lags']:
+            raise ValueError("data length must be greater than or equal to 3 * lags.")
+
+    def _split_train_valid_data(self, data, cv=5, is_prophet=False):
+        self.check_data(data)
+
+        if is_prophet:
+            data = data[['ds', 'y']]
+        else:
+            data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
+
+        from mapie.subsample import BlockBootstrap
+
+        cv = BlockBootstrap(n_resamplings=cv, length=self.all_configs['lags'], random_state=0)
+
+        for train_index, test_index in cv.split(data):
+            if len(test_index) > 0 and len(train_index) >= self.all_configs['lags']:
+                yield (data.iloc[train_index, :].reset_index(drop=True),
+                       data.iloc[test_index, :].reset_index(drop=True))
+
+    def calculate_confidence_interval_darts(self, data, cv=5, fit_kwargs=None, convert2dts_dataframe_kwargs=None):
         if fit_kwargs is None:
             fit_kwargs = {}
 
-        tscv = TimeSeriesSplit(n_splits=cv)
-
-        data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
+        if convert2dts_dataframe_kwargs is None:
+            convert2dts_dataframe_kwargs = {}
 
         residuals = []
 
-        for (train_index, test_index) in tscv.split(data):
-            if convert2dts_dataframe:
-                train_ds = self.convert2dts_dataframe(
-                    data.iloc[train_index, :].reset_index(drop=True),
-                    time_col=self.all_configs['time_col'],
-                    target_col=self.all_configs['target_col']
-                ).astype(np.float32)
-            else:
-                train_ds = data.iloc[train_index, :].reset_index(drop=True).astype(np.float32)
+        for train_data, valid_data in self._split_train_valid_data(data, cv=cv):
+            valid_y = valid_data[[self.all_configs['target_col']]].values
 
-            test_v = data[self.all_configs['target_col']].iloc[test_index].values
-            est = deepcopy(estimator)
-            model = est(**self.all_configs['model_configs'])
+            train_ds = self.convert2dts_dataframe(
+                data.reset_index(drop=True),
+                time_col=self.all_configs['time_col'],
+                target_col=self.all_configs['target_col'],
+                **convert2dts_dataframe_kwargs
+            ).astype(np.float32)
+
+            model = self._define_model()
 
             model.fit(train_ds, **fit_kwargs)
 
-            res = model.predict(len(test_v)).pd_dataframe()
+            res = model.predict(len(valid_y)).pd_dataframe()[self.all_configs['target_col']].values
 
-            error_rate = wmape(res[self.all_configs['target_col']].values, test_v)
+            y_cal_error = wmape(valid_y.flatten(), res.flatten())
 
-            residuals.append(error_rate)
+            residuals.append(y_cal_error)
 
-        quantile = np.percentile(residuals, self.all_configs['quantile'])
-        if isinstance(quantile, (list, np.ndarray)):
-            quantile = quantile[0]
+        quantile = np.percentile(residuals, q=self.all_configs['quantile'])
+
+        return quantile
+
+    def _calculate_confidence_interval_sps(self, data, cv=5, fit_kwargs=None, train_data_process_kwargs=None,
+                                           valid_data_process_kwargs=None):
+        if fit_kwargs is None:
+            fit_kwargs = {}
+
+        if train_data_process_kwargs is None:
+            train_data_process_kwargs = {}
+
+        if valid_data_process_kwargs is None:
+            valid_data_process_kwargs = {}
+
+        residuals = []
+        for train_data, valid_data in self._split_train_valid_data(data, cv=cv):
+
+            data_x, data_y = self._data_preprocess(train_data, **train_data_process_kwargs)
+
+            valid_data_x, valid_data_y = self._data_preprocess(valid_data, **valid_data_process_kwargs)
+
+            model = self._define_model()
+
+            model.fit(data_x, data_y, **fit_kwargs)
+
+            res = model.predict(valid_data_x).flatten()
+
+            y_cal_error = wmape(valid_data_y.flatten(), res.flatten())
+
+            residuals.append(y_cal_error)
+
+        quantile = np.percentile(y_cal_error, q=self.all_configs['quantile'])
+
+        return quantile
+
+    def calculate_confidence_interval_mor(self, data, cv=5, fit_kwargs=None):
+        return self._calculate_confidence_interval_sps(data, fit_kwargs=fit_kwargs, cv=cv)
+
+    def calculate_confidence_interval_gbrt(self, data, cv=5, fit_kwargs=None):
+
+        return self._calculate_confidence_interval_sps(data, fit_kwargs=fit_kwargs,
+                                                       train_data_process_kwargs={'mode': 'train'},
+                                                       valid_data_process_kwargs={'mode': 'train'},
+                                                       cv=cv)
+
+    def calculate_confidence_interval_nn(self, data, cv=5, fit_kwargs=None):
+        if fit_kwargs is None:
+            kwargs = {}
+        else:
+            kwargs = deepcopy(fit_kwargs)
+
+        kwargs.update({'verbose': False})
+
+        return self._calculate_confidence_interval_sps(
+            data, fit_kwargs=kwargs, train_data_process_kwargs={'mode': 'train', 'update_last_data': False},
+            valid_data_process_kwargs={'mode': 'predict', 'update_last_data': False}, cv=cv)
+
+    def calculate_confidence_interval_prophet(self, data, cv=5, freq='D', fit_kwargs=None):
+        if fit_kwargs is None:
+            fit_kwargs = {}
+
+        for train_data, valid_data in self._split_train_valid_data(data, cv=cv, is_prophet=True):
+            train_ds = train_data[['ds', 'y']]
+
+            residuals = []
+
+            valid_data_y = valid_data['y'].values
+
+            model = self._define_model()
+
+            model.fit(train_ds, **fit_kwargs)
+
+            res = model.predict(
+                self.model.make_future_dataframe(
+                    periods=len(valid_data_y),
+                    freq=freq,
+                    include_history=False,
+                ))['yhat'].values
+
+            y_cal_error = wmape(valid_data_y.flatten(), res.flatten())
+
+            residuals.append(y_cal_error)
+
+        quantile = np.percentile(residuals, q=self.all_configs['quantile'])
 
         return quantile
 
