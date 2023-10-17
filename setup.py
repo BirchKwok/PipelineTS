@@ -7,11 +7,10 @@ def read_requirements(path):
     return list(Path(path).read_text().splitlines())
 
 
-base_reqs = read_requirements("requirements/core.txt")
-extra_reqs = read_requirements("requirements/extra.txt")
+base_reqs = read_requirements(Path('.').parent.joinpath("requirements/core.txt"))
+extra_reqs = read_requirements(Path('.').parent.joinpath("requirements/extra.txt"))
 
 all_reqs = base_reqs + extra_reqs
-
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
@@ -34,8 +33,7 @@ setup(
         'Operating System :: OS Independent',
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
-        'Programming Language :: Python :: 3.11',
-        'Programming Language :: Python :: 3.12'
+        'Programming Language :: Python :: 3.11'
     ],
     python_requires=">=3.9",
     url='https://github.com/BirchKwok/PipelineTS',
