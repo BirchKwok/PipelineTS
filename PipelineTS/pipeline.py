@@ -114,7 +114,8 @@ class ModelPipeline:
     @ParameterValuesAssert({
         'metric': lambda s: check_obj_is_function(s),
         'device': (
-                lambda s: s in ("cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto") or augmented_isinstance(s, None)
+                lambda s: s in ("cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto", "cuda")
+                          or augmented_isinstance(s, None)
         )
     }, 'Pipeline')
     def __init__(
