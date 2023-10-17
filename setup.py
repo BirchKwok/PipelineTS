@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name='PipelineTS',
-    version="0.3.0",
+    version="0.3.1",
     description='One-stop time series analysis tool, supporting time series data preprocessing, '
                 'feature engineering, model training, model evaluation, and model prediction.',
     keywords='timeseries machine learning',
@@ -36,7 +36,7 @@ setup(
         'lightgbm>=3.3.5',
         'IPython>=8.12.1',
         'tabulate>=0.8.9',
-        'torch>=2.1.0',
+        'torch>=2.0.0',
         'xgboost>=2.0.0',
         'catboost>=1.2.2',
         'MAPIE>=0.7.0'
