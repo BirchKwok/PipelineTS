@@ -20,8 +20,9 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
         'quantile': (None, float),
         'random_state': (None, int),
         'multi_models': bool,
-        'use_static_covariates': bool
-    })
+        'use_static_covariates': bool,
+        'verbose': bool
+    }, 'CatBoostModel')
     def __init__(
             self,
             time_col,
@@ -34,6 +35,7 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
             random_state=None,
             multi_models=True,
             use_static_covariates=True,
+            verbose=False,
             **darts_catboost_model_configs
     ):
         super().__init__(time_col=time_col, target_col=target_col)
@@ -48,6 +50,7 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
             random_state=random_state,
             multi_models=multi_models,
             use_static_covariates=use_static_covariates,
+            verbose=verbose,
             **darts_catboost_model_configs
         )
         self.model = self._define_model()
@@ -98,6 +101,18 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
 
 
 class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
+    @ParameterTypeAssert({
+        'time_col': str,
+        'target_col': str,
+        'lags': int,
+        'lags_past_covariates': (None, int),
+        'lags_future_covariates': (None, int),
+        'quantile': (None, float),
+        'random_state': (None, int),
+        'multi_models': bool,
+        'use_static_covariates': bool,
+        'verbose': int
+    }, 'LightGBMModel')
     def __init__(
             self,
             time_col,
@@ -113,6 +128,8 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
             categorical_past_covariates=None,
             categorical_future_covariates=None,
             categorical_static_covariates=None,
+            verbose=-1,
+            linear_tree=True,
             **darts_lightgbm_model_configs
     ):
         super().__init__(time_col=time_col, target_col=target_col)
@@ -130,6 +147,8 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
             categorical_past_covariates=categorical_past_covariates,
             categorical_future_covariates=categorical_future_covariates,
             categorical_static_covariates=categorical_static_covariates,
+            verbose=verbose,
+            linear_tree=linear_tree,
             **darts_lightgbm_model_configs
         )
         self.model = self._define_model()
@@ -195,6 +214,7 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
             categorical_past_covariates=None,
             categorical_future_covariates=None,
             categorical_static_covariates=None,
+            verbose=0,
             **darts_xgboost_model_configs
     ):
         super().__init__(time_col=time_col, target_col=target_col)
@@ -212,6 +232,7 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
             categorical_past_covariates=categorical_past_covariates,
             categorical_future_covariates=categorical_future_covariates,
             categorical_static_covariates=categorical_static_covariates,
+            verbosity=verbose,
             **darts_xgboost_model_configs
         )
         self.model = self._define_model()

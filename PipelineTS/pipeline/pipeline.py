@@ -1,7 +1,5 @@
-import time
 from copy import deepcopy
 
-from frozendict import frozendict
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
@@ -12,87 +10,19 @@ from spinesUtils.asserts import check_obj_is_function, augmented_isinstance
 from spinesUtils.utils import (
     Logger,
     drop_duplicates_with_order,
-    reindex_iterable_object,
-    is_in_ipython
 )
 
-from tabulate import tabulate
-from IPython.display import display
 
-from PipelineTS.statistic_model import *
-from PipelineTS.ml_model import *
-from PipelineTS.nn_model import *
 from PipelineTS.metrics import quantile_acc
 from PipelineTS.nn_model.sps_nn_model_base import SpinesNNModelMixin
+from PipelineTS.pipeline.pipeline_models import get_all_available_models
+from PipelineTS.pipeline.pipeline_utils import Timer
+from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
 
 # TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
 
-MODELS = frozendict({
-    'prophet': ProphetModel,
-    'auto_arima': AutoARIMAModel,
-    'catboost': CatBoostModel,
-    'lightgbm': LightGBMModel,
-    'xgboost': XGBoostModel,
-    'wide_gbrt': WideGBRTModel,
-    'd_linear': DLinearModel,
-    'n_linear': NLinearModel,
-    'n_beats': NBeatsModel,
-    'n_hits': NHitsModel,
-    'tcn': TCNModel,
-    'tft': TFTModel,
-    'gau': GAUModel,
-    'stacking_rnn': StackingRNNModel,
-    'time2vec': Time2VecModel,
-    'multi_output_model': MultiOutputRegressorModel,
-    'multi_step_model': MultiStepRegressorModel,
-    'transformer': TransformerModel,
-    'random_forest': RandomForestModel,
-    'tide': TiDEModel
-})
-
-
-class PipelineConfigs:
-    @ParameterTypeAssert({
-        'configs': list
-    })
-    @ParameterValuesAssert({
-        'configs': lambda s: all(isinstance(i, tuple) and len(i) == 2 and isinstance(i[1], dict) for i in s)
-    })
-    def __init__(self, configs):
-        self.sub_configs = {'init_configs': {}, 'fit_configs': {}, 'predict_configs': {}}
-
-        _to_process_configs = drop_duplicates_with_order(configs)
-
-        self.configs = []
-        for models_group in reindex_iterable_object(_to_process_configs, key=lambda s: s[0], index_start=1):
-            for (index, (model_name, model_configs)) in models_group:
-                if not all(i in self.sub_configs for i in model_configs):
-                    raise KeyError
-
-                if model_name not in MODELS:
-                    raise KeyError
-
-                if len(model_configs) < 3:
-                    model_configs.update({k: self.sub_configs[k]
-                                          for k in self.sub_configs if k not in model_configs})
-
-                self.configs.append((model_name, f"{model_name}_{index}", model_configs))
-
-        if is_in_ipython():
-            display(
-                tabulate(self.configs, headers=['model_name', 'model_name_with_index', 'model_configs'],
-                         tablefmt='html', colalign=("right", "left", "left"), showindex='always')
-            )
-        else:
-            print(
-                tabulate(self.configs, headers=['model_name', 'model_name_with_index', 'model_configs'],
-                         tablefmt='pretty', colalign=("right", "left", "left"), showindex='always')
-            )
-
-    def get_configs(self, model_name_after_rename):
-        for (model_name, mnwi, model_configs) in self.configs:
-            if model_name_after_rename == mnwi:
-                return model_configs
+# 获取所有可用的模型
+MODELS = get_all_available_models()
 
 
 class ModelPipeline:
@@ -131,7 +61,7 @@ class ModelPipeline:
             random_state=0,
             verbose=True,
             include_init_config_model=False,
-            use_standard_scale=False,  # otherwise, MinMaxScaler
+            use_standard_scale=False,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
             device=None,
             cv=5
     ):
@@ -164,6 +94,8 @@ class ModelPipeline:
         self.best_model_ = None
         self.device = device
         self.cv = cv
+
+        self._timer = Timer()
 
     @staticmethod
     def _device_setting(model, device):
@@ -271,7 +203,7 @@ class ModelPipeline:
         return init_kwargs
 
     def _fit(self, model_name_after_rename, model, train_df, valid_df, res_df, use_scaler=True):
-        tik = time.time()
+        self._timer.start()
 
         # -------------------- fitting -------------------------
         if self.configs is not None:
@@ -285,11 +217,10 @@ class ModelPipeline:
         model_kwargs = self._fill_func_params(func=model.fit, data=train_df, fit_kwargs=fit_kwargs, cv=self.cv)
         model.fit(**model_kwargs)
 
-        tok = time.time()
-        train_cost = tok - tik
+        train_cost = self._timer.last_timestamp_diff()
 
         # -------------------- predicting -------------------------
-        tik = time.time()
+        self._timer.middle_point()
 
         if self.configs is not None:
             if self.configs.get_configs(model_name_after_rename):
@@ -332,8 +263,8 @@ class ModelPipeline:
                 ).squeeze()
             )
 
-        tok = time.time()
-        eval_cost = tok - tik
+        eval_cost = self._timer.last_timestamp_diff()
+        self._timer.clear()  # 重置计时器
 
         if self.with_quantile_prediction:
             res_df = pd.concat(
@@ -351,14 +282,13 @@ class ModelPipeline:
 
     @ParameterTypeAssert({
         'data': pd.DataFrame,
-        'valid_data': (None, pd.DataFrame),
-        'update_leaderboard': bool
+        'valid_data': (None, pd.DataFrame)
     })
-    def fit(self, data, valid_data=None, update_leaderboard=True):
+    def fit(self, data, valid_data=None):
         """fit all models"""
 
         if data.shape[0] <= self.lags:
-            raise ValueError(f'length of df must be greater than lags, df length = {df.shape[0]}, lags = {self.lags}')
+            raise ValueError(f'length of df must be greater than lags, df length = {data.shape[0]}, lags = {self.lags}')
 
         if valid_data is not None:
             assert data.columns.tolist() == valid_data.columns.tolist()
@@ -389,12 +319,11 @@ class ModelPipeline:
 
             self.models_.append((model_name_after_rename, model))
 
-        if update_leaderboard:
-            self.leader_board_ = res.sort_values(
-                by='metric', ascending=self.metric_less_is_better
-            ).reset_index(drop=True)
+        self.leader_board_ = res.sort_values(
+            by='metric', ascending=self.metric_less_is_better
+        ).reset_index(drop=True)
 
-            self.leader_board_.columns.name = 'Leaderboard'
+        self.leader_board_.columns.name = 'Leaderboard'
 
         self.best_model_ = self.get_models(self.leader_board_.iloc[0, :]['model'])
         return self.leader_board_

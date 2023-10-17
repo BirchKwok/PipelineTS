@@ -1,6 +1,5 @@
 import logging
 
-from prophet import Prophet
 from spinesUtils import generate_function_kwargs
 
 from PipelineTS.base import StatisticModelMixin, IntervalEstimationMixin
@@ -12,6 +11,8 @@ logger.setLevel(logging.CRITICAL)
 
 
 class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
+    from prophet import Prophet
+
     def __init__(
             self,
             time_col,
@@ -24,8 +25,9 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
     ):
         super().__init__(time_col=time_col, target_col=target_col)
 
+
         self.all_configs['model_configs'] = generate_function_kwargs(
-            Prophet,
+            ProphetModel.Prophet,
             holidays=country_holidays,
             **prophet_configs
         )
@@ -42,7 +44,7 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         })
 
     def _define_model(self):
-        return Prophet(**self.all_configs['model_configs'])
+        return ProphetModel.Prophet(**self.all_configs['model_configs'])
 
     @staticmethod
     def _prophet_preprocessing(df, time_col, target_col):

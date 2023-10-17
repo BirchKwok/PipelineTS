@@ -5,13 +5,18 @@
 ## 安装
 
 ```bash
-conda install -c conda-forge prophet
+# if you don't want to use the prophet model 如果你不想使用prophet模型
+# run this
+python -m pip install PipelineTS[core]
 
-python -m pip install PipelineTS
+# if you want to use all models 如果你想使用所有模型
+# run this
+python -m pip install PipelineTS[all]
 ```
 
 ## 快速开始
 
+### 查看可用模型
 ```python
 from PipelineTS.dataset import LoadWebSales
 
@@ -21,11 +26,38 @@ valid_data = init_data.iloc[-30:, :]
 data = init_data.iloc[:-30, :]
 device = 'cpu'
 
-from PipelineTS.pipeline import ModelPipeline
+from PipelineTS.pipeline.pipeline import ModelPipeline
 
 # list all models
 ModelPipeline.list_models()
+```
 
+```
+[output]:
+['prophet',
+ 'auto_arima',
+ 'catboost',
+ 'lightgbm',
+ 'xgboost',
+ 'wide_gbrt',
+ 'd_linear',
+ 'n_linear',
+ 'n_beats',
+ 'n_hits',
+ 'tcn',
+ 'tft',
+ 'gau',
+ 'stacking_rnn',
+ 'time2vec',
+ 'multi_output_model',
+ 'multi_step_model',
+ 'transformer',
+ 'random_forest',
+ 'tide']
+```
+
+### 开始训练
+```python
 from sklearn.metrics import mean_absolute_error
 
 pipeline = ModelPipeline(
@@ -55,8 +87,8 @@ import pandas as pd
 # convert time col, the date column is assumed to be date_col
 time_col = 'date_col'
 target_col = 'ta'
-lags = 30  # 往前的窗口大小，数据将会被切割成lags天的多条序列进行训练
-n = 30 # 需要预测多少步，在这个例子里为需要预测多少天
+lags = 60  # 往前的窗口大小，数据将会被切割成lags天的多条序列进行训练
+n = 40 # 需要预测多少步，在这个例子里为需要预测多少天
 
 # you can also load data with pandas
 # init_data = pd.read_csv('/path/to/your/data.csv')
@@ -101,10 +133,7 @@ tide.predict(n)
 # 如果需要配置模型
 from xgboost import XGBRegressor
 from catboost import CatBoostRegressor
-from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
-
-# list all models
-print(ModelPipeline.list_models())
+from PipelineTS.pipeline.pipeline import ModelPipeline, PipelineConfigs
 
 # 第一个为模型的名称，需要在PipelineTS.list_models()列表中，第二个为dict类型
 # dict可以有三个key: 'init_configs', 'fit_configs', 'predict_configs'，也可以任意一个，剩余的会自动补全为默认参数
@@ -136,10 +165,54 @@ pipeline_configs = PipelineConfigs([
 </tbody>
 </table>
 
+### 非区间预测
+
 ```python
 from sklearn.metrics import mean_absolute_error
 
-from PipelineTS.pipeline import ModelPipeline
+from PipelineTS.pipeline.pipeline import ModelPipeline
+
+pipeline = ModelPipeline(
+    time_col=time_col,
+    target_col=target_col,
+    lags=lags,
+    random_state=42,
+    metric=mean_absolute_error,
+    metric_less_is_better=True,
+    configs=pipeline_configs,
+    include_init_config_model=False,
+    use_standard_scale=False,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
+    with_quantile_prediction=False,
+    device=device,
+    # models=['wide_gbrt']  # 支持指定模型
+)
+
+pipeline.fit(data, valid_data)
+```
+
+#### 获取PipelineTS中的模型参数
+```python
+# Gets all configurations for the specified model， default to best model
+pipeline.get_models(model_name='wide_gbrt').all_configs
+```
+
+#### 绘制预测结果
+```python
+# use best model to predict next 30 steps data point
+prediction = pipeline.predict(n)  # 可以使用model_name指定pipeline中已训练好的模型
+
+plot_data_period(init_data.iloc[-100:, :], prediction, 
+                 time_col=time_col, target_col=target_col)
+```
+
+![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic2.png)
+
+### 区间预测
+
+```python
+from sklearn.metrics import mean_absolute_error
+
+from PipelineTS.pipeline.pipeline import ModelPipeline
 
 pipeline = ModelPipeline(
     time_col=time_col,
@@ -159,13 +232,7 @@ pipeline = ModelPipeline(
 pipeline.fit(data, valid_data)
 ```
 
-### 获取PipelineTS中的模型参数
-```python
-# Gets all configurations for the specified model， default to best model
-pipeline.get_models().all_configs
-```
-
-### 绘制预测结果
+#### 绘制预测结果
 ```python
 # use best model to predict next 30 steps data point
 prediction = pipeline.predict(n, model_name=None)  # 可以使用model_name指定pipeline中已训练好的模型
@@ -173,4 +240,4 @@ prediction = pipeline.predict(n, model_name=None)  # 可以使用model_name指�
 plot_data_period(init_data.iloc[-100:, :], prediction, 
                  time_col=time_col, target_col=target_col)
 ```
-![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic2.png)
+![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic3.png)

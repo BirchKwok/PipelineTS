@@ -1,18 +1,35 @@
+from pathlib import Path
+
 from setuptools import find_packages, setup
+
+
+def read_requirements(path):
+    return list(Path(path).read_text().splitlines())
+
+
+base_reqs = read_requirements("requirements/core.txt")
+extra_reqs = read_requirements("requirements/extra.txt")
+
+all_reqs = base_reqs + extra_reqs
+
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(
     name='PipelineTS',
-    version="0.3.3",
+    version="0.3.4",
     description='One-stop time series analysis tool, supporting time series data preprocessing, '
                 'feature engineering, model training, model evaluation, and model prediction.',
-    keywords='timeseries machine learning',
+    keywords='time series forecasting',
     packages=find_packages(),
     long_description=long_description,
     long_description_content_type="text/markdown",
     classifiers=[
+        'Intended Audience :: Science/Research',
+        'Intended Audience :: Developers',
+        'Topic :: Software Development',
+        'Topic :: Scientific/Engineering',
         'License :: OSI Approved :: Apache Software License',
         'Operating System :: OS Independent',
         'Programming Language :: Python :: 3.9',
@@ -20,27 +37,11 @@ setup(
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12'
     ],
+    python_requires=">=3.9",
     url='https://github.com/BirchKwok/PipelineTS',
     author='Birch Kwok',
     author_email='birchkwok@gmail.com',
-    install_requires=[
-        'scikit-learn>=1.3.0',
-        'numpy>=1.24.3',
-        'pandas>=2.0.3',
-        'matplotlib>=3.7.1',
-        'frozendict>=2.3.0',
-        'darts>=0.24.0',
-        'prophet>=1.1.4',
-        'spinesTS>=0.3.12',
-        'spinesUtils>=0.3.5',
-        'lightgbm>=3.3.5',
-        'IPython>=8.12.1',
-        'tabulate>=0.8.9',
-        'torch>=2.0.0',
-        'xgboost>=2.0.0',
-        'catboost>=1.2.2',
-        'MAPIE>=0.7.0'
-    ],
+    install_requires=base_reqs,
+    extras_require={"all": all_reqs, "core": base_reqs},
     zip_safe=False,
-    include_package_data=True
 )
