@@ -94,7 +94,7 @@ class PipelineConfigs:
                 return model_configs
 
 
-class PipelineTS:
+class ModelPipeline:
     @ParameterTypeAssert({
         'time_col': str,
         'target_col': str,

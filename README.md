@@ -14,23 +14,26 @@ python -m pip install PipelineTS
 
 ```python
 from PipelineTS.dataset import LoadWebSales
+
 init_data = LoadWebSales()[['date', 'type_a']]
 
 valid_data = init_data.iloc[-30:, :]
 data = init_data.iloc[:-30, :]
-device='cpu'
+device = 'cpu'
 
-from PipelineTS.pipeline import PipelineTS
+from PipelineTS.pipeline import ModelPipeline
+
 # list all models
-PipelineTS.list_models()
+ModelPipeline.list_models()
 
 from sklearn.metrics import mean_absolute_error
-pipeline = PipelineTS(
-    time_col='date', 
-    target_col='type_a', 
-    lags=30, 
-    random_state=42, 
-    metric=mean_absolute_error, 
+
+pipeline = ModelPipeline(
+    time_col='date',
+    target_col='type_a',
+    lags=30,
+    random_state=42,
+    metric=mean_absolute_error,
     metric_less_is_better=True,
     device=device
 )
@@ -93,14 +96,15 @@ tide.predict(n)
 ```
 
 ## PipelineTS 模块
+
 ```python
 # 如果需要配置模型
 from xgboost import XGBRegressor
 from catboost import CatBoostRegressor
-from PipelineTS.pipeline import PipelineTS, PipelineConfigs
+from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
 
 # list all models
-print(PipelineTS.list_models())
+print(ModelPipeline.list_models())
 
 # 第一个为模型的名称，需要在PipelineTS.list_models()列表中，第二个为dict类型
 # dict可以有三个key: 'init_configs', 'fit_configs', 'predict_configs'，也可以任意一个，剩余的会自动补全为默认参数
@@ -110,13 +114,13 @@ pipeline_configs = PipelineConfigs([
     ('multi_output_model', {'init_configs': {'verbose': -1}}),
     ('multi_step_model', {'init_configs': {'verbose': -1}}),
     ('multi_output_model', {
-        'init_configs': {'estimator': XGBRegressor, 'random_state': 42, 'kwargs':{'verbosity':0}}
-        }
-    ),
+        'init_configs': {'estimator': XGBRegressor, 'random_state': 42, 'kwargs': {'verbosity': 0}}
+    }
+     ),
     ('multi_output_model', {
         'init_configs': {'estimator': CatBoostRegressor, 'random_state': 42, 'verbose': False}
-        }
-    ),
+    }
+     ),
 ])
 ```
 <table>
@@ -135,19 +139,19 @@ pipeline_configs = PipelineConfigs([
 ```python
 from sklearn.metrics import mean_absolute_error
 
-from PipelineTS.pipeline import PipelineTS
+from PipelineTS.pipeline import ModelPipeline
 
-pipeline = PipelineTS(
-    time_col=time_col, 
-    target_col=target_col, 
-    lags=lags, 
-    random_state=42, 
-    metric=mean_absolute_error, 
+pipeline = ModelPipeline(
+    time_col=time_col,
+    target_col=target_col,
+    lags=lags,
+    random_state=42,
+    metric=mean_absolute_error,
     metric_less_is_better=True,
     configs=pipeline_configs,
     include_init_config_model=False,
     use_standard_scale=False,
-    with_quantile_prediction=True,   # turn on the quantile prediction switch, if you like
+    with_quantile_prediction=True,  # turn on the quantile prediction switch, if you like
     device=device,
     # models=['wide_gbrt']  # 支持指定模型
 )
