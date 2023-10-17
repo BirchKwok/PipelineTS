@@ -78,7 +78,7 @@ res = pipeline.predict(30)
 
 ```
 
-### 数据准备
+## 数据准备
 
 ```python
 
@@ -115,7 +115,7 @@ plot_data_period(
 ```
 ![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic1.png)
 
-### 单个模型的训练和预测
+## 单个模型的训练和预测
 
 ```python
 from PipelineTS.nn_model import TiDEModel
