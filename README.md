@@ -26,7 +26,7 @@ valid_data = init_data.iloc[-30:, :]
 data = init_data.iloc[:-30, :]
 device = 'cpu'
 
-from PipelineTS.pipeline.pipeline import ModelPipeline
+from PipelineTS.pipeline import ModelPipeline
 
 # list all models
 ModelPipeline.list_models()
@@ -133,7 +133,7 @@ tide.predict(n)
 # 如果需要配置模型
 from xgboost import XGBRegressor
 from catboost import CatBoostRegressor
-from PipelineTS.pipeline.pipeline import ModelPipeline, PipelineConfigs
+from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
 
 # 第一个为模型的名称，需要在PipelineTS.list_models()列表中，第二个为dict类型
 # dict可以有三个key: 'init_configs', 'fit_configs', 'predict_configs'，也可以任意一个，剩余的会自动补全为默认参数
@@ -170,7 +170,7 @@ pipeline_configs = PipelineConfigs([
 ```python
 from sklearn.metrics import mean_absolute_error
 
-from PipelineTS.pipeline.pipeline import ModelPipeline
+from PipelineTS.pipeline import ModelPipeline
 
 pipeline = ModelPipeline(
     time_col=time_col,
@@ -212,7 +212,7 @@ plot_data_period(init_data.iloc[-100:, :], prediction,
 ```python
 from sklearn.metrics import mean_absolute_error
 
-from PipelineTS.pipeline.pipeline import ModelPipeline
+from PipelineTS.pipeline import ModelPipeline
 
 pipeline = ModelPipeline(
     time_col=time_col,
