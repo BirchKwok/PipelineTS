@@ -23,6 +23,7 @@ from PipelineTS.statistic_model import *
 from PipelineTS.ml_model import *
 from PipelineTS.nn_model import *
 from PipelineTS.metrics import quantile_acc
+from PipelineTS.nn_model.sps_nn_model_base import SpinesNNModelMixin
 
 # TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
 
@@ -163,6 +164,18 @@ class ModelPipeline:
         self.device = device
         self.cv = cv
 
+    @staticmethod
+    def _device_setting(model, device):
+        if isinstance(model, SpinesNNModelMixin):
+            if device in ('cuda', 'cpu', 'mps'):
+                device = device
+            else:
+                device = 'cpu'
+        else:
+            device = device
+
+        return device
+
     def _initial_models(self):
         initial_models = []
         ms = tuple(sorted(MODELS.items(), key=lambda s: s[0])) if self._given_models is None else (
@@ -177,7 +190,7 @@ class ModelPipeline:
                 lags=self.lags,
                 random_state=self.random_state,
                 quantile=0.9 if self.with_quantile_prediction else None,
-                device=self.device
+                device=self._device_setting(model, self.device)
             )
 
             continue_signal = False  # 是否跳过添加默认模型
