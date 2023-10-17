@@ -4,6 +4,7 @@ from copy import deepcopy
 import numpy as np
 from spinesUtils.asserts import *
 from spinesTS.metrics import wmape
+from spinesTS.utils import func_has_params
 
 
 def load_dataset_to_darts(
@@ -172,8 +173,8 @@ class IntervalEstimationMixin:
         if isinstance(data, TimeSeries):
             data = data.pd_dataframe()
 
-        if len(data) < 3 * self.all_configs['lags']:
-            raise ValueError("data length must be greater than or equal to 3 * lags.")
+        if len(data) < 2 * self.all_configs['lags']:
+            raise ValueError("data length must be greater than or equal to 2 * lags.")
 
     def _split_train_valid_data(self, data, cv=5, is_prophet=False):
         self.check_data(data)
@@ -245,7 +246,10 @@ class IntervalEstimationMixin:
 
             model = self._define_model()
 
-            model.fit(data_x, data_y, **fit_kwargs)
+            if func_has_params(model.fit, 'eval_set'):
+                model.fit(data_x, data_y, eval_set=[(data_x, data_y)], **fit_kwargs)
+            else:
+                model.fit(data_x, data_y, **fit_kwargs)
 
             res = model.predict(valid_data_x).flatten()
 
@@ -277,7 +281,7 @@ class IntervalEstimationMixin:
 
         return self._calculate_confidence_interval_sps(
             data, fit_kwargs=kwargs, train_data_process_kwargs={'mode': 'train', 'update_last_data': False},
-            valid_data_process_kwargs={'mode': 'predict', 'update_last_data': False}, cv=cv)
+            valid_data_process_kwargs={'mode': 'train', 'update_last_data': False}, cv=cv)
 
     def calculate_confidence_interval_prophet(self, data, cv=5, freq='D', fit_kwargs=None):
         if fit_kwargs is None:

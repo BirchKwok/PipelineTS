@@ -31,11 +31,24 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             x_train, y_train = split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
                                             window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
 
+            if x_train.ndim == 1:
+                x_train = x_train.reshape(1, -1)
+
+            if y_train.ndim == 1:
+                y_train = y_train.reshape(1, -1)
+
             return x_train, y_train
         else:
             x, y = split_series(pd.concat((self.last_x, data[self.all_configs['target_col']])),
                                 pd.concat((self.last_x, data[self.all_configs['target_col']])),
                                 window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
+
+            if x.ndim == 1:
+                x = x.reshape(1, -1)
+
+            if y.ndim == 1:
+                y = y.reshape(1, -1)
+
             return x, y
 
     @ParameterTypeAssert({

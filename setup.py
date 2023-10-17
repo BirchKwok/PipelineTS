@@ -18,6 +18,7 @@ setup(
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12'
     ],
     url='https://github.com/BirchKwok/PipelineTS',
     author='Birch Kwok',
@@ -30,14 +31,15 @@ setup(
         'frozendict>=2.3.0',
         'darts>=0.24.0',
         'prophet>=1.1.4',
-        'spinesTS>=0.3.7',
+        'spinesTS>=0.3.12',
         'spinesUtils>=0.3.5',
         'lightgbm>=3.3.5',
         'IPython>=8.12.1',
         'tabulate>=0.8.9',
         'torch>=2.1.0',
         'xgboost>=2.0.0',
-        'catboost>=1.2.2'
+        'catboost>=1.2.2',
+        'MAPIE>=0.7.0'
     ],
     zip_safe=False,
     include_package_data=True
