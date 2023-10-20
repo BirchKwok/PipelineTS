@@ -8,9 +8,10 @@ from spinesUtils.asserts import ParameterTypeAssert, ParameterValuesAssert
     'data2': pd.DataFrame,
     'time_col': str,
     'target_col': str,
-    'labels': (None, list, tuple)
+    'labels': (None, list, tuple),
+    'date_fmt': str
 })
-def plot_data_period(data1, data2, time_col, target_col, labels=None):
+def plot_data_period(data1, data2, time_col, target_col, labels=None, date_fmt='%Y-%m-%d'):
     """可视化日期数据"""
     import matplotlib.pyplot as plt
     import matplotlib.dates as m_dates
@@ -28,6 +29,10 @@ def plot_data_period(data1, data2, time_col, target_col, labels=None):
             labels = ('Data', 'Test Data')
         else:
             assert len(labels) == 2
+
+    # 设置x轴为日期格式
+    date_fmt = m_dates.DateFormatter(date_fmt)
+    plt.gca().xaxis.set_major_formatter(date_fmt)
 
     # 绘制曲线
     plt.plot_date(data1[time_col], data1[target_col], label=labels[0],
@@ -52,10 +57,6 @@ def plot_data_period(data1, data2, time_col, target_col, labels=None):
 
     plt.axvspan(valid_period[0], valid_period[1], ymin=0, ymax=valid_data_max,
                 facecolor='lightyellow', alpha=0.5)
-
-    # 设置x轴为日期格式
-    date_fmt = m_dates.DateFormatter('%Y-%m-%d')
-    plt.gca().xaxis.set_major_formatter(date_fmt)
 
     # 添加网格线
     plt.grid(True)
