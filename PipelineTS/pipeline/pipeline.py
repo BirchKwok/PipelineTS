@@ -2,6 +2,7 @@ from copy import deepcopy
 
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from frozendict import frozendict
 
 from spinesTS.metrics import mae
 from spinesTS.utils import func_has_params
@@ -11,7 +12,6 @@ from spinesUtils.utils import (
     Logger,
     drop_duplicates_with_order,
 )
-
 
 from PipelineTS.metrics import quantile_acc
 from PipelineTS.nn_model.sps_nn_model_base import SpinesNNModelMixin
@@ -31,7 +31,8 @@ class ModelPipeline:
         'target_col': str,
         'lags': int,
         'with_quantile_prediction': bool,
-        'models': (None, list),
+        'include_models': (None, list),
+        'exclude_models': (None, list),
         'metric_less_is_better': bool,
         'configs': (None, PipelineConfigs),
         'random_state': (int, None),
@@ -45,7 +46,7 @@ class ModelPipeline:
         'metric': lambda s: check_obj_is_function(s),
         'device': (
                 lambda s: s in ("cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto", "cuda")
-                          or augmented_isinstance(s, None)
+                or augmented_isinstance(s, None)
         )
     }, 'Pipeline')
     def __init__(
@@ -54,7 +55,8 @@ class ModelPipeline:
             target_col,
             lags,
             with_quantile_prediction=False,  # the quantile prediction switch
-            models=None,
+            include_models=None,
+            exclude_models=None,
             metric=mae,
             metric_less_is_better=True,
             configs=None,
@@ -68,6 +70,18 @@ class ModelPipeline:
         if with_quantile_prediction:
             assert cv > 1, "if with_quantile_prediction is True, cv must be greater than 1."
 
+        if include_models is not None and exclude_models is not None:
+            assert len(set(include_models) & set(exclude_models)) == 0, \
+                "the models in include_models cannot be equal to the models in exclude_models."
+
+        if exclude_models is not None:
+            global MODELS
+            MODELS = dict(MODELS)
+
+            for em in exclude_models:
+                del MODELS[em]
+            MODELS = frozendict(MODELS)
+
         self.logger = Logger(name='PipelineTS', verbose=verbose)
 
         self.target_col = target_col
@@ -77,7 +91,7 @@ class ModelPipeline:
         self.metric_less_is_better = metric_less_is_better
         self.random_state = random_state
         self.configs = configs
-        self._given_models = models
+        self._given_models = include_models
         self.with_quantile_prediction = with_quantile_prediction
 
         self.include_init_config_model = include_init_config_model
