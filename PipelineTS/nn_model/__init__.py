@@ -9,3 +9,4 @@ from PipelineTS.nn_model.rnn import StackingRNNModel
 from PipelineTS.nn_model.time2vec import Time2VecModel
 from PipelineTS.nn_model.transformer import TransformerModel
 from PipelineTS.nn_model.tide import TiDEModel
+from PipelineTS.nn_model.seg_rnn import SegRNNModel
