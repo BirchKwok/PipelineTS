@@ -10,7 +10,7 @@ from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
 from spinesUtils.asserts import check_obj_is_function, augmented_isinstance
 from spinesUtils.utils import (
     Logger,
-    drop_duplicates_with_order,
+    drop_duplicates_with_order
 )
 
 from PipelineTS.metrics import quantile_acc
@@ -207,7 +207,8 @@ class ModelPipeline:
 
         return df
 
-    def _fill_func_params(self, func, **kwargs):
+    @staticmethod
+    def _fill_func_params(func, **kwargs):
         init_kwargs = {}
 
         for i in kwargs:
