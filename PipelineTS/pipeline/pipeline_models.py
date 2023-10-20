@@ -32,7 +32,8 @@ def get_all_available_models():
         'multi_step_model': MultiStepRegressorModel,
         'transformer': TransformerModel,
         'random_forest': RandomForestModel,
-        'tide': TiDEModel
+        'tide': TiDEModel,
+        'seg_rnn': SegRNNModel
     })
 
     if extra_pkg_installed:
