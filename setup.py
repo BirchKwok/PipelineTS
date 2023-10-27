@@ -18,8 +18,9 @@ with open("README.md", "r") as fh:
 setup(
     name='PipelineTS',
     version="0.3.6",
-    description='One-stop time series analysis tool, supporting time series data preprocessing, '
-                'feature engineering, model training, model evaluation, and model prediction.',
+    description='One-stop time series analysis tool, supporting time series data preprocessing,'
+                ' feature engineering, model training, model evaluation, model prediction, etc. '
+                'Based on spinesTS and darts.',
     keywords='time series forecasting',
     packages=find_packages(),
     long_description=long_description,

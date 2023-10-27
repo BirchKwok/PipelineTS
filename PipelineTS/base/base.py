@@ -140,6 +140,9 @@ class GBDTModelMixin:
             return data[[self.all_configs['time_col'],
                          *[i for i in data.columns if i != self.all_configs['time_col']]]]
 
+    def _define_model(self):
+        raise NotImplementedError
+
 
 class StatisticModelMixin:
     def __init__(self, time_col, target_col):
@@ -157,6 +160,9 @@ class StatisticModelMixin:
         else:
             return data[[self.all_configs['time_col'],
                          *[i for i in data.columns if i != self.all_configs['time_col']]]]
+
+    def _define_model(self):
+        raise NotImplementedError
 
 
 class NNModelMixin:
@@ -183,6 +189,9 @@ class NNModelMixin:
         else:
             return data[[self.all_configs['time_col'],
                          *[i for i in data.columns if i != self.all_configs['time_col']]]]
+
+    def _define_model(self):
+        raise NotImplementedError
 
 
 class IntervalEstimationMixin:

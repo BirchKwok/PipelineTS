@@ -68,12 +68,16 @@ def _save_single_model(path, model, scaler=None):
 
     zipfile_fp, pkl_file_fp, darts_model_weights_fp = path, path.strip()[:-4] + '.pkl', None
 
-    model_fp = Path(path.strip()[:-4]+'/')
+    model_fp = Path(path.strip()[:-4] + '/')
 
     # create model directory
     Path.mkdir(model_fp)
 
     pkl_file_fp = str(model_fp.joinpath(Path(path.strip()[:-4] + '.pkl').name))
+
+    if isinstance(model, DartsForecastMixin) and isinstance(model, NNModelMixin):
+        model.model.save(str(model_fp.joinpath(_get_object_name(model) + '.pt')))
+        model.model = model._define_model()
 
     with open(pkl_file_fp, 'wb') as f:
         if scaler is not None:
@@ -82,8 +86,6 @@ def _save_single_model(path, model, scaler=None):
             cloudpickle.dump(model, f)
 
     if isinstance(model, DartsForecastMixin) and isinstance(model, NNModelMixin):
-        model.model.save(str(model_fp.joinpath(_get_object_name(model) + '.pt')))
-
         _zip_file(zipfile_fp, pkl_file_fp, model_fp.joinpath(_get_object_name(model) + '.pt'),
               model_fp.joinpath(_get_object_name(model) + '.pt.ckpt'))
     else:
@@ -174,14 +176,16 @@ def _save_pipeline(path, model):
 
     pkl_file_fp = str(Path(pipeline_path).joinpath('pipeline.pkl'))
 
-    with open(pkl_file_fp, 'wb') as f:
-        cloudpickle.dump(model, f)
-
     file_fps = [pkl_file_fp]
     for (sub_model_name, sub_model) in model.models_:
         mpath = str(pipeline_path.joinpath(sub_model_name + '.zip'))
         file_fps.append(mpath)
         _save_single_model(mpath, sub_model)
+
+    with open(pkl_file_fp, 'wb') as f:
+        model.models_ = []
+        model.best_model_ = None
+        cloudpickle.dump(model, f)
 
     _zip_file(zipfile_fp, *file_fps)
 
@@ -226,7 +230,7 @@ def _load_pipeline(path, unzip_file_path=None, unzip=True):
     pipeline.models_ = models
     for (sub_model_name, sub_model) in pipeline.models_:
         if sub_model_name == pipeline.leader_board_.iloc[0, :]['model']:
-            pipeline.best_models = sub_model
+            pipeline.best_model_ = sub_model
 
     shutil.rmtree(unzip_file_fp)
 
@@ -236,6 +240,8 @@ def _load_pipeline(path, unzip_file_path=None, unzip=True):
 def save_model(path, model, scaler=None):
     """
     Save a model or a pipeline to a zip file.
+
+    [Notice that]: A loaded model cannot be saved.
 
     :param path: pathlike[str], must be a string with the `.zip` suffix
     :param model: fitted model or pipeline
