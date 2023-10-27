@@ -3,6 +3,8 @@ from copy import deepcopy
 
 import numpy as np
 from spinesUtils.asserts import *
+from spinesUtils.preprocessing import gc_collector
+
 from spinesTS.metrics import wmape
 from spinesTS.utils import func_has_params
 
@@ -45,6 +47,7 @@ class DartsForecastMixin:
     def convert2pd_dataframe(df):
         return df.pd_dataframe()
 
+    @gc_collector(1)
     def fit(self, data, convert_dataframe_kwargs=None, fit_kwargs=None, convert_float32=True):
         if convert_dataframe_kwargs is None:
             convert_dataframe_kwargs = {}
@@ -61,16 +64,31 @@ class DartsForecastMixin:
         self.model.fit(data, **fit_kwargs)
         return self
 
-    def predict(self, n, predict_likelihood_parameters=False, predict_kwargs=None):
+    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None, convert_float32=True):
         if predict_kwargs is None:
             predict_kwargs = {}
-        if 'predict_likelihood_parameters' in get_function_params_name(self.model.predict):
-            return self.model.predict(
-                n,
-                predict_likelihood_parameters=predict_likelihood_parameters,
-                **predict_kwargs
-            ).pd_dataframe()
-        return self.model.predict(n, **predict_kwargs).pd_dataframe()
+        if func_has_params(self.model.predict, 'series') and series is not None:
+            raise_if_not(
+                ValueError, len(series) >= self.all_configs['lags'],
+                'The length of the series must greater than or equal to the lags. '
+            )
+
+            convert_dataframe_kwargs = {} if convert_dataframe_kwargs is None else convert_dataframe_kwargs
+            series = self.convert2dts_dataframe(
+                series, time_col=self.all_configs['time_col'],
+                target_col=self.all_configs['target_col'],
+                **convert_dataframe_kwargs
+            )
+
+            if convert_float32:
+                series = series.astype(np.float32)
+
+            predict_kwargs.update({'series': series})
+
+        return self.model.predict(
+            n,
+            **predict_kwargs
+        ).pd_dataframe()
 
     def rename_prediction(self, data):
         data.columns.name = None
@@ -193,6 +211,7 @@ class IntervalEstimationMixin:
                 yield (data.iloc[train_index, :].reset_index(drop=True),
                        data.iloc[test_index, :].reset_index(drop=True))
 
+    @gc_collector(1)
     def calculate_confidence_interval_darts(self, data, cv=5, fit_kwargs=None, convert2dts_dataframe_kwargs=None):
         if fit_kwargs is None:
             fit_kwargs = {}
@@ -222,10 +241,13 @@ class IntervalEstimationMixin:
 
             residuals.append(y_cal_error)
 
+            del train_data, train_ds, valid_data, valid_y, model, y_cal_error, res
+
         quantile = np.percentile(residuals, q=self.all_configs['quantile'])
 
         return quantile
 
+    @gc_collector(1)
     def _calculate_confidence_interval_sps(self, data, cv=5, fit_kwargs=None, train_data_process_kwargs=None,
                                            valid_data_process_kwargs=None):
         if fit_kwargs is None:
@@ -239,7 +261,6 @@ class IntervalEstimationMixin:
 
         residuals = []
         for train_data, valid_data in self._split_train_valid_data(data, cv=cv):
-
             data_x, data_y = self._data_preprocess(train_data, **train_data_process_kwargs)
 
             valid_data_x, valid_data_y = self._data_preprocess(valid_data, **valid_data_process_kwargs)
@@ -257,7 +278,9 @@ class IntervalEstimationMixin:
 
             residuals.append(y_cal_error)
 
-        quantile = np.percentile(y_cal_error, q=self.all_configs['quantile'])
+            del train_data, valid_data, data_x, data_y, valid_data_x, valid_data_y, model, res, y_cal_error
+
+        quantile = np.percentile(residuals, q=self.all_configs['quantile'])
 
         return quantile
 
@@ -283,14 +306,14 @@ class IntervalEstimationMixin:
             data, fit_kwargs=kwargs, train_data_process_kwargs={'mode': 'train', 'update_last_data': False},
             valid_data_process_kwargs={'mode': 'train', 'update_last_data': False}, cv=cv)
 
+    @gc_collector(1)
     def calculate_confidence_interval_prophet(self, data, cv=5, freq='D', fit_kwargs=None):
         if fit_kwargs is None:
             fit_kwargs = {}
 
+        residuals = []
         for train_data, valid_data in self._split_train_valid_data(data, cv=cv, is_prophet=True):
             train_ds = train_data[['ds', 'y']]
-
-            residuals = []
 
             valid_data_y = valid_data['y'].values
 
@@ -308,6 +331,8 @@ class IntervalEstimationMixin:
             y_cal_error = wmape(valid_data_y.flatten(), res.flatten())
 
             residuals.append(y_cal_error)
+
+            del train_data, valid_data, train_ds, valid_data_y, model, res, y_cal_error
 
         quantile = np.percentile(residuals, q=self.all_configs['quantile'])
 

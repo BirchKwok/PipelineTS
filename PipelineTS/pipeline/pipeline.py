@@ -1,4 +1,5 @@
 from copy import deepcopy
+import gc
 
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -7,22 +8,24 @@ from frozendict import frozendict
 from spinesTS.metrics import mae
 from spinesTS.utils import func_has_params
 from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
-from spinesUtils.asserts import check_obj_is_function, augmented_isinstance
+from spinesUtils.preprocessing import gc_collector
+from spinesUtils.asserts import (
+    check_obj_is_function,
+    augmented_isinstance,
+    raise_if
+)
 from spinesUtils.utils import (
     Logger,
-    drop_duplicates_with_order
+    drop_duplicates_with_order,
+    Timer
 )
 
 from PipelineTS.metrics import quantile_acc
-from PipelineTS.nn_model.sps_nn_model_base import SpinesNNModelMixin
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
-from PipelineTS.pipeline.pipeline_utils import Timer
 from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
 
-# TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
 
-# 获取所有可用的模型
-MODELS = get_all_available_models()
+# TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
 
 
 class ModelPipeline:
@@ -46,7 +49,7 @@ class ModelPipeline:
         'metric': lambda s: check_obj_is_function(s),
         'device': (
                 lambda s: s in ("cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto", "cuda")
-                or augmented_isinstance(s, None)
+                          or augmented_isinstance(s, None)
         )
     }, 'Pipeline')
     def __init__(
@@ -67,20 +70,28 @@ class ModelPipeline:
             device=None,
             cv=5
     ):
-        if with_quantile_prediction:
-            assert cv > 1, "if with_quantile_prediction is True, cv must be greater than 1."
+        raise_if(ValueError, include_models is not None and exclude_models is not None,
+                 "include_models and exclude_models can not be set at the same time.")
 
-        if include_models is not None and exclude_models is not None:
-            assert len(set(include_models) & set(exclude_models)) == 0, \
-                "the models in include_models cannot be equal to the models in exclude_models."
+        if with_quantile_prediction:
+            raise_if(ValueError, cv <= 1, "if with_quantile_prediction is True, cv must be greater than 1.")
+
+        self._available_models = get_all_available_models()
+
+        raise_if(ValueError, exclude_models is not None and
+                 (not all([i in self._available_models for i in exclude_models])),
+                 "exclude_models must be None or in the list of models.")
+
+        raise_if(ValueError, include_models is not None and
+                 (not all([i in self._available_models for i in include_models])),
+                 "include_models must be None or in the list of models.")
 
         if exclude_models is not None:
-            global MODELS
-            MODELS = dict(MODELS)
+            self._available_models = dict(self._available_models)
 
             for em in exclude_models:
-                del MODELS[em]
-            MODELS = frozendict(MODELS)
+                del self._available_models[em]
+            self._available_models = frozendict(self._available_models)
 
         self.logger = Logger(name='PipelineTS', verbose=verbose)
 
@@ -111,22 +122,10 @@ class ModelPipeline:
 
         self._timer = Timer()
 
-    @staticmethod
-    def _device_setting(model, device):
-        if isinstance(model, SpinesNNModelMixin):
-            if device in ('cuda', 'cpu', 'mps'):
-                device = device
-            else:
-                device = 'cpu'
-        else:
-            device = device
-
-        return device
-
     def _initial_models(self):
         initial_models = []
-        ms = tuple(sorted(MODELS.items(), key=lambda s: s[0])) if self._given_models is None else (
-            drop_duplicates_with_order([(k, MODELS[k]) for k in self._given_models]))
+        ms = tuple(sorted(self._available_models.items(), key=lambda s: s[0])) if self._given_models is None else (
+            drop_duplicates_with_order([(k, self._available_models[k]) for k in self._given_models]))
 
         # 模型训练顺序
         for (model_name, model) in ms:
@@ -137,7 +136,7 @@ class ModelPipeline:
                 lags=self.lags,
                 random_state=self.random_state,
                 quantile=0.9 if self.with_quantile_prediction else None,
-                device=self._device_setting(model, self.device)
+                device=self.device
             )
 
             continue_signal = False  # 是否跳过添加默认模型
@@ -171,10 +170,12 @@ class ModelPipeline:
         return initial_models
 
     @classmethod
-    def list_models(cls):
-        return list(MODELS.keys())
+    def list_all_available_models(cls):
+        return list(get_all_available_models().keys())
 
-    def _scale_data(self, df, valid_df, refit_scaler=True):
+    def _scale_data(self, data, valid_data=None, refit_scaler=True):
+        df, valid_df = data.copy(), valid_data  # valid_data will not be deep copy in this step
+
         if refit_scaler:
             scaler = self.scaler
         else:
@@ -185,7 +186,8 @@ class ModelPipeline:
                 df[self.target_col].values.reshape(-1, 1)
             ).squeeze()
 
-            if valid_df is not None:
+            if valid_data is not None:
+                valid_df = valid_data.copy()
                 valid_df[self.target_col] = scaler.transform(
                     valid_df[self.target_col].values.reshape(-1, 1)).squeeze()
 
@@ -217,6 +219,7 @@ class ModelPipeline:
 
         return init_kwargs
 
+    @gc_collector(3)
     def _fit(self, model_name_after_rename, model, train_df, valid_df, res_df, use_scaler=True):
         self._timer.start()
 
@@ -234,9 +237,12 @@ class ModelPipeline:
 
         train_cost = self._timer.last_timestamp_diff()
 
-        # -------------------- predicting -------------------------
         self._timer.middle_point()
+        gc.collect()
+        gc.garbage.clear()
 
+        self._timer.sleep(3)
+        # -------------------- predicting -------------------------
         if self.configs is not None:
             if self.configs.get_configs(model_name_after_rename):
                 predict_kwargs = self.configs.get_configs(model_name_after_rename).get('predict_configs')
@@ -279,6 +285,12 @@ class ModelPipeline:
             )
 
         eval_cost = self._timer.last_timestamp_diff()
+
+        del eval_res
+
+        gc.collect()
+        self._timer.sleep(3)
+
         self._timer.clear()  # 重置计时器
 
         if self.with_quantile_prediction:
@@ -340,19 +352,37 @@ class ModelPipeline:
 
         self.leader_board_.columns.name = 'Leaderboard'
 
-        self.best_model_ = self.get_models(self.leader_board_.iloc[0, :]['model'])
+        self.best_model_ = self.get_model(self.leader_board_.iloc[0, :]['model'])
+
+        del data, valid_data, df, valid_df, res
+        gc.collect()
+        gc.garbage.clear()
+
         return self.leader_board_
 
     @ParameterTypeAssert({
         'model_name': (str, None)
     })
-    def get_models(self, model_name=None):
+    def get_model(self, model_name=None):
+        """By default, return the best model"""
         if model_name is None:
             return self.best_model_
         else:
             for (md_name, model) in self.models_:
                 if model_name == md_name:
                     return model
+
+    @ParameterTypeAssert({
+        'model_name': (str, None)
+    })
+    def get_model_all_configs(self, model_name=None):
+        """By default, return the best model's configure"""
+        if model_name is None:
+            return self.best_model_.all_configs
+        else:
+            for (md_name, model) in self.models_:
+                if model_name == md_name:
+                    return model.all_configs
 
     @ParameterTypeAssert({
         'n': int,
@@ -369,7 +399,7 @@ class ModelPipeline:
         pd.DataFrame
         """
         if model_name is not None:
-            res = self.get_models(model_name).predict(n)
+            res = self.get_model(model_name).predict(n)
         else:
             res = self.best_model_.predict(n)
 

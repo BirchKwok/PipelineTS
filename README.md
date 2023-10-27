@@ -29,7 +29,7 @@ device = 'cpu'
 from PipelineTS.pipeline import ModelPipeline
 
 # list all models
-ModelPipeline.list_models()
+ModelPipeline.list_all_available_models()
 ```
 
 ```
@@ -135,7 +135,7 @@ from xgboost import XGBRegressor
 from catboost import CatBoostRegressor
 from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
 
-# 第一个为模型的名称，需要在PipelineTS.list_models()列表中，第二个为dict类型
+# 第一个为模型的名称，需要在PipelineTS.list_all_available_models()列表中，第二个为dict类型
 # dict可以有三个key: 'init_configs', 'fit_configs', 'predict_configs'，也可以任意一个，剩余的会自动补全为默认参数
 # 其中init_configs为模型初始化参数，fit_configs为模型训练时参数，predict_configs为模型预测时参数
 pipeline_configs = PipelineConfigs([
@@ -193,7 +193,7 @@ pipeline.fit(data, valid_data)
 #### 获取PipelineTS中的模型参数
 ```python
 # Gets all configurations for the specified model， default to best model
-pipeline.get_models(model_name='wide_gbrt').all_configs
+pipeline.get_model(model_name='wide_gbrt').all_configs
 ```
 
 #### 绘制预测结果
@@ -241,3 +241,16 @@ plot_data_period(init_data.iloc[-100:, :], prediction,
                  time_col=time_col, target_col=target_col)
 ```
 ![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic3.png)
+
+
+## 模型、pipeline的保存和加载
+```python
+from PipelineTS.io import load_model, save_model
+
+# save
+save_model(path='/path/to/save/your/fitted_model_or_pipeline.zip', model=your_fitted_model_or_pipeline)
+# load
+your_loaded_model_or_pipeline = load_model('/path/to/save/your/fitted_model_or_pipeline.zip')
+
+
+```

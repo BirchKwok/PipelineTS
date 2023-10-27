@@ -86,13 +86,16 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
 
     @ParameterTypeAssert({
         'n': int,
-        'predict_kwargs': (None, dict)
+        'series': (pd.DataFrame, None),
+        'predict_kwargs': (None, dict),
+        'convert_dataframe_kwargs': (None, dict),
     })
-    def predict(self, n, predict_kwargs=None):
+    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        res = self.model.predict(n, **predict_kwargs).pd_dataframe()
+        res = super().predict(n=n, series=series, predict_kwargs=predict_kwargs,
+                              convert_dataframe_kwargs=convert_dataframe_kwargs)
         res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
@@ -184,13 +187,16 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
 
     @ParameterTypeAssert({
         'n': int,
-        'predict_kwargs': (None, dict)
+        'series': (pd.DataFrame, None),
+        'predict_kwargs': (None, dict),
+        'convert_dataframe_kwargs': (None, dict),
     })
-    def predict(self, n, predict_kwargs=None):
+    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        res = self.model.predict(n, **predict_kwargs).pd_dataframe()
+        res = super().predict(n=n, series=series, predict_kwargs=predict_kwargs,
+                              convert_dataframe_kwargs=convert_dataframe_kwargs)
         res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
@@ -268,13 +274,16 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
 
     @ParameterTypeAssert({
         'n': int,
-        'predict_kwargs': (None, dict)
+        'series': (pd.DataFrame, None),
+        'predict_kwargs': (None, dict),
+        'convert_dataframe_kwargs': (None, dict),
     })
-    def predict(self, n, predict_kwargs=None):
+    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        res = self.model.predict(n, **predict_kwargs).pd_dataframe()
+        res = super().predict(n=n, series=series, predict_kwargs=predict_kwargs,
+                              convert_dataframe_kwargs=convert_dataframe_kwargs)
         res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
@@ -346,13 +355,16 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
 
     @ParameterTypeAssert({
         'n': int,
-        'predict_kwargs': (None, dict)
+        'series': (pd.DataFrame, None),
+        'predict_kwargs': (None, dict),
+        'convert_dataframe_kwargs': (None, dict),
     })
-    def predict(self, n, predict_kwargs=None):
+    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        res = self.model.predict(n, **predict_kwargs).pd_dataframe()
+        res = super().predict(n=n, series=series, predict_kwargs=predict_kwargs,
+                              convert_dataframe_kwargs=convert_dataframe_kwargs)
         res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

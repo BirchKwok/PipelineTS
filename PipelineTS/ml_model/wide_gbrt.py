@@ -2,18 +2,16 @@ from copy import deepcopy
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from lightgbm import LGBMRegressor
 
 from spinesTS.ml_model import (
     GBRTPreprocessing,
     MultiOutputRegressor
 )
-from spinesTS.metrics import wmape
 from spinesTS.pipeline import Pipeline
-from spinesUtils import generate_function_kwargs
-
+from spinesUtils import generate_function_kwargs, ParameterValuesAssert
+from spinesUtils.asserts import raise_if_not
+from spinesUtils.preprocessing import gc_collector, reshape_if
 
 from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin
 
@@ -30,7 +28,6 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             differential_n=0,
             moving_avg_n=0,
             extend_daily_target_features=True,
-            use_standard_scaler=True,
             linear_tree=False,
             verbose=-1,
             **lightgbm_model_configs
@@ -59,7 +56,6 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
                 'differential_n': differential_n,
                 'moving_avg_n': moving_avg_n,
                 'extend_daily_target_features': extend_daily_target_features,
-                'use_standard_scaler': use_standard_scaler,
             }
         )
 
@@ -79,23 +75,13 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         self.model = self._define_model()
 
     def _define_model(self):
-        if self.all_configs['use_standard_scaler']:
-            model = Pipeline([
-                ('scaler', StandardScaler()),
-                ('estimator', MultiOutputRegressor(
-                    LGBMRegressor(**self.all_configs['model_configs'])
-                ))
-            ])
-        else:
-            model = Pipeline([
-                ('scaler', MinMaxScaler()),
-                ('estimator', MultiOutputRegressor(
-                    LGBMRegressor(**self.all_configs['model_configs'])
-                ))
-            ])
+        return Pipeline([
+            ('model', MultiOutputRegressor(LGBMRegressor(**self.all_configs['model_configs'])))
+        ])
 
-        return model
-
+    @ParameterValuesAssert({
+        'mode': ('train', 'predict')
+    })
     def _data_preprocess(self, data, mode='train', update_last_dt=False):
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
         if update_last_dt:
@@ -104,12 +90,17 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         if mode == 'train':
             self.processor.fit(data)
 
-        return self.processor.transform(data, mode=mode)  # X, y
+            x, y = self.processor.transform(data, mode=mode)  # X, y
+            return x.astype(np.float32), y.astype(np.float32)
+        else:
+            # x
+            return self.processor.transform(data, mode=mode).astype(np.float32)
 
+    @gc_collector(2)
     def fit(self, data, cv=5, fit_kwargs=None):
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
-        self.last_lags_dataframe = data.iloc[-(2 * self.all_configs['lags'] + 1):, :]
+        self.last_lags_dataframe = data.iloc[-self.all_configs['lags']:, :]
 
         if fit_kwargs is None:
             fit_kwargs = {}
@@ -121,11 +112,13 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             self._data_preprocess(data, 'predict')
         ).iloc[-1:, :]
 
-        self.model.fit(x, y, eval_set=None, **fit_kwargs)
+        self.model.fit(x, y, eval_set=[(x, y)], **fit_kwargs)
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
                 self.calculate_confidence_interval_gbrt(data, fit_kwargs=fit_kwargs, cv=cv)
+
+        del x, y
 
         return self
 
@@ -147,6 +140,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         assert x.ndim == 2
 
         current_res = self.model.predict(x, **predict_kwargs)  # np.ndarray
+        current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
 
         if n is None:
             return current_res.squeeze().tolist()
@@ -179,16 +173,27 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
             return res
 
-    def predict(self, n, predict_kwargs=None):
+    def predict(self, n, series=None, predict_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        x = self.x.values
+        if series is not None:
+            raise_if_not(
+                ValueError, len(series) >= self.all_configs['lags'],
+                'The length of the series must greater than or equal to the lags. '
+            )
+
+            x = self._data_preprocess(series.iloc[-self.all_configs['lags']:, :], 'predict', update_last_dt=False)
+            last_dt = series[self.all_configs['time_col']].max()
+        else:
+            x = self.x.values
+            last_dt = self.last_dt
+
         res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
         assert len(res) == n
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
         res[self.all_configs['time_col']] = \
-            self.last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
+            last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

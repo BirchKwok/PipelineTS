@@ -61,7 +61,10 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
 
         return self
 
-    def predict(self, n, **kwargs):
+    def predict(self, n, series=None, **kwargs):
+        """
+        :param series: always ignore, meanness, but only to follow coding conventions
+        """
         res = super().predict(n, **kwargs)
         res = self.rename_prediction(res)
 

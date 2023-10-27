@@ -65,10 +65,13 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
                 self.calculate_confidence_interval_prophet(data, cv=cv, freq=freq, fit_kwargs=fit_kwargs)
         return self
 
-    def predict(self, num_days, freq='D', include_history=False):
+    def predict(self, n, series=None, freq='D', include_history=False):
+        """
+        :param series: always ignore, meanness, but only to follow coding conventions
+        """
         res = self.model.predict(
             self.model.make_future_dataframe(
-                periods=num_days,
+                periods=n,
                 freq=freq,
                 include_history=include_history,
             )

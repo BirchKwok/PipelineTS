@@ -1,7 +1,10 @@
 import numpy as np
 import pandas as pd
-from spinesTS.preprocessing import split_series
+from spinesTS.preprocessing import split_series, lag_splits
+
 from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
+from spinesUtils.asserts import raise_if_not
+from spinesUtils.preprocessing import gc_collector, reshape_if
 
 from PipelineTS.base import NNModelMixin, IntervalEstimationMixin
 
@@ -12,12 +15,13 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
         super().__init__(time_col, target_col, device=device)
         self.last_x = None
+        self.scaler = None
 
     def _define_model(self):
         raise NotImplementedError
 
     @ParameterValuesAssert({
-        'mode': ('train', 'predict')
+        'mode': ('train', 'validation', 'predict')
     })
     def _data_preprocess(self, data, update_last_data=False, mode='train'):
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
@@ -31,29 +35,31 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             x_train, y_train = split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
                                             window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
 
-            if x_train.ndim == 1:
-                x_train = x_train.reshape(1, -1)
-
-            if y_train.ndim == 1:
-                y_train = y_train.reshape(1, -1)
+            x_train = reshape_if(x_train, x_train.ndim == 1, (1, -1))
+            y_train = reshape_if(y_train, y_train.ndim == 1, (1, -1))
 
             return x_train, y_train
-        else:
+
+        elif mode == 'validation':
             x, y = split_series(pd.concat((self.last_x, data[self.all_configs['target_col']])),
                                 pd.concat((self.last_x, data[self.all_configs['target_col']])),
                                 window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
 
-            if x.ndim == 1:
-                x = x.reshape(1, -1)
-
-            if y.ndim == 1:
-                y = y.reshape(1, -1)
+            x = reshape_if(x, x.ndim == 1, (1, -1))
+            y = reshape_if(y, y.ndim == 1, (1, -1))
 
             return x, y
+
+        else:
+            x = lag_splits(data[self.all_configs['target_col']], window_size=self.all_configs['lags'])
+            x = reshape_if(x, x.ndim == 1, (1, -1))
+
+            return x
 
     @ParameterTypeAssert({
         'valid_data': (None, pd.DataFrame)
     })
+    @gc_collector(3)
     def fit(self, data, valid_data=None, cv=5, fit_kwargs=None):
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
@@ -75,11 +81,13 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         if valid_data is None:
             eval_set = [(x, y)]
         else:
-            valid_x, valid_y = self._data_preprocess(valid_data, update_last_data=False, mode='predict')
+            valid_x, valid_y = self._data_preprocess(valid_data, update_last_data=False, mode='validation')
 
             eval_set = [(valid_x, valid_y)]
 
         self.model.fit(x, y, eval_set=eval_set, **fit_kwargs)
+
+        del x, y
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
@@ -106,6 +114,8 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
         current_res = self.model.predict(x, **predict_kwargs)
 
+        current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
+
         if n is None:
             return current_res.squeeze().tolist()
         elif n <= current_res.shape[1]:
@@ -115,23 +125,36 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             for i in range(n - self.all_configs['lags']):
                 x = np.concatenate((x[:, 1:], current_res[:, 0:1]), axis=1)
                 current_res = self.model.predict(x, **predict_kwargs)
+                current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
 
                 res.append(current_res.squeeze().tolist()[-1])
 
             return res
 
-    def predict(self, n, predict_kwargs=None):
+    def predict(self, n, series=None, predict_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        x = self.x.values.reshape(1, -1)
+        if series is not None:
+            raise_if_not(
+                ValueError, len(series) >= self.all_configs['lags'],
+                'The length of the series must greater than or equal to the lags. '
+            )
+
+            x = self._data_preprocess(series.iloc[-self.all_configs['lags']:, :],
+                                      update_last_data=False, mode='predict')
+            last_dt = series[self.all_configs['time_col']].max()
+        else:
+            x = reshape_if(self.x.values, self.x.values.ndim == 1, (1, -1))
+            last_dt = self.last_dt
+
         res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
 
         assert len(res) == n
 
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
         res[self.all_configs['time_col']] = \
-            self.last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
+            last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

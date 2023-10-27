@@ -1,7 +1,9 @@
 import logging
 
+import pandas as pd
 import torch
 from darts.models.forecasting.nhits import NHiTSModel as n_hits
+from spinesUtils import ParameterTypeAssert
 from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
@@ -98,8 +100,8 @@ class NHitsModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
     def _define_model(self):
         return n_hits(**self.all_configs['model_configs'])
 
-    def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None, convert_float32=True):
-        super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=convert_float32)
+    def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None):
+        super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=True)
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
@@ -110,11 +112,19 @@ class NHitsModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def predict(self, n, predict_kwargs=None):
+    @ParameterTypeAssert({
+        'n': int,
+        'series': (pd.DataFrame, None),
+        'predict_kwargs': (None, dict),
+        'convert_dataframe_kwargs': (None, dict),
+    })
+    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None):
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        res = super().predict(n, predict_likelihood_parameters=False, **predict_kwargs)
+        res = super().predict(n, series=series,
+                              predict_kwargs=predict_kwargs, convert_dataframe_kwargs=convert_dataframe_kwargs,
+                              convert_float32=True)
         res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
