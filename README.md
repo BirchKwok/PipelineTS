@@ -269,7 +269,7 @@ plot_data_period(init_data.iloc[-100:, :], prediction,
 ![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic3.png)
 
 
-## Model and pipeline saving and loading
+## Model and ModelPipeline saving and loading
 ```python
 from PipelineTS.io import load_model, save_model
 
