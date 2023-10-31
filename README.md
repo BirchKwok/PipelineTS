@@ -146,12 +146,14 @@ from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
 # If you want to try multiple configurations of a model at once for comparison or tuning purposes, you can use `PipelineConfigs`.
 # This feature allows for customizing the models returned by each `ModelPipeline.list_all_available_models()` call.
 # The first one is the name of the model, which needs to be in the list of available models provided by PipelineTS.list_all_available_models(). 
-# The second one is of type dict. The dict can have three keys: 'init_configs', 'fit_configs', 'predict_configs', or any combination of them. 
+# If you want to customize the name of the model, then the second argument can be a string of the model name, 
+# otherwise, the second one is of type dict. The dict can have three keys: 'init_configs', 'fit_configs', 'predict_configs', or any combination of them. 
 # The remaining keys will be automatically filled with default parameters.
 # Among them, 'init_configs' represents the initialization parameters of the model, 'fit_configs' represents the parameters during model training, 
 # and 'predict_configs' represents the parameters during model prediction.
+
 pipeline_configs = PipelineConfigs([
-    ('lightgbm', {'init_configs': {'verbose': -1, 'linear_tree': True}}),
+    ('lightgbm', 'lightgbm_linear_tree', {'init_configs': {'verbose': -1, 'linear_tree': True}}),
     ('multi_output_model', {'init_configs': {'verbose': -1}}),
     ('multi_step_model', {'init_configs': {'verbose': -1}}),
     ('multi_output_model', {
@@ -166,14 +168,14 @@ pipeline_configs = PipelineConfigs([
 ```
 <table>
 <thead>
-<tr><th style="text-align: right;">  </th><th>model_name        </th><th>model_name_with_index  </th><th>model_configs                                                                                                                                                    </th></tr>
+<tr><th style="text-align: right;">  </th><th>model_name        </th><th>model_name_after_rename  </th><th>model_configs                                                                                                                                                    </th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right;"> 0</td><td>lightgbm          </td><td>lightgbm_1             </td><td>{&#x27;init_configs&#x27;: {&#x27;verbose&#x27;: -1, &#x27;linear_tree&#x27;: True}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}                                                                 </td></tr>
-<tr><td style="text-align: right;"> 1</td><td>multi_output_model</td><td>multi_output_model_1   </td><td>{&#x27;init_configs&#x27;: {&#x27;verbose&#x27;: -1}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}                                                                                      </td></tr>
-<tr><td style="text-align: right;"> 2</td><td>multi_output_model</td><td>multi_output_model_2   </td><td>{&#x27;init_configs&#x27;: {&#x27;estimator&#x27;: &lt;class &#x27;xgboost.sklearn.XGBRegressor&#x27;&gt;, &#x27;random_state&#x27;: 42, &#x27;kwargs&#x27;: {&#x27;verbosity&#x27;: 0}}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}</td></tr>
-<tr><td style="text-align: right;"> 3</td><td>multi_output_model</td><td>multi_output_model_3   </td><td>{&#x27;init_configs&#x27;: {&#x27;estimator&#x27;: &lt;class &#x27;catboost.core.CatBoostRegressor&#x27;&gt;, &#x27;random_state&#x27;: 42, &#x27;verbose&#x27;: False}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}       </td></tr>
-<tr><td style="text-align: right;"> 4</td><td>multi_step_model  </td><td>multi_step_model_1     </td><td>{&#x27;init_configs&#x27;: {&#x27;verbose&#x27;: -1}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}                                                                                      </td></tr>
+<tr><td style="text-align: right;"> 0</td><td>lightgbm          </td><td>lightgbm_linear_tree     </td><td>{&#x27;init_configs&#x27;: {&#x27;verbose&#x27;: -1, &#x27;linear_tree&#x27;: True}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}                                                                 </td></tr>
+<tr><td style="text-align: right;"> 1</td><td>multi_output_model</td><td>multi_output_model_1     </td><td>{&#x27;init_configs&#x27;: {&#x27;verbose&#x27;: -1}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}                                                                                      </td></tr>
+<tr><td style="text-align: right;"> 2</td><td>multi_output_model</td><td>multi_output_model_2     </td><td>{&#x27;init_configs&#x27;: {&#x27;estimator&#x27;: &lt;class &#x27;xgboost.sklearn.XGBRegressor&#x27;&gt;, &#x27;random_state&#x27;: 42, &#x27;kwargs&#x27;: {&#x27;verbosity&#x27;: 0}}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}</td></tr>
+<tr><td style="text-align: right;"> 3</td><td>multi_output_model</td><td>multi_output_model_3     </td><td>{&#x27;init_configs&#x27;: {&#x27;estimator&#x27;: &lt;class &#x27;catboost.core.CatBoostRegressor&#x27;&gt;, &#x27;random_state&#x27;: 42, &#x27;verbose&#x27;: False}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}       </td></tr>
+<tr><td style="text-align: right;"> 4</td><td>multi_step_model  </td><td>multi_step_model_1       </td><td>{&#x27;init_configs&#x27;: {&#x27;verbose&#x27;: -1}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}                                                                                      </td></tr>
 </tbody>
 </table>
 
