@@ -27,6 +27,12 @@ from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
 
 # TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
 
+def update_dict_without_conflict(dict_a, dict_b):
+    for i in dict_b:
+        if i not in dict_a:
+            dict_a[i] = dict_b[i]
+    return dict_a
+
 
 class ModelPipeline:
     @ParameterTypeAssert({
@@ -125,15 +131,18 @@ class ModelPipeline:
 
         self._model_init_kwargs = {}
 
-        if len(model_init_kwargs) == 0:
-            model_init_kwargs.update({
-                'multi_output_model__verbose': -1,
-                'multi_step_model__verbose': -1,
-                'lightgbm__verbose': -1,
-                'wide_gbrt__verbose': -1,
-                'catboost__verbose': False,
-                'xgboost__verbose': 0
-            })
+        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
+                                                         {'multi_output_model__verbose': -1})
+        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
+                                                         {'multi_step_model__verbose': -1})
+        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
+                                                         {'lightgbm__verbose': -1})
+        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
+                                                         {'wide_gbrt__verbose': -1})
+        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
+                                                         {'catboost__verbose': False})
+        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
+                                                         {'xgboost__verbose': 0})
 
         for k, v in model_init_kwargs.items():
             raise_if(ValueError, '__' not in k,
