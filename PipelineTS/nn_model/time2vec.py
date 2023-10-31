@@ -14,7 +14,7 @@ class Time2VecModel(SpinesNNModelMixin):
             random_state=None,
             flip_features=False,
             kernel_size=3,
-            learning_rate=0.01,
+            learning_rate=0.001,
             accelerator='auto',
             verbose=False,
             epochs=1000,
