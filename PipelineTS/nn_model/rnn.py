@@ -14,7 +14,7 @@ class StackingRNNModel(SpinesNNModelMixin):
             random_state=None,
             dropout=0.1,
             learning_rate=0.001,
-            device='cpu',
+            accelerator='auto',
             verbose=False,
             epochs=1000,
             batch_size='auto',
@@ -25,7 +25,7 @@ class StackingRNNModel(SpinesNNModelMixin):
             lr_factor=0.7,
             restore_best_weights=True,
     ):
-        super().__init__(time_col=time_col, target_col=target_col, device=device)
+        super().__init__(time_col=time_col, target_col=target_col, device=accelerator)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             StackingRNN,

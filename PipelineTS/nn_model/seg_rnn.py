@@ -13,7 +13,7 @@ class SegRNNModel(SpinesNNModelMixin):
             quantile=0.9,
             random_state=None,
             learning_rate=0.001,
-            device='cpu',
+            accelerator='auto',
             verbose=False,
             epochs=1000,
             batch_size='auto',
@@ -24,7 +24,7 @@ class SegRNNModel(SpinesNNModelMixin):
             lr_factor=0.7,
             restore_best_weights=True,
     ):
-        super().__init__(time_col=time_col, target_col=target_col, device=device)
+        super().__init__(time_col=time_col, target_col=target_col, device=accelerator)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             SegRNN,

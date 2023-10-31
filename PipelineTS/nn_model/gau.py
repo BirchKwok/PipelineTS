@@ -12,12 +12,9 @@ class GAUModel(SpinesNNModelMixin):
             lags=30,
             quantile=0.9,
             random_state=None,
-            flip_features=False,
             level=2,
-            skip_connect=True,
-            dropout=0.,
-            learning_rate=0.01,
-            device='cpu',
+            learning_rate=0.001,
+            accelerator='auto',
             verbose=False,
             epochs=1000,
             batch_size='auto',
@@ -28,16 +25,13 @@ class GAUModel(SpinesNNModelMixin):
             lr_factor=0.7,
             restore_best_weights=True,
     ):
-        super().__init__(time_col=time_col, target_col=target_col, device=device)
+        super().__init__(time_col=time_col, target_col=target_col, device=accelerator)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             GAUNet,
             in_features=lags,
             out_features=lags,
-            flip_features=flip_features,
             level=level,
-            skip_connect=skip_connect,
-            dropout=dropout,
             learning_rate=learning_rate,
             random_seed=random_state,
             device=self.device,

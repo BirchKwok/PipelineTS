@@ -42,12 +42,12 @@ class ModelPipeline:
         'verbose': (bool, int),
         'include_init_config_model': bool,
         'use_standard_scale': (bool, None),
-        'device': (str, None),
+        'accelerator': (str, None),
         'cv': int
     }, 'Pipeline')
     @ParameterValuesAssert({
         'metric': lambda s: check_obj_is_function(s),
-        'device': (
+        'accelerator': (
                 lambda s: s in ("cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto", "cuda")
                           or augmented_isinstance(s, None)
         )
@@ -67,8 +67,9 @@ class ModelPipeline:
             verbose=True,
             include_init_config_model=False,
             use_standard_scale=False,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
-            device=None,
-            cv=5
+            accelerator='auto',
+            cv=5,
+            **model_init_kwargs
     ):
         raise_if(ValueError, include_models is not None and exclude_models is not None,
                  "include_models and exclude_models can not be set at the same time.")
@@ -117,10 +118,20 @@ class ModelPipeline:
         self.models_ = []
         self.leader_board_ = None
         self.best_model_ = None
-        self.device = device
+        self.accelerator = accelerator
         self.cv = cv
 
         self._timer = Timer()
+
+        self._model_init_kwargs = {}
+
+        for k, v in model_init_kwargs.items():
+            raise_if(ValueError, '__' not in k,
+                     f"{k} must has double underline.")
+
+            raise_if(ValueError, k.split('__')[0] not in self._available_models,
+                     f"{k.split('__')[0]} is not a valid model name")
+            self._model_init_kwargs[k] = v
 
     def _initial_models(self):
         initial_models = []
@@ -136,34 +147,34 @@ class ModelPipeline:
                 lags=self.lags,
                 random_state=self.random_state,
                 quantile=0.9 if self.with_quantile_prediction else None,
-                device=self.device
+                accelerator=self.accelerator
             )
 
-            continue_signal = False  # 是否跳过添加默认模型
+            if len(self._model_init_kwargs) > 0:
+                for k, v in self._model_init_kwargs.items():
+                    if k.split('__')[0] == model_name:
+                        model_kwargs[k[len(model_name) + 2:]] = v
+
             if self.configs is not None:
+                include_in_configs = False
                 for (model_name_in_config, model_name_after_rename_in_config, model_configs_in_config) \
                         in self.configs.configs:
                     if model_name_in_config == model_name:
+                        include_in_configs = True
                         new_model_kwargs = deepcopy(model_kwargs)
 
                         new_model_kwargs.update(
                             self.configs.get_configs(model_name_after_rename_in_config).get('init_configs')
                         )
 
-                        if not self.include_init_config_model:
-                            initial_models.append([model_name_after_rename_in_config, model(**new_model_kwargs)])
+                        initial_models.append([model_name_after_rename_in_config, model(**new_model_kwargs)])
 
-                        else:
-                            if [model_name, model(**new_model_kwargs)] not in initial_models:
-                                initial_models.append([model_name, model(**new_model_kwargs)])
-                            initial_models.append([model_name_after_rename_in_config, model(**new_model_kwargs)])
+                        if self.include_init_config_model:
+                            if [model_name, model(**model_kwargs)] not in initial_models:
+                                initial_models.append([model_name, model(**model_kwargs)])
 
-                        continue_signal = True
-
-                if continue_signal:
-                    continue
-
-                initial_models.append([model_name, model(**model_kwargs)])
+                if not include_in_configs:
+                    initial_models.append([model_name, model(**model_kwargs)])
             else:
                 initial_models.append([model_name, model(**model_kwargs)])
 

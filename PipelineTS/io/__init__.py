@@ -1,3 +1,6 @@
+from copy import deepcopy
+
+
 def _get_object_name(model_obj):
     import re
     return re.split('<|>', str(model_obj))[1].split(' ')[0].strip().split('.')[-1]
@@ -77,7 +80,6 @@ def _save_single_model(path, model, scaler=None):
 
     if isinstance(model, DartsForecastMixin) and isinstance(model, NNModelMixin):
         model.model.save(str(model_fp.joinpath(_get_object_name(model) + '.pt')))
-        model.model = model._define_model()
 
     with open(pkl_file_fp, 'wb') as f:
         if scaler is not None:
@@ -183,9 +185,10 @@ def _save_pipeline(path, model):
         _save_single_model(mpath, sub_model)
 
     with open(pkl_file_fp, 'wb') as f:
-        model.models_ = []
-        model.best_model_ = None
-        cloudpickle.dump(model, f)
+        new_model = deepcopy(model)
+        new_model.models_ = []
+        new_model.best_model_ = None
+        cloudpickle.dump(new_model, f)
 
     _zip_file(zipfile_fp, *file_fps)
 

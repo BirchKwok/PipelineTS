@@ -15,7 +15,7 @@ class Time2VecModel(SpinesNNModelMixin):
             flip_features=False,
             kernel_size=3,
             learning_rate=0.01,
-            device='cpu',
+            accelerator='auto',
             verbose=False,
             epochs=1000,
             batch_size='auto',
@@ -26,7 +26,7 @@ class Time2VecModel(SpinesNNModelMixin):
             lr_factor=0.7,
             restore_best_weights=True,
     ):
-        super().__init__(time_col=time_col, target_col=target_col, device=device)
+        super().__init__(time_col=time_col, target_col=target_col, device=accelerator)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             Time2VecNet,

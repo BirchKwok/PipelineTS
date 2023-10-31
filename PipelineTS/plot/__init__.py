@@ -36,15 +36,15 @@ def plot_data_period(data1, data2, time_col, target_col, labels=None, date_fmt='
 
     # 绘制曲线
     plt.plot_date(data1[time_col], data1[target_col], label=labels[0],
-                  color='black', linestyle='-', marker='')
+                  color='black', fmt='')
     plt.plot_date(data2[time_col], data2[target_col],
-                  label=labels[1], color='blue', linestyle='-', marker='')
+                  label=labels[1], color='blue', fmt='')
 
     if f'{target_col}_upper' in data2.columns and  f'{target_col}_lower' in data2.columns:
         plt.plot_date(data2[time_col], data2[f'{target_col}_upper'],
-                      label=labels[2], color='orchid', linestyle='-', marker='')
+                      label=labels[2], color='orchid', fmt='')
         plt.plot_date(data2[time_col], data2[f'{target_col}_lower'],
-                      label=labels[3], color='violet', linestyle='-', marker='')
+                      label=labels[3], color='violet', fmt='')
         plt.fill_between(data2[time_col], data2[f'{target_col}_upper'], data2[f'{target_col}_lower'],
                          color='dimgray', alpha=0.2)
 
