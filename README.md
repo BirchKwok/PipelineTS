@@ -135,7 +135,7 @@ tide.predict(n, series=valid_data)
 ```
 
 
-## PipelineTS Module
+## ModelPipeline Module
 
 ```python
 # If you need to configure the model
@@ -145,7 +145,7 @@ from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
 
 # If you want to try multiple configurations of a model at once for comparison or tuning purposes, you can use `PipelineConfigs`.
 # This feature allows for customizing the models returned by each `ModelPipeline.list_all_available_models()` call.
-# The first one is the name of the model, which needs to be in the list of available models provided by PipelineTS.list_all_available_models(). 
+# The first one is the name of the model, which needs to be in the list of available models provided by ModelPipeline.list_all_available_models(). 
 # If you want to customize the name of the model, then the second argument can be a string of the model name, 
 # otherwise, the second one is of type dict. The dict can have three keys: 'init_configs', 'fit_configs', 'predict_configs', or any combination of them. 
 # The remaining keys will be automatically filled with default parameters.
@@ -214,7 +214,7 @@ pipeline = ModelPipeline(
 pipeline.fit(data, valid_data)
 ```
 
-#### Get the model parameters in PipelineTS
+#### Get the model parameters in ModelPipeline
 ```python
 # Gets all configurations for the specified model， default to best model
 pipeline.get_model_all_configs(model_name='wide_gbrt')
