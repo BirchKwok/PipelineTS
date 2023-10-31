@@ -43,7 +43,7 @@ class ModelPipeline:
         'include_init_config_model': bool,
         'use_standard_scale': (bool, None),
         'accelerator': (str, None),
-        'cv': int
+        'cv': int,
     }, 'Pipeline')
     @ParameterValuesAssert({
         'metric': lambda s: check_obj_is_function(s),
@@ -124,6 +124,16 @@ class ModelPipeline:
         self._timer = Timer()
 
         self._model_init_kwargs = {}
+
+        if len(model_init_kwargs) == 0:
+            model_init_kwargs.update({
+                'multi_output_model__verbose': -1,
+                'multi_step_model__verbose': -1,
+                'lightgbm__verbose': -1,
+                'wide_gbrt__verbose': -1,
+                'catboost__verbose': False,
+                'xgboost__verbose': 0
+            })
 
         for k, v in model_init_kwargs.items():
             raise_if(ValueError, '__' not in k,
@@ -399,20 +409,22 @@ class ModelPipeline:
         'n': int,
         'model_name': (None, str)
     })
-    def predict(self, n, model_name=None):
+    def predict(self, n, series=None, model_name=None):
         """By default, the best model is used for prediction
 
         :parameter
         n: predict steps
+        series: the sequence to predict from the last time point in the sequence,
+                accepting only a pandas DataFrame type
         model_name: str, model's name, specifying the model used, default None
 
         :return
         pd.DataFrame
         """
         if model_name is not None:
-            res = self.get_model(model_name).predict(n)
+            res = self.get_model(model_name).predict(n, series=series)
         else:
-            res = self.best_model_.predict(n)
+            res = self.best_model_.predict(n, series=series)
 
         for i in res.columns:
             if i.startswith(self.target_col):
