@@ -29,10 +29,10 @@ def configs_check(configs):
 class PipelineConfigs:
     @ParameterTypeAssert({
         'configs': list
-    })
+    }, 'PipelineConfigs')
     @ParameterValuesAssert({
         'configs': configs_check
-    })
+    }, 'PipelineConfigs')
     def __init__(self, configs):
         self.sub_configs = {'init_configs': {}, 'fit_configs': {}, 'predict_configs': {}}
 
