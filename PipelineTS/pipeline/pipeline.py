@@ -1,4 +1,5 @@
 import sys
+import time
 from copy import deepcopy
 import gc
 
@@ -9,9 +10,10 @@ from frozendict import frozendict
 from spinesTS.base._torch_mixin import detect_available_device
 from spinesTS.metrics import mae
 from spinesTS.utils import func_has_params
-from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
 from spinesUtils.preprocessing import gc_collector
 from spinesUtils.asserts import (
+    ParameterTypeAssert,
+    ParameterValuesAssert,
     check_obj_is_function,
     augmented_isinstance,
     raise_if
@@ -42,7 +44,7 @@ class ModelPipeline:
         'target_col': str,
         'lags': int,
         'with_quantile_prediction': bool,
-        'include_models': (None, list),
+        'include_models': (None, list, str),
         'exclude_models': (None, list),
         'metric_less_is_better': bool,
         'configs': (None, PipelineConfigs),
@@ -58,7 +60,8 @@ class ModelPipeline:
         'accelerator': (
                 lambda s: s in ("cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto", "cuda")
                           or augmented_isinstance(s, None)
-        )
+        ),
+        'include_models': lambda s: s in ('light', 'all', 'nn', 'ml') or augmented_isinstance(s, (None, list))
     }, 'Pipeline')
     def __init__(
             self,
@@ -66,7 +69,7 @@ class ModelPipeline:
             target_col,
             lags,
             with_quantile_prediction=False,  # the quantile prediction switch
-            include_models=None,
+            include_models='light',
             exclude_models=None,
             metric=mae,
             metric_less_is_better=True,
@@ -81,6 +84,20 @@ class ModelPipeline:
     ):
         raise_if(ValueError, include_models is not None and exclude_models is not None,
                  "include_models and exclude_models can not be set at the same time.")
+
+        if include_models == 'light':
+            include_models = ['auto_arima', 'd_linear', 'lightgbm', 'multi_step_model', 'n_hits', 'n_linear',
+                              'prophet', 'random_forest', 'seg_rnn', 'xgboost']
+        elif include_models == 'all':
+            include_models = None
+        elif include_models == 'nn':
+            include_models = ['d_linear', 'gau', 'n_beats', 'n_hits', 'n_linear', 'tcn', 'tft',
+                              'seg_rnn', 'stacking_rnn', 'tide', 'time2vec', 'transformer']
+        elif include_models == 'ml':
+            include_models = ['catboost', 'lightgbm', 'multi_output_model',
+                              'multi_step_model','random_forest', 'wide_gbrt', 'xgboost']
+        else:
+            include_models = include_models
 
         if with_quantile_prediction:
             raise_if(ValueError, cv <= 1, "if with_quantile_prediction is True, cv must be greater than 1.")
@@ -151,7 +168,7 @@ class ModelPipeline:
                      f"{k.split('__')[0]} is not a valid model name")
             self._model_init_kwargs[k] = v
 
-        sys.stderr.write(detect_available_device(self.accelerator)[1]+'\n\n')
+        self._compute_device_msg = detect_available_device(self.accelerator)[1] + '\n\n'
 
     def _initial_models(self):
         initial_models = []
@@ -344,6 +361,9 @@ class ModelPipeline:
     })
     def fit(self, data, valid_data=None):
         """fit all models"""
+        if self.logger.verbose:
+            sys.stderr.write(self._compute_device_msg)
+            time.sleep(0.5)
 
         if data.shape[0] <= self.lags:
             raise ValueError(f'length of df must be greater than lags, df length = {data.shape[0]}, lags = {self.lags}')
