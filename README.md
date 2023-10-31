@@ -1,5 +1,5 @@
 # PipelineTS
-[中文文档](https://github.com/BirchKwok/PipelineTS/blob/main/README_CN.md)
+[\[中文文档\]](https://github.com/BirchKwok/PipelineTS/blob/main/README_CN.md)
 
 One-stop time series analysis tool, supporting time series data preprocessing, feature engineering, model training, model evaluation, model prediction, etc. Based on spinesTS and darts.
 ## Installation
@@ -14,7 +14,7 @@ python -m pip install PipelineTS[core]
 python -m pip install PipelineTS[all]
 ```
 
-## Quick Start [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/QuickStart.ipynb)
+## Quick Start [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/QuickStart.ipynb)
 
 ### list all available models
 ```python
@@ -78,7 +78,7 @@ res = pipeline.predict(30)
 
 ```
 ## Training and prediction of a single model
-###  Without predict specify series [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling.ipynb)
+###  Without predict specify series [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling.ipynb)
 
 #### Data Preprocessing
 
@@ -129,7 +129,7 @@ tide.fit(data)
 tide.predict(n)
 ```
 
-### With predict specify series [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling-with-predict-specify-series.ipynb)
+### With predict specify series [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling-with-predict-specify-series.ipynb)
 ```python
 tide.predict(n, series=valid_data)
 ```
@@ -177,7 +177,7 @@ pipeline_configs = PipelineConfigs([
 </tbody>
 </table>
 
-### Non-Interval Forecasting [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline.ipynb)
+### Non-Interval Forecasting [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline.ipynb)
 
 ```python
 from sklearn.metrics import mean_absolute_error
@@ -229,7 +229,7 @@ plot_data_period(init_data.iloc[-100:, :], prediction,
 
 ![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic2.png)
 
-### Interval prediction [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline-with-quantile-prediction.ipynb)
+### Interval prediction [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline-with-quantile-prediction.ipynb)
 
 ```python
 from sklearn.metrics import mean_absolute_error
