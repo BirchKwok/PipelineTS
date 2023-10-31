@@ -1,4 +1,6 @@
 # PipelineTS
+[\[English Documentation\]](https://github.com/BirchKwok/PipelineTS/blob/main/README.md)
+
 
 一站式时间序列分析工具，支持时间序列数据预处理、特征工程、模型训练、模型评估、模型预测等。基于spinesTS和dart。
 
@@ -14,7 +16,7 @@ python -m pip install PipelineTS[core]
 python -m pip install PipelineTS[all]
 ```
 
-## 快速开始 [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/QuickStart.ipynb)
+## 快速开始 [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/QuickStart.ipynb)
 
 ### 列出所有可用模型
 ```python
@@ -79,7 +81,7 @@ res = pipeline.predict(30)
 ```
 
 ## 单个模型的训练和预测
-### 不预测指定的序列 [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling.ipynb)
+### 不预测指定的序列 [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling.ipynb)
 
 #### 数据预处理
 
@@ -130,7 +132,7 @@ tide.fit(data)
 tide.predict(n)
 ```
 
-### 预测指定序列 [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling-with-predict-specify-series.ipynb)
+### 预测指定序列 [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling-with-predict-specify-series.ipynb)
 ```python
 tide.predict(n, series=valid_data)
 ```
@@ -176,7 +178,7 @@ pipeline_configs = PipelineConfigs([
 </tbody>
 </table>
 
-### 非区间预测 [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline.ipynb)
+### 非区间预测 [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline.ipynb)
 
 ```python
 from sklearn.metrics import mean_absolute_error
@@ -226,7 +228,7 @@ plot_data_period(init_data.iloc[-100:, :], prediction,
 
 ![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic2.png)
 
-### 区间预测 [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline-with-quantile-prediction.ipynb)
+### 区间预测 [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline-with-quantile-prediction.ipynb)
 
 ```python
 from sklearn.metrics import mean_absolute_error
