@@ -1,22 +1,22 @@
 # PipelineTS
+[中文文档](https://github.com/BirchKwok/PipelineTS/blob/main/README_CN.md)
 
-一站式时间序列分析工具，支持时序数据预处理、特征工程、模型训练、模型评估、模型预测等。
-
-## 安装
+One-stop time series analysis tool, supporting time series data preprocessing, feature engineering, model training, model evaluation, model prediction, etc. Based on spinesTS and darts.
+## Installation
 
 ```bash
-# if you don't want to use the prophet model 如果你不想使用prophet模型
+# if you don't want to use the prophet model
 # run this
 python -m pip install PipelineTS[core]
 
-# if you want to use all models 如果你想使用所有模型
+# if you want to use all models
 # run this
 python -m pip install PipelineTS[all]
 ```
 
-## 快速开始
+## Quick Start [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/QuickStart.ipynb)
 
-### 查看可用模型
+### list all available models
 ```python
 from PipelineTS.dataset import LoadWebSales
 
@@ -24,7 +24,7 @@ init_data = LoadWebSales()[['date', 'type_a']]
 
 valid_data = init_data.iloc[-30:, :]
 data = init_data.iloc[:-30, :]
-device = 'cpu'
+accelerator = 'auto'  # Specify Computing Device
 
 from PipelineTS.pipeline import ModelPipeline
 
@@ -56,7 +56,7 @@ ModelPipeline.list_all_available_models()
  'tide']
 ```
 
-### 开始训练
+### Training
 ```python
 from sklearn.metrics import mean_absolute_error
 
@@ -67,28 +67,30 @@ pipeline = ModelPipeline(
     random_state=42,
     metric=mean_absolute_error,
     metric_less_is_better=True,
-    device=device
+    accelerator=accelerator,  # Supported values for accelerator: `auto`, `cpu`, `tpu`, `cuda`, `mps`.
 )
 
 # training all models
-pipeline.fit(data, valid_df=valid_data)
+pipeline.fit(data, valid_data=valid_data)
 
 # use best model to predict next 30 steps data point
 res = pipeline.predict(30)
 
 ```
+## Training and prediction of a single model
+###  Without predict specify series [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling.ipynb)
 
-## 数据准备
+#### Data Preprocessing
 
 ```python
 
 from PipelineTS.dataset import LoadMessagesSentDataSets
 import pandas as pd
 # convert time col, the date column is assumed to be date_col
-time_col = 'date_col'
+time_col = 'date'
 target_col = 'ta'
-lags = 60  # 往前的窗口大小，数据将会被切割成lags天的多条序列进行训练
-n = 40 # 需要预测多少步，在这个例子里为需要预测多少天
+lags = 60  # Ahead of the window size, the data will be split into multiple sequences of lags for training
+n = 40 # How many steps to predict, in this case how many days to predict
 
 # you can also load data with pandas
 # init_data = pd.read_csv('/path/to/your/data.csv')
@@ -96,13 +98,13 @@ init_data = LoadMessagesSentDataSets()[[time_col, target_col]]
 
 init_data[time_col] = pd.to_datetime(init_data[time_col], format='%Y-%m-%d')
 
-# 划分训练集和测试集
+# split trainning set and test set
 valid_data = init_data.iloc[-n:, :]
 data = init_data.iloc[:-n, :]
 print("data shape: ", data.shape, ", valid data shape: ", valid_data.shape)
 data.tail(5)
 
-# 数据可视化
+# data visualization
 from PipelineTS.plot import plot_data_period
 plot_data_period(
     data.iloc[-300:, :], 
@@ -115,7 +117,7 @@ plot_data_period(
 ```
 ![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic1.png)
 
-## 单个模型的训练和预测
+#### Training
 
 ```python
 from PipelineTS.nn_model import TiDEModel
@@ -127,17 +129,27 @@ tide.fit(data)
 tide.predict(n)
 ```
 
-## PipelineTS 模块
+### With predict specify series [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling-with-predict-specify-series.ipynb)
+```python
+tide.predict(n, series=valid_data)
+```
+
+
+## PipelineTS Module
 
 ```python
-# 如果需要配置模型
+# If you need to configure the model
 from xgboost import XGBRegressor
 from catboost import CatBoostRegressor
 from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
 
-# 第一个为模型的名称，需要在PipelineTS.list_all_available_models()列表中，第二个为dict类型
-# dict可以有三个key: 'init_configs', 'fit_configs', 'predict_configs'，也可以任意一个，剩余的会自动补全为默认参数
-# 其中init_configs为模型初始化参数，fit_configs为模型训练时参数，predict_configs为模型预测时参数
+# If you want to try multiple configurations of a model at once for comparison or tuning purposes, you can use `PipelineConfigs`.
+# This feature allows for customizing the models returned by each `ModelPipeline.list_all_available_models()` call.
+# The first one is the name of the model, which needs to be in the list of available models provided by PipelineTS.list_all_available_models(). 
+# The second one is of type dict. The dict can have three keys: 'init_configs', 'fit_configs', 'predict_configs', or any combination of them. 
+# The remaining keys will be automatically filled with default parameters.
+# Among them, 'init_configs' represents the initialization parameters of the model, 'fit_configs' represents the parameters during model training, 
+# and 'predict_configs' represents the parameters during model prediction.
 pipeline_configs = PipelineConfigs([
     ('lightgbm', {'init_configs': {'verbose': -1, 'linear_tree': True}}),
     ('multi_output_model', {'init_configs': {'verbose': -1}}),
@@ -165,7 +177,7 @@ pipeline_configs = PipelineConfigs([
 </tbody>
 </table>
 
-### 非区间预测
+### Non-Interval Forecasting [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline.ipynb)
 
 ```python
 from sklearn.metrics import mean_absolute_error
@@ -173,33 +185,43 @@ from sklearn.metrics import mean_absolute_error
 from PipelineTS.pipeline import ModelPipeline
 
 pipeline = ModelPipeline(
-    time_col=time_col,
-    target_col=target_col,
-    lags=lags,
-    random_state=42,
-    metric=mean_absolute_error,
+    time_col=time_col, 
+    target_col=target_col, 
+    lags=lags, 
+    random_state=42, 
+    metric=mean_absolute_error, 
     metric_less_is_better=True,
     configs=pipeline_configs,
     include_init_config_model=False,
     use_standard_scale=False,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
-    with_quantile_prediction=False,
-    device=device,
-    # models=['wide_gbrt']  # 支持指定模型
+    # include_models=['d_linear', 'random_forest', 'n_linear', 'n_beats'],  # specifying the model used
+    # exclude_models=['catboost', 'tcn', 'transformer'],  # exclude specified models
+    # Note that `include_models` and `exclude_models` cannot be specified simultaneously.
+    accelerator=accelerator,
+    # Now we can directly input the "modelname__'init_params'" parameter to instantiate the models in ModelPipeline.
+    # Note that it is double underline. 
+    # When it is duplicated with the ModelPipeline class keyword parameter, the ModelPipeline clas keyword parameter is ignored
+    d_linear__lags=50,
+    n_linear__random_state=1024,
+    n_beats__num_blocks=3,
+    random_forest__n_estimators=200,
+    n_hits__accelerator='cpu', # Since using mps backend for n_hits model on mac gives an error, cpu backend is used as an alternative
+    tft__accelerator='cpu', # tft, same question, but if you use cuda backend, you can just ignore this two configurations.
 )
 
 pipeline.fit(data, valid_data)
 ```
 
-#### 获取PipelineTS中的模型参数
+#### Get the model parameters in PipelineTS
 ```python
 # Gets all configurations for the specified model， default to best model
-pipeline.get_model(model_name='wide_gbrt').all_configs
+pipeline.get_model_all_configs(model_name='wide_gbrt')
 ```
 
-#### 绘制预测结果
+#### Plotting the forecast results
 ```python
 # use best model to predict next 30 steps data point
-prediction = pipeline.predict(n)  # 可以使用model_name指定pipeline中已训练好的模型
+prediction = pipeline.predict(n, model_name=None)  # You can use `model_name` to specify the pre-trained model in the pipeline when using Python.
 
 plot_data_period(init_data.iloc[-100:, :], prediction, 
                  time_col=time_col, target_col=target_col)
@@ -207,7 +229,7 @@ plot_data_period(init_data.iloc[-100:, :], prediction,
 
 ![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic2.png)
 
-### 区间预测
+### Interval prediction [notebook](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline-with-quantile-prediction.ipynb)
 
 ```python
 from sklearn.metrics import mean_absolute_error
@@ -225,17 +247,19 @@ pipeline = ModelPipeline(
     include_init_config_model=False,
     use_standard_scale=False,
     with_quantile_prediction=True,  # turn on the quantile prediction switch, if you like
-    device=device,
-    # models=['wide_gbrt']  # 支持指定模型
+    accelerator=accelerator,
+    # models=['wide_gbrt']  # Specify the model
+    n_hits__accelerator='cpu',
+    tft__accelerator='cpu',
 )
 
 pipeline.fit(data, valid_data)
 ```
 
-#### 绘制预测结果
+#### Plotting the forecast results
 ```python
 # use best model to predict next 30 steps data point
-prediction = pipeline.predict(n, model_name=None)  # 可以使用model_name指定pipeline中已训练好的模型
+prediction = pipeline.predict(n, model_name=None)  # You can use `model_name` to specify the pre-trained model in the pipeline when using Python.
 
 plot_data_period(init_data.iloc[-100:, :], prediction, 
                  time_col=time_col, target_col=target_col)
@@ -243,14 +267,14 @@ plot_data_period(init_data.iloc[-100:, :], prediction,
 ![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic3.png)
 
 
-## 模型、pipeline的保存和加载
+## Model and pipeline saving and loading
 ```python
 from PipelineTS.io import load_model, save_model
 
 # save
-save_model(path='/path/to/save/your/fitted_model_or_pipeline.zip', model=your_fitted_model_or_pipeline)
+save_model(path='/path/to/save/your/fitted_model_or_pipeline.zip', model=pipeline)
 # load
-your_loaded_model_or_pipeline = load_model('/path/to/save/your/fitted_model_or_pipeline.zip')
+pipeline = load_model('/path/to/save/your/fitted_model_or_pipeline.zip')
 
 
 ```
