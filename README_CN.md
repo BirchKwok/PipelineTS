@@ -138,7 +138,7 @@ tide.predict(n, series=valid_data)
 ```
 
 
-## PipelineTS 模块
+## ModelPipeline 模块
 
 ```python
 # 如果需要配置模型
@@ -212,7 +212,7 @@ pipeline = ModelPipeline(
 pipeline.fit(data, valid_data)
 ```
 
-#### 获取PipelineTS中的模型参数
+#### 获取ModelPipeline中的模型参数
 ```python
 # 获取指定模型的所有配置信息，默认为最佳模型
 pipeline.get_model_all_configs(model_name='wide_gbrt')
@@ -267,7 +267,7 @@ plot_data_period(init_data.iloc[-100:, :], prediction,
 ![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic3.png)
 
 
-## 模型、pipeline的保存和加载
+## 模型、ModelPipeline的保存和加载
 ```python
 from PipelineTS.io import load_model, save_model
 
