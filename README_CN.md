@@ -138,7 +138,7 @@ tide.predict(n, series=valid_data)
 ```
 
 
-## PipelineTS Module
+## PipelineTS 模块
 
 ```python
 # 如果需要配置模型
