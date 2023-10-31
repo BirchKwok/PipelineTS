@@ -132,17 +132,14 @@ class ModelPipeline:
         self._model_init_kwargs = {}
 
         model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
-                                                         {'multi_output_model__verbose': -1})
-        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
-                                                         {'multi_step_model__verbose': -1})
-        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
-                                                         {'lightgbm__verbose': -1})
-        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
-                                                         {'wide_gbrt__verbose': -1})
-        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
-                                                         {'catboost__verbose': False})
-        model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
-                                                         {'xgboost__verbose': 0})
+                                                         {
+                                                             'multi_output_model__verbose': -1,
+                                                             'multi_step_model__verbose': -1,
+                                                             'lightgbm__verbose': -1,
+                                                             'wide_gbrt__verbose': -1,
+                                                             'catboost__verbose': False,
+                                                             'xgboost__verbose': 0
+                                                         })
 
         for k, v in model_init_kwargs.items():
             raise_if(ValueError, '__' not in k,
