@@ -35,7 +35,7 @@ MANIFEST
 *.manifest
 *.spec
 
-# pickled model
+# pickled model file
 *.zip
 
 # Installer logs
