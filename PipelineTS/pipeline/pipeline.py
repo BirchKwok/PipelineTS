@@ -1,3 +1,4 @@
+import sys
 from copy import deepcopy
 import gc
 
@@ -5,6 +6,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from frozendict import frozendict
 
+from spinesTS.base._torch_mixin import detect_available_device
 from spinesTS.metrics import mae
 from spinesTS.utils import func_has_params
 from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
@@ -148,6 +150,8 @@ class ModelPipeline:
             raise_if(ValueError, k.split('__')[0] not in self._available_models,
                      f"{k.split('__')[0]} is not a valid model name")
             self._model_init_kwargs[k] = v
+
+        sys.stderr.write(detect_available_device(self.accelerator)[1]+'\n\n')
 
     def _initial_models(self):
         initial_models = []
