@@ -1,84 +1,47 @@
-import logging
+from spinesTS.nn import TCN
+from spinesUtils import generate_function_kwargs
 
-import pandas as pd
-import torch
-from darts.models.forecasting.tcn_model import TCNModel as tcn
-from spinesUtils import ParameterTypeAssert
-from spinesUtils.asserts import generate_function_kwargs
-
-from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
-
-logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
-logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
+from PipelineTS.base.sps_nn_model_base import SpinesNNModelMixin
 
 
-class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
+class TCNModel(SpinesNNModelMixin):
     def __init__(
             self,
             time_col,
             target_col,
-            lags=6,
-            kernel_size=3,
-            num_filters=3,
-            num_layers=None,
-            dilation_base=2,
-            weight_norm=False,
-            dropout=0.2,
-            loss_fn=torch.nn.MSELoss(),
-            torch_metrics=None,
-            optimizer_cls=torch.optim.Adam,
-            optimizer_kwargs=None,
-            lr_scheduler_cls=None,
-            lr_scheduler_kwargs=None,
-            use_reversible_instance_norm=False,
-            batch_size=32,
-            n_epochs=100,
-            nr_epochs_val_period=1,
-            add_encoders=None,
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            pl_trainer_kwargs=None,
+            lags=30,
             quantile=0.9,
             random_state=None,
-            accelerator=None
+            kernel_size=2,
+            dropout=0.2,
+            learning_rate=0.001,
+            accelerator='auto',
+            verbose=False,
+            epochs=1000,
+            batch_size='auto',
+            patience=100,
+            min_delta=0,
+            lr_scheduler='CosineAnnealingLR',
+            lr_scheduler_patience=10,
+            lr_factor=0.7,
+            restore_best_weights=True,
+            loss_type='min'
     ):
-        super().__init__(time_col=time_col, target_col=target_col, device=accelerator)
-
-        if pl_trainer_kwargs is not None and 'accelerator' not in pl_trainer_kwargs:
-            pl_trainer_kwargs.update({'accelerator': self.device})
-        elif pl_trainer_kwargs is None:
-            pl_trainer_kwargs = {'accelerator': self.device}
-
-        if 'enable_progress_bar' not in pl_trainer_kwargs:
-            pl_trainer_kwargs.update({'enable_progress_bar': enable_progress_bar})
-        if 'enable_model_summary' not in pl_trainer_kwargs:
-            pl_trainer_kwargs.update({'enable_model_summary': enable_model_summary})
+        super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
-            tcn,
-            input_chunk_length=lags,
-            output_chunk_length=lags-1,
+            TCN,
+            in_features=lags,
+            out_features=lags,
+            loss_fn='mae',
             kernel_size=kernel_size,
-            num_filters=num_filters,
-            num_layers=num_layers,
-            dilation_base=dilation_base,
-            weight_norm=weight_norm,
             dropout=dropout,
-            loss_fn=loss_fn,
-            torch_metrics=torch_metrics,
-            optimizer_cls=optimizer_cls,
-            optimizer_kwargs=optimizer_kwargs,
-            lr_scheduler_cls=lr_scheduler_cls,
-            lr_scheduler_kwargs=lr_scheduler_kwargs,
-            use_reversible_instance_norm=use_reversible_instance_norm,
-            batch_size=batch_size,
-            n_epochs=n_epochs,
-            nr_epochs_val_period=nr_epochs_val_period,
-            add_encoders=add_encoders,
-            pl_trainer_kwargs=pl_trainer_kwargs,
-            random_state=random_state,
+            learning_rate=learning_rate,
+            random_seed=random_state,
+            device=self.accelerator,
         )
-        self.model = self._define_model()
+
+        self.last_dt = None
 
         self.all_configs.update(
             {
@@ -86,40 +49,23 @@ class TCNModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'enable_progress_bar': enable_progress_bar,
-                'enable_model_summary': enable_model_summary
+                'quantile_error': 0,
+                'verbose': verbose,
+                'epochs': epochs,
+                'batch_size': batch_size,
+                'patience': patience,
+                'min_delta': min_delta,
+                'lr_scheduler': lr_scheduler,
+                'lr_scheduler_patience': lr_scheduler_patience,
+                'lr_factor': lr_factor,
+                'restore_best_weights': restore_best_weights,
+                'loss_type': loss_type
             }
         )
 
+        self.x = None
+
+        self.model = self._define_model()
+
     def _define_model(self):
-        return tcn(**self.all_configs['model_configs'])
-
-    def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None):
-        super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=True)
-        if self.all_configs['quantile'] is not None:
-            self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_darts(
-                    data, fit_kwargs=fit_kwargs, convert2dts_dataframe_kwargs=convert_dataframe_kwargs,
-                    cv=cv
-                )
-
-        return self
-
-    @ParameterTypeAssert({
-        'n': int,
-        'series': (pd.DataFrame, None),
-        'predict_kwargs': (None, dict),
-        'convert_dataframe_kwargs': (None, dict),
-    })
-    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None):
-        if predict_kwargs is None:
-            predict_kwargs = {}
-
-        res = super().predict(n, series=series,
-                              predict_kwargs=predict_kwargs, convert_dataframe_kwargs=convert_dataframe_kwargs,
-                              convert_float32=True)
-        res = self.rename_prediction(res)
-        if self.all_configs['quantile'] is not None:
-            res = self.interval_predict(res)
-
-        return self.chosen_cols(res)
+        return TCN(**self.all_configs['model_configs'])
