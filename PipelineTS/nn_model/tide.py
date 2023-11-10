@@ -7,6 +7,7 @@ from spinesUtils import ParameterTypeAssert
 from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
+from PipelineTS.utils import update_dict_without_conflict
 
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
 logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
@@ -46,17 +47,87 @@ class TiDEModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             random_state=None,
             accelerator=None
     ):
-        super().__init__(time_col=time_col, target_col=target_col, device=accelerator)
+        """
+        TiDEModel: A wrapper for the TiDE model from the darts library with additional features.
 
-        if pl_trainer_kwargs is not None and 'accelerator' not in pl_trainer_kwargs:
-            pl_trainer_kwargs.update({'accelerator': self.device})
-        elif pl_trainer_kwargs is None:
-            pl_trainer_kwargs = {'accelerator': self.device}
+        Parameters
+        ----------
+        time_col : str
+            The column containing time information in the input data.
+        target_col : str
+            The column containing the target variable in the input data.
+        lags : int, optional, default: 6
+            The number of lagged values to use as input features for training and prediction.
+        num_encoder_layers : int, optional, default: 1
+            The number of encoder layers in the TiDE model.
+        num_decoder_layers : int, optional, default: 1
+            The number of decoder layers in the TiDE model.
+        decoder_output_dim : int, optional, default: 16
+            The output dimension of the decoder in the TiDE model.
+        hidden_size : int, optional, default: 128
+            The size of the hidden layer in the TiDE model.
+        temporal_width_past : int, optional, default: 4
+            The temporal width for past information in the TiDE model.
+        temporal_width_future : int, optional, default: 4
+            The temporal width for future information in the TiDE model.
+        temporal_decoder_hidden : int, optional, default: 32
+            The size of the hidden layer in the temporal decoder of the TiDE model.
+        use_layer_norm : bool, optional, default: False
+            Whether to use layer normalization in the TiDE model.
+        dropout : float, optional, default: 0.1
+            The dropout rate used during training.
+        use_static_covariates : bool, optional, default: True
+            Whether to use static covariates in the TiDE model.
+        loss_fn : torch.nn.Module, optional, default: torch.nn.MSELoss()
+            The loss function used for training the model.
+        torch_metrics : list or None, optional, default: None
+            The list of additional metrics to use during training. Set to None if no additional metrics are required.
+        optimizer_cls : torch.optim.Optimizer, optional, default: torch.optim.Adam
+            The optimizer used for training the model.
+        optimizer_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the optimizer. Set to None if no additional arguments are required.
+        lr_scheduler_cls : torch.optim.lr_scheduler._LRScheduler, optional, default: None
+            The learning rate scheduler used during training. Set to None if no scheduler is required.
+        lr_scheduler_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the learning rate scheduler. Set to None if no additional arguments are required.
+        use_reversible_instance_norm : bool, optional, default: False
+            Whether to use reversible instance normalization in the TiDE model.
+        batch_size : int, optional, default: 32
+            The batch size used during training.
+        n_epochs : int, optional, default: 100
+            The number of epochs for training the model.
+        nr_epochs_val_period : int, optional, default: 1
+            The frequency at which to perform validation during training.
+        add_encoders : dict or None, optional, default: None
+            The dictionary containing additional encoders for input features. Set to None if no additional encoders are required.
+        enable_progress_bar : bool, optional, default: False
+            Whether to display a progress bar during training.
+        enable_model_summary : bool, optional, default: False
+            Whether to display a summary of the model architecture.
+        pl_trainer_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the PyTorch Lightning trainer. Set to None if no additional arguments are required.
+        quantile : float, optional, default: 0.9
+            The quantile used for interval prediction. Set to None for point prediction.
+        random_state : int or None, optional, default: None
+            The random seed for reproducibility.
+        accelerator : str or None, optional, default: None
+            The PyTorch Lightning accelerator to use during training. Set to None for the default accelerator.
 
-        if 'enable_progress_bar' not in pl_trainer_kwargs:
-            pl_trainer_kwargs.update({'enable_progress_bar': enable_progress_bar})
-        if 'enable_model_summary' not in pl_trainer_kwargs:
-            pl_trainer_kwargs.update({'enable_model_summary': enable_model_summary})
+        Attributes
+        ----------
+        model : darts.models.forecasting.tide_model.TiDEModel
+            The TiDE model from the darts library.
+        """
+        super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
+
+        if pl_trainer_kwargs is None:
+            pl_trainer_kwargs = {}
+
+        pl_trainer_kwargs = update_dict_without_conflict(pl_trainer_kwargs, {
+            'accelerator': self.accelerator,
+            'enable_progress_bar': enable_progress_bar,
+            'enable_model_summary': enable_model_summary
+        })
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             TiDE,
@@ -100,9 +171,36 @@ class TiDEModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
         )
 
     def _define_model(self):
+        """
+        Define the TiDE model from the darts library.
+
+        Returns
+        -------
+        darts.models.forecasting.tide_model.TiDEModel
+            The TiDE model from the darts library.
+        """
         return TiDE(**self.all_configs['model_configs'])
 
     def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None):
+        """
+        Train the TiDE model on the input data.
+
+        Parameters
+        ----------
+        data : pd.DataFrame or None
+            The input data for training the model. Set to None if no training data is provided.
+        cv : int, optional, default: 5
+            The number of cross-validation folds to use during training.
+        convert_dataframe_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for converting the input data to PyTorch tensors. Set to None if no additional arguments are required.
+        fit_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the training process. Set to None if no additional arguments are required.
+
+        Returns
+        -------
+        self
+            Returns an instance of the TiDEModel class.
+        """
         super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=True)
 
         if self.all_configs['quantile'] is not None:
@@ -116,17 +214,38 @@ class TiDEModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
 
     @ParameterTypeAssert({
         'n': int,
-        'series': (pd.DataFrame, None),
+        'data': (pd.DataFrame, None),
         'predict_kwargs': (None, dict),
         'convert_dataframe_kwargs': (None, dict),
     })
-    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None, convert_float32=True):
+    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None, convert_float32=True):
+        """
+        Make predictions using the trained TiDE model.
+
+        Parameters
+        ----------
+        n : int
+            The number of time steps to predict.
+        data : pd.DataFrame or None, optional, default: None
+            The input data for making predictions. Set to None if no prediction data is provided.
+        predict_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the prediction process. Set to None if no additional arguments are required.
+        convert_dataframe_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for converting the input data to PyTorch tensors. Set to None if no additional arguments are required.
+        convert_float32 : bool, optional, default: True
+            Whether to convert the predictions to float32.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the predicted values and, if applicable, the quantile interval.
+        """
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        res = super().predict(n, series=series,
+        res = super().predict(n, data=data,
                               predict_kwargs=predict_kwargs, convert_dataframe_kwargs=convert_dataframe_kwargs,
-                              convert_float32=True)
+                              convert_float32=convert_float32)
         res = self.rename_prediction(res)
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

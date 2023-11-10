@@ -77,15 +77,18 @@ pipeline.fit(data, valid_data=valid_data)
 res = pipeline.predict(30)
 
 ```
+
 ## Training and prediction of a single model
 ###  Without predict specify series [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling.ipynb)
-
-#### Data Preprocessing
+<details>
+<summary>Code</summary>
 
 ```python
 
 from PipelineTS.dataset import LoadMessagesSentDataSets
 import pandas as pd
+
+# ------------------- Data Preprocessing -------------------
 # convert time col, the date column is assumed to be date_col
 time_col = 'date'
 target_col = 'ta'
@@ -114,12 +117,7 @@ plot_data_period(
     labels=['Train data', 'Valid_data']
 )
 
-```
-![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic1.png)
-
-#### Training
-
-```python
+# training and predict
 from PipelineTS.nn_model import TiDEModel
 tide = TiDEModel(
     time_col=time_col, target_col=target_col, lags=lags, random_state=42, 
@@ -127,12 +125,60 @@ tide = TiDEModel(
 )
 tide.fit(data)
 tide.predict(n)
+
 ```
+</details>
 
 ### With predict specify series [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling-with-predict-specify-series.ipynb)
+
+<details>
+<summary>Code</summary>
+
 ```python
-tide.predict(n, series=valid_data)
+
+from PipelineTS.dataset import LoadMessagesSentDataSets
+import pandas as pd
+
+# ------------------- Data Preprocessing -------------------
+# convert time col, the date column is assumed to be date_col
+time_col = 'date'
+target_col = 'ta'
+lags = 60  # Ahead of the window size, the data will be split into multiple sequences of lags for training
+n = 40 # How many steps to predict, in this case how many days to predict
+
+# you can also load data with pandas
+# init_data = pd.read_csv('/path/to/your/data.csv')
+init_data = LoadMessagesSentDataSets()[[time_col, target_col]]
+
+init_data[time_col] = pd.to_datetime(init_data[time_col], format='%Y-%m-%d')
+
+# split trainning set and test set
+valid_data = init_data.iloc[-n:, :]
+data = init_data.iloc[:-n, :]
+print("data shape: ", data.shape, ", valid data shape: ", valid_data.shape)
+data.tail(5)
+
+# data visualization
+from PipelineTS.plot import plot_data_period
+plot_data_period(
+    data.iloc[-300:, :], 
+    valid_data, 
+    time_col=time_col, 
+    target_col=target_col, 
+    labels=['Train data', 'Valid_data']
+)
+
+# training and predict
+from PipelineTS.nn_model import TiDEModel
+tide = TiDEModel(
+    time_col=time_col, target_col=target_col, lags=lags, random_state=42, 
+    quantile=0.9, enable_progress_bar=False, enable_model_summary=False
+)
+tide.fit(data)
+tide.predict(n, data=valid_data)
 ```
+
+</details>
 
 
 ## ModelPipeline Module

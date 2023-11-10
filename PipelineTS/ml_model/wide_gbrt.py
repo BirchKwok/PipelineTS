@@ -1,19 +1,15 @@
 from copy import deepcopy
-
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMRegressor
-
-from spinesTS.ml_model import (
-    GBRTPreprocessing,
-    MultiOutputRegressor
-)
-from spinesTS.pipeline import Pipeline
+from sklearn.preprocessing import MinMaxScaler
+from spinesTS.ml_model import GBRTPreprocessing
+from sklearn.multioutput import RegressorChain
 from spinesUtils import generate_function_kwargs, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import gc_collector, reshape_if
-
 from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin
+from PipelineTS.utils import update_dict_without_conflict
 
 
 class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
@@ -28,20 +24,63 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             differential_n=0,
             moving_avg_n=0,
             extend_daily_target_features=True,
-            linear_tree=False,
-            verbose=-1,
-            **lightgbm_model_configs
+            estimator=LGBMRegressor,
+            **model_init_configs
     ):
+        """
+        Wide Gradient Boosting Regression Trees (GBRT) Model.
+
+        Parameters
+        ----------
+        time_col : str
+            The column containing time information in the input data.
+        target_col : str
+            The column containing the target variable in the input data.
+        lags : int, optional, default: 1
+            The number of lagged values to use as input features for training and prediction.
+        n_estimators : int, optional, default: 100
+            The number of boosting rounds (trees) in the GBRT model.
+        quantile : float, optional, default: 0.9
+            The quantile used for interval prediction. Set to None for point prediction.
+        random_state : int or None, optional, default: None
+            The random seed for reproducibility.
+        differential_n : int, optional, default: 0
+            The number of differencing operations to apply to the target variable.
+        moving_avg_n : int, optional, default: 0
+            The window size for the moving average operation on the target variable.
+        extend_daily_target_features : bool, optional, default: True
+            Whether to extend the features with daily target-related features.
+        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+            The base estimator used for the GBRT model.
+        **model_init_configs : dict
+            Additional keyword arguments for configuring the base estimator.
+
+        Attributes
+        ----------
+        estimator : sklearn.base.BaseEstimator
+            The base estimator for the GBRT model.
+        processor : spinesTS.ml_model.GBRTPreprocessing
+            The preprocessor for transforming input data.
+        model : sklearn.multioutput.RegressorChain
+            The GBRT model wrapped in a regressor chain.
+        x : pandas.DataFrame or None
+            The last input features used for training.
+        """
         super().__init__(time_col=time_col, target_col=target_col)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
-            LGBMRegressor,
+            estimator,
             n_estimators=n_estimators,
             random_state=random_state,
-            linear_tree=linear_tree,
-            verbose=verbose,
-            **lightgbm_model_configs
+            **model_init_configs
         )
+
+        if isinstance(estimator, LGBMRegressor):
+            self.all_configs['model_configs'] = update_dict_without_conflict(self.all_configs['model_configs'], {
+                'verbose': -1
+            })
+
+        self.estimator = estimator
 
         self.last_dt = None
         self.last_lags_dataframe = None
@@ -56,6 +95,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
                 'differential_n': differential_n,
                 'moving_avg_n': moving_avg_n,
                 'extend_daily_target_features': extend_daily_target_features,
+                'built_in_scaler': MinMaxScaler()
             }
         )
 
@@ -75,14 +115,38 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         self.model = self._define_model()
 
     def _define_model(self):
-        return Pipeline([
-            ('model', MultiOutputRegressor(LGBMRegressor(**self.all_configs['model_configs'])))
-        ])
+        """
+        Define the GBRT model using a regressor chain.
+
+        Returns
+        -------
+        sklearn.multioutput.RegressorChain
+            The GBRT model wrapped in a regressor chain.
+        """
+        return RegressorChain(self.estimator(**self.all_configs['model_configs']))
 
     @ParameterValuesAssert({
         'mode': ('train', 'predict')
     })
     def _data_preprocess(self, data, mode='train', update_last_dt=False):
+        """
+        Preprocess the input data for training or prediction.
+
+        Parameters
+        ----------
+        data : pandas.DataFrame
+            The input data.
+        mode : {'train', 'predict'}, optional, default: 'train'
+            The mode indicating whether to preprocess data for training or prediction.
+        update_last_dt : bool, optional, default: False
+            Whether to update the last timestamp attribute.
+
+        Returns
+        -------
+        tuple or numpy.ndarray
+            If 'mode' is 'train', returns a tuple (x_train, y_train).
+            If 'mode' is 'predict', returns lagged splits of the target column.
+        """
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
         if update_last_dt:
             self.last_dt = data[self.all_configs['time_col']].max()
@@ -96,8 +160,25 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             # x
             return self.processor.transform(data, mode=mode).astype(np.float32)
 
-    @gc_collector(2)
+    @gc_collector()
     def fit(self, data, cv=5, fit_kwargs=None):
+        """
+        Fit the GBRT model to the training data.
+
+        Parameters
+        ----------
+        data : pandas.DataFrame
+            The training data.
+        cv : int, optional, default: 5
+            The number of cross-validation folds.
+        fit_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the fitting process.
+
+        Returns
+        -------
+        self
+            Returns an instance of the fitted model.
+        """
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
         self.last_lags_dataframe = data.iloc[-self.all_configs['lags']:, :]
@@ -112,7 +193,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             self._data_preprocess(data, 'predict')
         ).iloc[-1:, :]
 
-        self.model.fit(x, y, eval_set=[(x, y)], **fit_kwargs)
+        self.model.fit(x, y, **fit_kwargs)
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
@@ -122,24 +203,26 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def _extend_predict(self, x, n, predict_kwargs):
-        """Extrapolation prediction.
+    def _extend_predict(self, x, n):
+        """
+        Extrapolation prediction.
 
         Parameters
         ----------
-        x: to_predict data, must be 2 dims data
-        n: predict steps, must be int
+        x : numpy.ndarray
+            To-predict data with 2 dimensions.
+        n : int
+            Number of prediction steps.
 
         Returns
         -------
-        np.ndarray, which has 2 dims
-
+        list
+            List of predicted values.
         """
-
         assert isinstance(n, int)
         assert x.ndim == 2
 
-        current_res = self.model.predict(x, **predict_kwargs)  # np.ndarray
+        current_res = self.model.predict(x)  # np.ndarray
         current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
 
         if n is None:
@@ -168,28 +251,41 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
                     self._data_preprocess(last_data, 'predict')
                 ).iloc[-1:, :]
 
-                current_res = self.model.predict(to_predict_x, **predict_kwargs).squeeze()
+                current_res = self.model.predict(to_predict_x).squeeze()
                 res.append(current_res[0])
 
             return res
 
-    def predict(self, n, series=None, predict_kwargs=None):
-        if predict_kwargs is None:
-            predict_kwargs = {}
+    def predict(self, n, data=None):
+        """
+        Predict future values using the trained GBRT model.
 
-        if series is not None:
+        Parameters
+        ----------
+        n : int
+            Number of steps to predict into the future.
+        data : pandas.DataFrame or None, optional, default: None
+            Additional data for prediction. If provided, the length of the series must be greater than or equal to lags.
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame containing the predicted values and corresponding timestamps.
+        """
+        if data is not None:
             raise_if_not(
-                ValueError, len(series) >= self.all_configs['lags'],
-                'The length of the series must greater than or equal to the lags. '
+                ValueError, len(data) >= self.all_configs['lags'],
+                'The length of the series must be greater than or equal to the lags.'
             )
 
-            x = self._data_preprocess(series.iloc[-self.all_configs['lags']:, :], 'predict', update_last_dt=False)
-            last_dt = series[self.all_configs['time_col']].max()
+            x = self._data_preprocess(data.iloc[-self.all_configs['lags']:, :], 'predict', update_last_dt=False)
+            last_dt = data[self.all_configs['time_col']].max()
         else:
             x = self.x.values
             last_dt = self.last_dt
 
-        res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
+        res = self._extend_predict(x, n)  # list
+
         assert len(res) == n
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
         res[self.all_configs['time_col']] = \

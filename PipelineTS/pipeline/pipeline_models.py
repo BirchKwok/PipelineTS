@@ -6,7 +6,19 @@ from PipelineTS.nn_model import *
 
 
 def get_all_available_models():
-    """获取所有可用的模型"""
+    """
+    Retrieve a dictionary of all available model classes in the pipeline.
+
+    Returns
+    -------
+    models : frozendict
+        A frozendict containing model names as keys and corresponding model class references as values.
+
+    Notes
+    -----
+    - The function attempts to import external dependencies to check for additional models.
+    - If the 'prophet' package is installed, a 'prophet' model will be added to the available models.
+    """
     try:
         from prophet import Prophet
         extra_pkg_installed = True

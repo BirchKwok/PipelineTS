@@ -83,7 +83,8 @@ res = pipeline.predict(30)
 ## 单个模型的训练和预测
 ### 不预测指定的序列 [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling.ipynb)
 
-#### 数据预处理
+<details>
+<summary>Code</summary>
 
 ```python
 
@@ -117,12 +118,7 @@ plot_data_period(
     labels=['Train data', 'Valid_data']
 )
 
-```
-![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic1.png)
-
-#### 训练
-
-```python
+# 训练和预测
 from PipelineTS.nn_model import TiDEModel
 tide = TiDEModel(
     time_col=time_col, target_col=target_col, lags=lags, random_state=42, 
@@ -130,12 +126,61 @@ tide = TiDEModel(
 )
 tide.fit(data)
 tide.predict(n)
+
 ```
+</details>
 
 ### 预测指定序列 [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling-with-predict-specify-series.ipynb)
+
+<details>
+<summary>Code</summary>
+
 ```python
-tide.predict(n, series=valid_data)
+
+from PipelineTS.dataset import LoadMessagesSentDataSets
+import pandas as pd
+
+# 转换time_col, 传入模型的time_col被假定为timestamp格式，强烈建议转为pd.Timestamp格式
+time_col = 'date'
+target_col = 'ta'
+lags = 60  # 往前的窗口大小，数据将会被切割成lags天的多条序列进行训练
+n = 40  # 需要预测多少步，在这个例子里为需要预测多少天
+
+# 你一样可以通过pandas加载数据
+# init_data = pd.read_csv('/path/to/your/data.csv')
+init_data = LoadMessagesSentDataSets()[[time_col, target_col]]
+
+init_data[time_col] = pd.to_datetime(init_data[time_col], format='%Y-%m-%d')
+
+# 划分训练集和测试集
+valid_data = init_data.iloc[-n:, :]
+data = init_data.iloc[:-n, :]
+print("data shape: ", data.shape, ", valid data shape: ", valid_data.shape)
+data.tail(5)
+
+# 数据可视化
+from PipelineTS.plot import plot_data_period
+
+plot_data_period(
+    data.iloc[-300:, :],
+    valid_data,
+    time_col=time_col,
+    target_col=target_col,
+    labels=['Train data', 'Valid_data']
+)
+
+# 训练和预测
+from PipelineTS.nn_model import TiDEModel
+
+tide = TiDEModel(
+    time_col=time_col, target_col=target_col, lags=lags, random_state=42,
+    quantile=0.9, enable_progress_bar=False, enable_model_summary=False
+)
+tide.fit(data)
+tide.predict(n, data=valid_data)
 ```
+
+</details>
 
 
 ## ModelPipeline 模块

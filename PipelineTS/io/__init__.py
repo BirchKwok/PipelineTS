@@ -2,28 +2,65 @@ from copy import deepcopy
 
 
 def _get_object_name(model_obj):
+    """
+    Extracts and returns the object name from its string representation.
+
+    Parameters
+    ----------
+    model_obj : object
+        The object for which the name needs to be extracted.
+
+    Returns
+    -------
+    str
+        The extracted object name.
+    """
     import re
     return re.split('<|>', str(model_obj))[1].split(' ')[0].strip().split('.')[-1]
 
 
 def _hash_string(string):
+    """
+    Hashes a given string using MD5 algorithm.
+
+    Parameters
+    ----------
+    string : str
+        The input string to be hashed.
+
+    Returns
+    -------
+    str
+        The first 12 characters of the hashed string.
+    """
     import hashlib
     import random
     import time
 
-    # 创建哈希对象
+    # Create an MD5 hash object
     hash_object = hashlib.md5()
 
-    # 更新哈希对象的值为要加密的字符串
+    # Update the hash object's value with the string to be encrypted
     hash_object.update((string + str(random.random()) + str(time.time())).encode('utf-8'))
 
-    # 获取加密后的结果
+    # Get the encrypted result
     encrypted_string = hash_object.hexdigest()
 
-    return encrypted_string[:12]  # 取前12位
+    return encrypted_string[:12]
 
 
 def _zip_file(zipfile_fp, *file_fp):
+    """
+    Compresses multiple files into a zip archive.
+
+    Parameters
+    ----------
+    zipfile_fp : str
+        The path to the zip file.
+
+    *file_fp : str
+        Variable length list of file paths to be compressed.
+    """
     import zipfile
     from pathlib import Path
 
@@ -37,6 +74,19 @@ def _zip_file(zipfile_fp, *file_fp):
 
 
 def _load_zip_file(zipfile_fp):
+    """
+    Extracts the contents of a zip file to a temporary directory.
+
+    Parameters
+    ----------
+    zipfile_fp : str
+        The path to the zip file.
+
+    Returns
+    -------
+    str
+        The path to the temporary directory containing the extracted contents.
+    """
     import zipfile
     from pathlib import Path
 
@@ -55,7 +105,25 @@ def _load_zip_file(zipfile_fp):
 
 
 def _save_single_model(path, model, scaler=None):
-    """save model"""
+    """
+    Save a machine learning model along with its scaler to a zip file.
+
+    Parameters
+    ----------
+    path : str
+        The path to the zip file.
+
+    model : object
+        The machine learning model to be saved.
+
+    scaler : object, optional
+        The scaler associated with the model.
+
+    Returns
+    -------
+    str
+        The path to the saved zip file.
+    """
     from pathlib import Path
     import shutil
 
@@ -73,7 +141,7 @@ def _save_single_model(path, model, scaler=None):
 
     model_fp = Path(path.strip()[:-4] + '/')
 
-    # create model directory
+    # Create model directory
     Path.mkdir(model_fp)
 
     pkl_file_fp = str(model_fp.joinpath(Path(path.strip()[:-4] + '.pkl').name))
@@ -89,7 +157,7 @@ def _save_single_model(path, model, scaler=None):
 
     if isinstance(model, DartsForecastMixin) and isinstance(model, NNModelMixin):
         _zip_file(zipfile_fp, pkl_file_fp, model_fp.joinpath(_get_object_name(model) + '.pt'),
-              model_fp.joinpath(_get_object_name(model) + '.pt.ckpt'))
+                  model_fp.joinpath(_get_object_name(model) + '.pt.ckpt'))
     else:
         _zip_file(zipfile_fp, pkl_file_fp)
 
@@ -99,7 +167,25 @@ def _save_single_model(path, model, scaler=None):
 
 
 def _load_single_model(path, unzip_file_path=None, unzip=True):
-    """load model"""
+    """
+    Load a machine learning model from a zip file.
+
+    Parameters
+    ----------
+    path : str
+        The path to the zip file.
+
+    unzip_file_path : str, optional
+        The path to a pre-extracted directory containing the contents of the zip file.
+
+    unzip : bool, optional
+        If True, the zip file is extracted to a temporary directory.
+
+    Returns
+    -------
+    tuple or object
+        If a scaler is saved along with the model, returns a tuple (model, scaler). Otherwise, returns the model.
+    """
     import os
     from pathlib import Path
     import shutil
@@ -122,7 +208,7 @@ def _load_single_model(path, unzip_file_path=None, unzip=True):
         unzip_file_fp = unzip_file_path
 
     raise_if_not(ValueError, any([i.endswith('.pkl') for i in os.listdir(unzip_file_fp)]),
-                 "zip file must contain one file with the `.pkl` suffix.")
+                 "Zip file must contain one file with the `.pkl` suffix.")
 
     model = None
     scaler = None
@@ -150,15 +236,15 @@ def _load_single_model(path, unzip_file_path=None, unzip=True):
 
 def _save_pipeline(path, model):
     """
-    Save a model and its scaler to a zip file.
+    Save a machine learning pipeline to a zip file.
 
     Parameters
     ----------
-    path
+    path : str
         The path to the zip file.
 
-    model
-        The model to be saved.
+    model : object
+        The machine learning pipeline to be saved.
     """
     from pathlib import Path
     import shutil
@@ -171,7 +257,7 @@ def _save_pipeline(path, model):
 
     zipfile_fp, darts_model_weights_fp = path, None
 
-    # make a directory with pkl file name
+    # Make a directory with the pkl file name
     name_subfix = _hash_string(path.strip()[:-4])
     pipeline_path = Path(path).parent.joinpath(path.strip()[:-4] + name_subfix + '/')
     Path.mkdir(pipeline_path)
@@ -198,6 +284,25 @@ def _save_pipeline(path, model):
 
 
 def _load_pipeline(path, unzip_file_path=None, unzip=True):
+    """
+    Load a machine learning pipeline from a zip file.
+
+    Parameters
+    ----------
+    path : str
+        The path to the zip file.
+
+    unzip_file_path : str, optional
+        The path to a pre-extracted directory containing the contents of the zip file.
+
+    unzip : bool, optional
+        If True, the zip file is extracted to a temporary directory.
+
+    Returns
+    -------
+    object
+        The loaded machine learning pipeline.
+    """
     import os
     from pathlib import Path
     import shutil
@@ -219,7 +324,7 @@ def _load_pipeline(path, unzip_file_path=None, unzip=True):
         unzip_file_fp = unzip_file_path
 
     raise_if_not(ValueError, os.listdir(unzip_file_fp).count('pipeline.pkl') == 1,
-                 "zip file must contain one file which be named `pipeline.pkl`")
+                 "Zip file must contain one file which be named `pipeline.pkl`")
 
     pipeline = None
     models = []
@@ -242,15 +347,25 @@ def _load_pipeline(path, unzip_file_path=None, unzip=True):
 
 def save_model(path, model, scaler=None):
     """
-    Save a model or a pipeline to a zip file.
+    Save a machine learning model or a pipeline to a zip file.
 
-    [Notice that]: A loaded model cannot be saved.
+    [Note that]: A loaded model cannot be saved.
 
-    :param path: pathlike[str], must be a string with the `.zip` suffix
-    :param model: fitted model or pipeline
-    :param scaler: PipelineTS.preprocessing.scaler class object
+    Parameters
+    ----------
+    path : str
+        The path to the zip file.
 
-    :return: str, zip file path
+    model : object
+        The fitted machine learning model or pipeline.
+
+    scaler : object, optional
+        The scaler associated with the model.
+
+    Returns
+    -------
+    str
+        The path to the saved zip file.
     """
     from PipelineTS.pipeline import ModelPipeline
     if isinstance(model, ModelPipeline):
@@ -261,11 +376,17 @@ def save_model(path, model, scaler=None):
 
 def load_model(path):
     """
-    Load a model or a pipeline from a zip file.
+    Load a machine learning model or a pipeline from a zip file.
 
-    :param path: pathlike[str], must be a string with the `.zip` suffix
+    Parameters
+    ----------
+    path : str
+        The path to the zip file.
 
-    :return: object,  a model or a pipeline
+    Returns
+    -------
+    object
+        The loaded machine learning model or pipeline.
     """
     import os
     unzip_file_fp = _load_zip_file(path)

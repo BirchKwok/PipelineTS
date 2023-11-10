@@ -8,29 +8,7 @@ from spinesUtils.preprocessing import gc_collector
 from spinesTS.metrics import wmape
 from spinesTS.utils import func_has_params
 
-
-def load_dataset_to_darts(
-        data,
-        time_col,
-        target_col,
-        fill_missing_dates=False,
-        freq=None,
-        fillna_value=None,
-        static_covariates=None,
-        hierarchy=None
-):
-    from darts.timeseries import TimeSeries
-
-    return TimeSeries.from_dataframe(
-        data,
-        time_col=time_col,
-        value_cols=target_col,
-        fill_missing_dates=fill_missing_dates,
-        freq=freq,
-        fillna_value=fillna_value,
-        static_covariates=static_covariates,
-        hierarchy=hierarchy
-    )
+from PipelineTS.utils import load_dataset_to_darts
 
 
 class DartsForecastMixin:
@@ -47,8 +25,28 @@ class DartsForecastMixin:
     def convert2pd_dataframe(df):
         return df.pd_dataframe()
 
-    @gc_collector(1)
+    @gc_collector()
     def fit(self, data, convert_dataframe_kwargs=None, fit_kwargs=None, convert_float32=True):
+        """
+        Fits the Darts forecasting model on the training data.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The training data in pandas DataFrame format.
+        convert_dataframe_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for converting the DataFrame to Darts TimeSeries.
+        fit_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for fitting the Darts model.
+        convert_float32 : bool, optional, default: True
+            Whether to convert the data to float32.
+
+        Returns
+        -------
+        self : DartsForecastMixin
+            Returns the instance itself.
+        """
+
         if convert_dataframe_kwargs is None:
             convert_dataframe_kwargs = {}
         if fit_kwargs is None:
@@ -64,26 +62,47 @@ class DartsForecastMixin:
         self.model.fit(data, **fit_kwargs)
         return self
 
-    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None, convert_float32=True):
+    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None, convert_float32=True):
+        """
+        Makes predictions using the fitted Darts forecasting model.
+
+        Parameters
+        ----------
+        n : int
+            The number of time steps to predict.
+        data : pd.DataFrame or None, optional, default: None
+            The input data for prediction.
+        predict_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the prediction function.
+        convert_dataframe_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for converting the DataFrame to Darts TimeSeries.
+        convert_float32 : bool, optional, default: True
+            Whether to convert the data to float32.
+
+        Returns
+        -------
+        predictions : pd.DataFrame
+            The DataFrame containing the predicted values.
+        """
         if predict_kwargs is None:
             predict_kwargs = {}
-        if func_has_params(self.model.predict, 'series') and series is not None:
+        if func_has_params(self.model.predict, 'series') and data is not None:
             raise_if_not(
-                ValueError, len(series) >= self.all_configs['lags'],
+                ValueError, len(data) >= self.all_configs['lags'],
                 'The length of the series must greater than or equal to the lags. '
             )
 
             convert_dataframe_kwargs = {} if convert_dataframe_kwargs is None else convert_dataframe_kwargs
-            series = self.convert2dts_dataframe(
-                series, time_col=self.all_configs['time_col'],
+            data = self.convert2dts_dataframe(
+                data, time_col=self.all_configs['time_col'],
                 target_col=self.all_configs['target_col'],
                 **convert_dataframe_kwargs
             )
 
             if convert_float32:
-                series = series.astype(np.float32)
+                data = data.astype(np.float32)
 
-            predict_kwargs.update({'series': series})
+            predict_kwargs.update({'series': data})
 
         return self.model.predict(
             n,
@@ -91,6 +110,19 @@ class DartsForecastMixin:
         ).pd_dataframe()
 
     def rename_prediction(self, data):
+        """
+        Renames the prediction columns for better readability.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The DataFrame containing the predicted values.
+
+        Returns
+        -------
+        data : pd.DataFrame
+            The DataFrame with renamed columns.
+        """
         data.columns.name = None
         data[self.all_configs['time_col']] = data.index.copy()
 
@@ -166,15 +198,15 @@ class StatisticModelMixin:
 
 
 class NNModelMixin:
-    def __init__(self, time_col, target_col, device=None):
+    def __init__(self, time_col, target_col, accelerator=None):
         self.all_configs = {'model_configs': {}}
-        if device is None:
+        if accelerator is None:
             if sys.platform == 'darwin':
-                self.device = 'cpu'
+                self.accelerator = 'cpu'
             else:
-                self.device = 'auto'
+                self.accelerator = 'auto'
         else:
-            self.device = device
+            self.accelerator = accelerator
 
         self.sorted_cols = [
             time_col,

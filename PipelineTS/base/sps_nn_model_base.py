@@ -10,20 +10,106 @@ from PipelineTS.base import NNModelMixin, IntervalEstimationMixin
 
 
 class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
+    """
+    SpinesNNModelMixin: A mixin class for integrating neural network models into the Spines framework.
 
-    def __init__(self, time_col, target_col, device=None):
+    Parameters
+    ----------
+    time_col : str
+        The column containing time information in the input data.
+    target_col : str
+        The column containing the target variable in the input data.
+    accelerator : str or None, optional, default: None
+        The accelerator to use for training (e.g., 'auto', 'cuda', 'cpu').
 
-        super().__init__(time_col, target_col, device=device)
+    Attributes
+    ----------
+    last_x : np.ndarray or None
+        The last input sequence used for training or prediction.
+    scaler : None
+        Placeholder for a scaling object (e.g., MinMaxScaler) for future implementation.
+
+    Methods
+    -------
+    _define_model()
+        Abstract method to be implemented by subclasses for defining the neural network model.
+
+    _data_preprocess(data, update_last_data=False, mode='train')
+        Preprocesses the input data for training, validation, or prediction.
+
+    fit(data, valid_data=None, cv=5, fit_kwargs=None)
+        Fits the neural network model on the training data with optional validation data.
+
+    _extend_predict(x, n, predict_kwargs)
+        Extends predictions for extrapolation.
+
+    predict(n, data=None, predict_kwargs=None)
+        Makes predictions using the fitted neural network model.
+
+    chosen_cols(data)
+        Returns the selected columns from the input DataFrame.
+
+    interval_predict(data)
+        Calculates and adds the upper and lower quantile predictions to the DataFrame.
+
+    calculate_confidence_interval_nn(data, fit_kwargs, cv)
+        Calculates the confidence interval using cross-validated predictions.
+
+    Examples
+    --------
+    # Instantiate SpinesNNModelMixin
+    >>> nn_model = SpinesNNModelMixin(time_col='timestamp', target_col='value', accelerator='auto')
+    """
+    def __init__(self, time_col, target_col, accelerator=None):
+
+        super().__init__(time_col, target_col, accelerator=accelerator)
         self.last_x = None
         self.scaler = None
 
     def _define_model(self):
+        """
+        Abstract method to be implemented by subclasses for defining the neural network model.
+
+        Raises
+        ------
+        NotImplementedError
+            This method must be implemented by subclasses.
+        """
         raise NotImplementedError
 
     @ParameterValuesAssert({
         'mode': ('train', 'validation', 'predict')
     })
     def _data_preprocess(self, data, update_last_data=False, mode='train'):
+        """
+        Preprocesses the input data for training, validation, or prediction.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The input data in pandas DataFrame format.
+        update_last_data : bool, optional, default: False
+            Whether to update the last input sequence.
+        mode : {'train', 'validation', 'predict'}, optional, default: 'train'
+            The mode for data preprocessing.
+
+        Returns
+        -------
+        x_train : np.ndarray
+            The input features for training.
+        y_train : np.ndarray
+            The target variable for training.
+
+        Raises
+        ------
+        ValueError
+            If the length of the series is less than the specified lags.
+
+        Examples
+        --------
+        # Preprocess training data
+        >>> x_train, y_train = self._data_preprocess(train_data, update_last_data=True, mode='train')
+        """
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
         if update_last_data:
             self.last_dt = data[self.all_configs['time_col']].max()
@@ -61,6 +147,30 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
     })
     @gc_collector(3)
     def fit(self, data, valid_data=None, cv=5, fit_kwargs=None):
+        """
+        Fits the neural network model on the training data with optional validation data.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The training data in pandas DataFrame format.
+        valid_data : pd.DataFrame or None, optional, default: None
+            The validation data in pandas DataFrame format.
+        cv : int, optional, default: 5
+            The number of cross-validation folds.
+        fit_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for fitting the model.
+
+        Returns
+        -------
+        self : SpinesNNModelMixin
+            Returns the instance itself.
+
+        Examples
+        --------
+        # Fit the model on training data
+        >>> nn_model.fit(train_data, valid_data=valid_data, cv=5, fit_kwargs={'epochs': 100})
+        """
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
         if fit_kwargs is None:
@@ -69,7 +179,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         for fit_param in [
             'verbose', 'epochs', 'batch_size', 'patience',
             'min_delta', 'lr_scheduler', 'lr_scheduler_patience',
-            'lr_factor', 'restore_best_weights'
+            'lr_factor', 'restore_best_weights', 'loss_type'
         ]:
             if fit_param not in fit_kwargs:
                 fit_kwargs.update({fit_param: self.all_configs[fit_param]})
@@ -96,17 +206,32 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         return self
 
     def _extend_predict(self, x, n, predict_kwargs):
-        """Extrapolation prediction.
+        """
+        Extends predictions for extrapolation.
 
         Parameters
         ----------
-        x: to_predict data, must be 2 dims data
-        n: predict steps, must be int
+        x : np.ndarray
+            The input sequence for prediction.
+        n : int
+            The number of time steps to predict.
+        predict_kwargs : dict
+            Additional keyword arguments for the prediction function.
 
         Returns
         -------
-        np.ndarray, which has 2 dims
+        res : np.ndarray
+            The extrapolated prediction results.
 
+        Raises
+        ------
+        AssertionError
+            If the input arguments do not satisfy the specified conditions.
+
+        Examples
+        --------
+        # Extend predictions for extrapolation
+        >>> predictions = self._extend_predict(x, n, predict_kwargs={'verbose': True})
         """
 
         assert isinstance(n, int)
@@ -131,19 +256,41 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
             return res
 
-    def predict(self, n, series=None, predict_kwargs=None):
+    def predict(self, n, data=None, predict_kwargs=None):
+        """
+        Makes predictions using the fitted neural network model.
+
+        Parameters
+        ----------
+        n : int
+            The number of time steps to predict.
+        data : pd.DataFrame or None, optional, default: None
+            The input data for prediction.
+        predict_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the prediction function.
+
+        Returns
+        -------
+        predictions : pd.DataFrame
+            The DataFrame containing the predicted values.
+
+        Examples
+        --------
+        # Make predictions using the fitted model
+        >>> predictions = self.predict(n=10, data=test_data, predict_kwargs={'batch_size': 32})
+        """
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        if series is not None:
+        if data is not None:
             raise_if_not(
-                ValueError, len(series) >= self.all_configs['lags'],
+                ValueError, len(data) >= self.all_configs['lags'],
                 'The length of the series must greater than or equal to the lags. '
             )
 
-            x = self._data_preprocess(series.iloc[-self.all_configs['lags']:, :],
+            x = self._data_preprocess(data.iloc[-self.all_configs['lags']:, :],
                                       update_last_data=False, mode='predict')
-            last_dt = series[self.all_configs['time_col']].max()
+            last_dt = data[self.all_configs['time_col']].max()
         else:
             x = reshape_if(self.x.values, self.x.values.ndim == 1, (1, -1))
             last_dt = self.last_dt

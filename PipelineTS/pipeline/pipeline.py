@@ -27,15 +27,10 @@ from spinesUtils.utils import (
 from PipelineTS.metrics import quantile_acc
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
 from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
+from PipelineTS.utils import update_dict_without_conflict
 
 
 # TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
-
-def update_dict_without_conflict(dict_a, dict_b):
-    for i in dict_b:
-        if i not in dict_a:
-            dict_a[i] = dict_b[i]
-    return dict_a
 
 
 class ModelPipeline:
@@ -82,12 +77,65 @@ class ModelPipeline:
             cv=5,
             **model_init_kwargs
     ):
+        """
+        Initialize the ModelPipeline.
+
+        Parameters
+        ----------
+        time_col : str
+            Name of the column representing time.
+        target_col : str
+            Name of the column containing the target variable.
+        lags : int
+            Number of lagged time steps for modeling.
+        with_quantile_prediction : bool, optional, default: False
+            Enable quantile prediction.
+        include_models : {'light', 'all', 'nn', 'ml'} or list or None, optional, default: 'light'
+            Models to include in the pipeline.
+        exclude_models : list or None, optional, default: None
+            Models to exclude from the pipeline.
+        metric : callable, optional, default: Mean Absolute Error (mae)
+            Evaluation metric function.
+        metric_less_is_better : bool, optional, default: True
+            Whether lower metric values are better.
+        configs : PipelineConfigs or None, optional, default: None
+            Configuration object for the pipeline.
+        random_state : int, optional, default: 0
+            Seed for random number generation.
+        verbose : bool or int, optional, default: True
+            Verbosity level.
+        include_init_config_model : bool, optional, default: False
+            Include models with initial configuration.
+        use_standard_scale : bool or None, optional, default: False
+            Use StandardScaler or MinMaxScaler for data scaling.
+            None means no scaling.
+        accelerator : {'cpu', 'gpu', 'tpu', 'ipu', 'hpu', 'mps', 'auto', 'cuda'} or None, optional, default: 'auto'
+            Hardware accelerator type.
+        cv : int, optional, default: 5
+            Number of cross-validation folds.
+        **model_init_kwargs
+            Additional keyword arguments for model initialization.
+
+        Raises
+        ------
+        ValueError
+            If include_models and exclude_models are set simultaneously.
+            If with_quantile_prediction is True and cv is not greater than 1.
+            If exclude_models contain invalid model names.
+            If include_models contain invalid model names.
+            If model names in model_init_kwargs do not match available models.
+
+        Notes
+        -----
+        The include_models parameter supports predefined sets ('light', 'all', 'nn', 'ml') or a custom list of model names.
+        The accelerator parameter supports values ('cpu', 'gpu', 'tpu', 'ipu', 'hpu', 'mps', 'auto', 'cuda') or None.
+        """
         raise_if(ValueError, include_models is not None and exclude_models is not None,
                  "include_models and exclude_models can not be set at the same time.")
 
         if include_models == 'light':
             include_models = ['auto_arima', 'd_linear', 'lightgbm', 'multi_step_model', 'n_hits', 'n_linear',
-                              'prophet', 'random_forest', 'seg_rnn', 'xgboost']
+                              'prophet', 'random_forest', 'seg_rnn', 'tcn', 'xgboost']
         elif include_models == 'all':
             include_models = None
         elif include_models == 'nn':
@@ -219,6 +267,21 @@ class ModelPipeline:
 
     @classmethod
     def list_all_available_models(cls):
+        """
+        Get a list of all available model names in the ModelPipeline.
+
+        Returns
+        -------
+        models : list of str
+            List of model names available for use in the pipeline.
+
+        Example
+        -------
+        >>> ModelPipeline.list_all_available_models()
+        ['auto_arima', 'd_linear', 'gau', 'n_beats', 'n_hits', 'n_linear', 'tcn', 'tft', 'seg_rnn', 'stacking_rnn',
+        'tide', 'time2vec', 'transformer', 'catboost', 'lightgbm', 'multi_output_model', 'multi_step_model',
+        'random_forest', 'wide_gbrt', 'xgboost']
+        """
         return list(get_all_available_models().keys())
 
     def _scale_data(self, data, valid_data=None, refit_scaler=True):
@@ -309,28 +372,23 @@ class ModelPipeline:
         else:
             scaler = self._temp_scaler
 
-        metric = self.metric(
-            scaler.inverse_transform(
-                valid_df[self.target_col].values.reshape(-1, 1)
-            ).squeeze(),
-            scaler.inverse_transform(
-                eval_res[self.target_col].values.reshape(-1, 1)
-            ).squeeze()
-
-        )
+        yt = valid_df[self.target_col].values
+        yp = eval_res[self.target_col].values
 
         if self.with_quantile_prediction:
-            res_quantile_acc = quantile_acc(
-                yt=scaler.inverse_transform(
-                    valid_df[self.target_col].values.reshape(-1, 1)
-                ).squeeze(),
-                left_pred=scaler.inverse_transform(
-                    eval_res[f"{self.target_col}_lower"].values.reshape(-1, 1)
-                ).squeeze(),
-                right_pred=scaler.inverse_transform(
-                    eval_res[f"{self.target_col}_upper"].values.reshape(-1, 1)
-                ).squeeze()
-            )
+            left_pred = eval_res[f"{self.target_col}_lower"].values
+            right_pred = eval_res[f"{self.target_col}_upper"].values
+
+        if scaler is not None:
+            yt = scaler.inverse_transform(yt.reshape(-1, 1)).squeeze()
+            yp = scaler.inverse_transform(yp.reshape(-1, 1)).squeeze()
+
+            if self.with_quantile_prediction:
+                left_pred = scaler.inverse_transform(left_pred.reshape(-1, 1)).squeeze()
+                right_pred = scaler.inverse_transform(right_pred.reshape(-1, 1)).squeeze()
+                res_quantile_acc = quantile_acc(yt, left_pred, right_pred)
+
+        metric = self.metric(yt, yp)
 
         eval_cost = self._timer.last_timestamp_diff()
 
@@ -360,7 +418,45 @@ class ModelPipeline:
         'valid_data': (None, pd.DataFrame)
     })
     def fit(self, data, valid_data=None):
-        """fit all models"""
+        """
+        Fit all models in the ModelPipeline to the provided training data.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The training data containing historical information.
+        valid_data : pd.DataFrame or None, optional, default: None
+            Validation data for evaluating model performance.
+
+        Returns
+        -------
+        leaderboard : pd.DataFrame
+            Leaderboard containing model evaluation metrics, sorted by model performance.
+
+        Raises
+        ------
+        ValueError
+            If the length of data is less than or equal to lags.
+        AssertionError
+            If columns of data and valid_data do not match.
+
+        Example
+        -------
+        >>> pipeline = ModelPipeline(time_col='timestamp', target_col='value', lags=10)
+        >>> leaderboard = pipeline.fit(train_data, valid_data)
+        >>> print(leaderboard)
+           Leaderboard         model  train_cost(s)  eval_cost(s)    metric
+        0           0    lightgbm_0       2.567801      0.978624  0.123456
+        1           1    xgboost_1       3.123456      1.234567  0.456789
+        2           2  random_forest       1.987654      0.876543  0.987654
+        ...         ...            ...            ...           ...       ...
+
+        Notes
+        -----
+        - The fit function trains all models in the pipeline using the provided training data.
+        - The optional valid_data parameter allows for model evaluation on a separate validation dataset.
+        - The resulting leaderboard provides a ranked list of models based on the specified evaluation metric.
+        """
         if self.logger.verbose:
             sys.stderr.write(self._compute_device_msg)
             time.sleep(0.5)
@@ -378,10 +474,9 @@ class ModelPipeline:
         # 如果指定use_standard_scale，此语句会对数据缩放
         df, valid_df = self._scale_data(df, valid_df, refit_scaler=True)
 
+        res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
         if self.with_quantile_prediction:
             res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])
-        else:
-            res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
 
         models = self._initial_models()
         self.logger.print(f"There are a total of {len(models)} models to be trained.")
@@ -415,7 +510,31 @@ class ModelPipeline:
         'model_name': (str, None)
     })
     def get_model(self, model_name=None):
-        """By default, return the best model"""
+        """
+        Retrieve a trained model from the ModelPipeline.
+
+        Parameters
+        ----------
+        model_name : str or None, optional, default: None
+            Name of the model to retrieve. If None, returns the best model.
+
+        Returns
+        -------
+        model : Model
+            The trained model corresponding to the specified model_name. If model_name is None, returns the best model.
+
+        Example
+        -------
+        >>> pipeline = ModelPipeline(time_col='timestamp', target_col='value', lags=10)
+        >>> pipeline.fit(train_data, valid_data)
+        >>> best_model = pipeline.get_model()
+        >>> specific_model = pipeline.get_model('lightgbm_0')
+
+        Notes
+        -----
+        - If model_name is not provided, the function returns the best-performing model based on the leaderboard.
+        - The function allows retrieving a specific trained model by providing its unique name (e.g., 'lightgbm_0').
+        """
         if model_name is None:
             return self.best_model_
         else:
@@ -427,7 +546,31 @@ class ModelPipeline:
         'model_name': (str, None)
     })
     def get_model_all_configs(self, model_name=None):
-        """By default, return the best model's configure"""
+        """
+        Retrieve the configuration details of a trained model from the ModelPipeline.
+
+        Parameters
+        ----------
+        model_name : str or None, optional, default: None
+            Name of the model to retrieve configuration details. If None, returns the configuration details of the best model.
+
+        Returns
+        -------
+        configs : dict or None
+            A dictionary containing the configuration details of the specified model. If model_name is None, returns the configuration details of the best model.
+
+        Example
+        -------
+        >>> pipeline = ModelPipeline(time_col='timestamp', target_col='value', lags=10)
+        >>> pipeline.fit(train_data, valid_data)
+        >>> best_model_configs = pipeline.get_model_all_configs()
+        >>> specific_model_configs = pipeline.get_model_all_configs('lightgbm_0')
+
+        Notes
+        -----
+        - If model_name is not provided, the function returns the configuration details of the best-performing model.
+        - The function allows retrieving configuration details for a specific trained model by providing its unique name (e.g., 'lightgbm_0').
+        """
         if model_name is None:
             return self.best_model_.all_configs
         else:
@@ -437,24 +580,50 @@ class ModelPipeline:
 
     @ParameterTypeAssert({
         'n': int,
+        'data': (pd.DataFrame, None),
         'model_name': (None, str)
     })
-    def predict(self, n, series=None, model_name=None):
-        """By default, the best model is used for prediction
+    def predict(self, n, data=None, model_name=None):
+        """
+        Generate predictions using the trained models in the ModelPipeline.
 
-        :parameter
-        n: predict steps
-        series: the sequence to predict from the last time point in the sequence,
-                accepting only a pandas DataFrame type
-        model_name: str, model's name, specifying the model used, default None
+        Parameters
+        ----------
+        n : int
+            Predictive steps, indicating the number of time steps to forecast into the future.
+        data : pd.DataFrame or None, optional, default: None
+            The input data for making predictions. If None, the last available data in the pipeline will be used.
+        model_name : str or None, optional, default: None
+            Model name to use for predictions. If None, the best model will be used.
 
-        :return
-        pd.DataFrame
+        Returns
+        -------
+        predictions : pd.DataFrame
+            DataFrame containing the predicted values for the specified model or the best model.
+
+        Example
+        -------
+        >>> pipeline = ModelPipeline(time_col='timestamp', target_col='value', lags=10)
+        >>> pipeline.fit(train_data, valid_data)
+        >>> predictions_best_model = pipeline.predict(n=5)
+        >>> predictions_specific_model = pipeline.predict(n=5, model_name='lightgbm_0', data=test_data)
+
+        Notes
+        -----
+        - The predict function generates future predictions using the trained models in the pipeline.
+        - If data is not provided, the function uses the last available data in the pipeline.
+        - If model_name is not provided, the function uses the best-performing model based on the leaderboard.
         """
         if model_name is not None:
-            res = self.get_model(model_name).predict(n, series=series)
+            if func_has_params(self.get_model(model_name).predict, 'data'):
+                res = self.get_model(model_name).predict(n, data=data)
+            else:
+                res = self.get_model(model_name).predict(n)
         else:
-            res = self.best_model_.predict(n, series=series)
+            if func_has_params(self.get_model(model_name).predict, 'data'):
+                res = self.best_model_.predict(n, data=data)
+            else:
+                res = self.best_model_.predict(n)
 
         for i in res.columns:
             if i.startswith(self.target_col):

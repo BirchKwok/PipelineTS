@@ -1,4 +1,4 @@
-from spinesTS.nn._seg_rnn import SegRNN
+from spinesTS.nn import SegRNN
 from spinesUtils import generate_function_kwargs
 
 from PipelineTS.base.sps_nn_model_base import SpinesNNModelMixin
@@ -23,8 +23,54 @@ class SegRNNModel(SpinesNNModelMixin):
             lr_scheduler_patience=10,
             lr_factor=0.7,
             restore_best_weights=True,
+            loss_type='min'
     ):
-        super().__init__(time_col=time_col, target_col=target_col, device=accelerator)
+        """
+        SegRNNModel: A wrapper for the SegRNN model from the spinesTS library with additional features.
+
+        Parameters
+        ----------
+        time_col : str
+            The column containing time information in the input data.
+        target_col : str
+            The column containing the target variable in the input data.
+        lags : int, optional, default: 30
+            The number of lagged values to use as input features for training and prediction.
+        quantile : float, optional, default: 0.9
+            The quantile used for interval prediction. Set to None for point prediction.
+        random_state : int or None, optional, default: None
+            The random seed for reproducibility.
+        learning_rate : float, optional, default: 0.001
+            The learning rate for training the SegRNN model.
+        accelerator : str, optional, default: 'auto'
+            The PyTorch Lightning accelerator to use during training.
+        verbose : bool, optional, default: False
+            Whether to display verbose output during training.
+        epochs : int, optional, default: 1000
+            The number of epochs for training the model.
+        batch_size : int or 'auto', optional, default: 'auto'
+            The batch size used during training. Set to 'auto' to automatically determine the batch size.
+        patience : int, optional, default: 100
+            The patience parameter for early stopping during training.
+        min_delta : int, optional, default: 0
+            The minimum change in the monitored quantity to qualify as an improvement for early stopping.
+        lr_scheduler : str, optional, default: 'CosineAnnealingLR'
+            The learning rate scheduler used during training.
+        lr_scheduler_patience : int, optional, default: 10
+            The patience parameter for the learning rate scheduler.
+        lr_factor : float, optional, default: 0.7
+            The factor by which the learning rate is reduced when the scheduler patience is triggered.
+        restore_best_weights : bool, optional, default: True
+            Whether to restore the model weights from the epoch with the best performance.
+        loss_type : str, optional, default: 'min'
+            The type of loss used for training the model. Choose between 'min', 'max', or 'auto'.
+
+        Attributes
+        ----------
+        model : spinesTS.nn.SegRNN
+            The SegRNN model from the spinesTS library.
+        """
+        super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             SegRNN,
@@ -33,7 +79,7 @@ class SegRNNModel(SpinesNNModelMixin):
             loss_fn='mae',
             learning_rate=learning_rate,
             random_seed=random_state,
-            device=self.device,
+            device=self.accelerator,
         )
 
         self.last_dt = None
@@ -53,7 +99,8 @@ class SegRNNModel(SpinesNNModelMixin):
                 'lr_scheduler': lr_scheduler,
                 'lr_scheduler_patience': lr_scheduler_patience,
                 'lr_factor': lr_factor,
-                'restore_best_weights': restore_best_weights
+                'restore_best_weights': restore_best_weights,
+                'loss_type': loss_type
             }
         )
 
@@ -62,4 +109,12 @@ class SegRNNModel(SpinesNNModelMixin):
         self.model = self._define_model()
 
     def _define_model(self):
+        """
+        Define the SegRNN model from the spinesTS library.
+
+        Returns
+        -------
+        spinesTS.nn.SegRNN
+            The SegRNN model from the spinesTS library.
+        """
         return SegRNN(**self.all_configs['model_configs'])

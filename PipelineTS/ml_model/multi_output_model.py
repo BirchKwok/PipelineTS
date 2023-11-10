@@ -1,16 +1,14 @@
 from spinesTS.ml_model import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
-
-import numpy as np
-import pandas as pd
-from lightgbm import LGBMRegressor
-from spinesTS.pipeline import Pipeline
-
+from sklearn.multioutput import RegressorChain
 from spinesTS.preprocessing import split_series, lag_splits
 from spinesUtils import generate_function_kwargs, ParameterTypeAssert, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import reshape_if
-
+from spinesTS.pipeline import Pipeline
 from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin
+from lightgbm import LGBMRegressor
+import numpy as np
+import pandas as pd
 
 
 class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
@@ -23,6 +21,37 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
             estimator=LGBMRegressor,
             **model_configs
     ):
+        """
+        A mixin class for multi-output regression models using scikit-learn's ensemble.RandomForest.
+
+        Parameters
+        ----------
+        time_col : str
+            The column containing time information in the input data.
+        target_col : str
+            The column containing the target variable in the input data.
+        lags : int, optional, default: 1
+            The number of lagged values to use as input features for training and prediction.
+        quantile : float, optional, default: 0.9
+            The quantile used for interval prediction. Set to None for point prediction.
+        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+            The base estimator used for the multi-output regression model.
+        **model_configs : dict
+            Additional keyword arguments for configuring the base estimator.
+
+        Attributes
+        ----------
+        _base_estimator : sklearn.base.BaseEstimator
+            The base estimator for the multi-output regression model.
+        all_configs : dict
+            A dictionary containing all configuration parameters for the model.
+        last_dt : pandas.Timestamp or None
+            The last timestamp in the input data.
+        last_lags_dataframe : pandas.DataFrame or None
+            The DataFrame containing the last lagged values used for prediction.
+        x : pandas.DataFrame or None
+            The last input features used for training.
+        """
         super().__init__(time_col=time_col, target_col=target_col)
 
         self._base_estimator = estimator
@@ -47,8 +76,15 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
         self.x = None
 
     def _define_model(self):
-        raise NotImplementedError
+        """
+        Define the multi-output regression model using scikit-learn's ensemble.RandomForest.
 
+        Raises
+        ------
+        NotImplementedError
+            This method should be implemented by subclasses.
+        """
+        raise NotImplementedError
 
     @ParameterTypeAssert({
         'mode': str
@@ -57,6 +93,24 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
         'mode': ('train', 'predict')
     })
     def _data_preprocess(self, data, mode='train', update_last_dt=False):
+        """
+        Preprocess the input data for training or prediction.
+
+        Parameters
+        ----------
+        data : pandas.DataFrame
+            The input data.
+        mode : {'train', 'predict'}, optional, default: 'train'
+            The mode indicating whether to preprocess data for training or prediction.
+        update_last_dt : bool, optional, default: False
+            Whether to update the last timestamp attribute.
+
+        Returns
+        -------
+        tuple or numpy.ndarray
+            If 'mode' is 'train', returns a tuple (x_train, y_train).
+            If 'mode' is 'predict', returns lagged splits of the target column.
+        """
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
         if update_last_dt:
             self.last_dt = data[self.all_configs['time_col']].max()
@@ -69,6 +123,23 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
             return lag_splits(data[self.all_configs['target_col']], window_size=self.all_configs['lags'])
 
     def fit(self, data, cv=5, fit_kwargs=None):
+        """
+        Fit the multi-output regression model to the training data.
+
+        Parameters
+        ----------
+        data : pandas.DataFrame
+            The training data.
+        cv : int, optional, default: 5
+            The number of cross-validation folds.
+        fit_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the fitting process.
+
+        Returns
+        -------
+        self
+            Returns an instance of the fitted model.
+        """
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
         self.last_lags_dataframe = data.iloc[-(2 * self.all_configs['lags'] + 1):, :]
@@ -90,19 +161,23 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
         return self
 
     def _extend_predict(self, x, n, predict_kwargs):
-        """Extrapolation prediction.
+        """
+        Extrapolation prediction.
 
         Parameters
         ----------
-        x: to_predict data, must be 2 dims data
-        n: predict steps, must be int
+        x : numpy.ndarray
+            Data to predict, must be 2-dimensional.
+        n : int
+            Number of prediction steps.
+        predict_kwargs : dict
+            Additional keyword arguments for the prediction process.
 
         Returns
         -------
-        np.ndarray, which has 2 dims
-
+        list
+            List of predictions.
         """
-
         assert isinstance(n, int)
         assert x.ndim == 2
 
@@ -125,21 +200,38 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
 
             return res
 
-    def predict(self, n, series=None, predict_kwargs=None):
+    def predict(self, n, data=None, predict_kwargs=None):
+        """
+        Predict future values using the trained model.
+
+        Parameters
+        ----------
+        n : int
+            Number of prediction steps.
+        data : pandas.DataFrame or None, optional, default: None
+            Additional data for prediction.
+        predict_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the prediction process.
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame containing the predicted values and corresponding timestamps.
+        """
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        if series is not None:
+        if data is not None:
             raise_if_not(
-                ValueError, len(series) >= self.all_configs['lags'],
-                'The length of the series must greater than or equal to the lags. '
+                ValueError, len(data) >= self.all_configs['lags'],
+                'The length of the series must be greater than or equal to the lags.'
             )
 
             x = self._data_preprocess(
-                series, mode='predict', update_last_dt=False
+                data, mode='predict', update_last_dt=False
             )[-1, :]
             x = reshape_if(x, x.ndim == 1, (1, -1))
-            last_dt = series[self.all_configs['time_col']].max()
+            last_dt = data[self.all_configs['time_col']].max()
         else:
             x = reshape_if(self.x.values, self.x.values.ndim == 1, (1, -1))
             last_dt = self.last_dt
@@ -168,6 +260,29 @@ class MultiOutputRegressorModel(_MultiOutputModelMixin):
             estimator=LGBMRegressor,
             **model_configs
     ):
+        """
+        Multi-output regression model using scikit-learn's ensemble.RandomForest with a regressor chain.
+
+        Parameters
+        ----------
+        time_col : str
+            The column containing time information in the input data.
+        target_col : str
+            The column containing the target variable in the input data.
+        lags : int, optional, default: 1
+            The number of lagged values to use as input features for training and prediction.
+        quantile : float, optional, default: 0.9
+            The quantile used for interval prediction. Set to None for point prediction.
+        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+            The base estimator used for the multi-output regression model.
+        **model_configs : dict
+            Additional keyword arguments for configuring the base estimator.
+
+        Attributes
+        ----------
+        model : spinesTS.pipeline.Pipeline
+            The pipeline containing the multi-output regressor model.
+        """
         super().__init__(
             time_col=time_col,
             target_col=target_col,
@@ -179,6 +294,14 @@ class MultiOutputRegressorModel(_MultiOutputModelMixin):
         self.model = self._define_model()
 
     def _define_model(self):
+        """
+        Define the multi-output regressor model using a regressor chain.
+
+        Returns
+        -------
+        spinesTS.pipeline.Pipeline
+            The pipeline containing the multi-output regressor model.
+        """
         return Pipeline([
             ('model', MOR(self._base_estimator(**self.all_configs['model_configs'])))
         ])
@@ -194,6 +317,29 @@ class MultiStepRegressorModel(_MultiOutputModelMixin):
             estimator=LGBMRegressor,
             **model_configs
     ):
+        """
+        Multi-step regression model using scikit-learn's ensemble.RandomForest with a multi-step regressor.
+
+        Parameters
+        ----------
+        time_col : str
+            The column containing time information in the input data.
+        target_col : str
+            The column containing the target variable in the input data.
+        lags : int, optional, default: 1
+            The number of lagged values to use as input features for training and prediction.
+        quantile : float, optional, default: 0.9
+            The quantile used for interval prediction. Set to None for point prediction.
+        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+            The base estimator used for the multi-step regression model.
+        **model_configs : dict
+            Additional keyword arguments for configuring the base estimator.
+
+        Attributes
+        ----------
+        model : spinesTS.pipeline.Pipeline
+            The pipeline containing the multi-step regressor model.
+        """
         super().__init__(
             time_col=time_col,
             target_col=target_col,
@@ -205,6 +351,69 @@ class MultiStepRegressorModel(_MultiOutputModelMixin):
         self.model = self._define_model()
 
     def _define_model(self):
+        """
+        Define the multi-step regressor model using a multi-step regressor.
+
+        Returns
+        -------
+        spinesTS.pipeline.Pipeline
+            The pipeline containing the multi-step regressor model.
+        """
         return Pipeline([
             ('model', MSR(self._base_estimator(**self.all_configs['model_configs'])))
         ])
+
+
+class RegressorChainModel(_MultiOutputModelMixin):
+    def __init__(
+            self,
+            time_col,
+            target_col,
+            lags=1,
+            quantile=0.9,
+            estimator=LGBMRegressor,
+            **model_configs
+    ):
+        """
+        Regressor chain model using scikit-learn's ensemble.RandomForest.
+
+        Parameters
+        ----------
+        time_col : str
+            The column containing time information in the input data.
+        target_col : str
+            The column containing the target variable in the input data.
+        lags : int, optional, default: 1
+            The number of lagged values to use as input features for training and prediction.
+        quantile : float, optional, default: 0.9
+            The quantile used for interval prediction. Set to None for point prediction.
+        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+            The base estimator used for the regressor chain model.
+        **model_configs : dict
+            Additional keyword arguments for configuring the base estimator.
+
+        Attributes
+        ----------
+        model : sklearn.multioutput.RegressorChain
+            The regressor chain model.
+        """
+        super().__init__(
+            time_col=time_col,
+            target_col=target_col,
+            lags=lags,
+            quantile=quantile,
+            estimator=estimator,
+            **model_configs)
+
+        self.model = self._define_model()
+
+    def _define_model(self):
+        """
+        Define the regressor chain model using a base estimator.
+
+        Returns
+        -------
+        sklearn.multioutput.RegressorChain
+            The regressor chain model.
+        """
+        return RegressorChain(self._base_estimator(**self.all_configs['model_configs']))

@@ -7,6 +7,7 @@ from spinesUtils import ParameterTypeAssert
 from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
+from PipelineTS.utils import update_dict_without_conflict
 
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
 logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
@@ -45,17 +46,85 @@ class NBeatsModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             random_state=None,
             accelerator=None
     ):
-        super().__init__(time_col=time_col, target_col=target_col, device=accelerator)
+        """
+        NBeatsModel: A wrapper for the NBEATSModel from the darts library with additional features.
 
-        if pl_trainer_kwargs is not None and 'accelerator' not in pl_trainer_kwargs:
-            pl_trainer_kwargs.update({'accelerator': self.device})
-        elif pl_trainer_kwargs is None:
-            pl_trainer_kwargs = {'accelerator': self.device}
+        Parameters
+        ----------
+        time_col : str
+            The column containing time information in the input data.
+        target_col : str
+            The column containing the target variable in the input data.
+        lags : int, optional, default: 6
+            The number of lagged values to use as input features for training and prediction.
+        generic_architecture : bool, optional, default: False
+            Whether to use the generic architecture (generic forecasting model).
+        num_stacks : int, optional, default: 30
+            The number of stacks in the architecture.
+        num_blocks : int, optional, default: 1
+            The number of blocks in each stack.
+        num_layers : int, optional, default: 4
+            The number of fully connected layers in each block.
+        layer_widths : int or list, optional, default: 256
+            The number of neurons in each fully connected layer. Can be an integer or a list for variable widths.
+        expansion_coefficient_dim : int, optional, default: 5
+            The dimension of the expansion coefficients.
+        trend_polynomial_degree : int, optional, default: 2
+            The degree of the polynomial used to model the trend.
+        dropout : float, optional, default: 0.0
+            The dropout rate applied to each fully connected layer.
+        activation : str, optional, default: 'ReLU'
+            The activation function used in the fully connected layers.
+        loss_fn : torch.nn.Module, optional, default: torch.nn.MSELoss()
+            The loss function used for training the model.
+        torch_metrics : list or None, optional, default: None
+            Additional metrics to track during training.
+        optimizer_cls : torch.optim.Optimizer, optional, default: torch.optim.Adam
+            The optimizer class used for training.
+        optimizer_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the optimizer.
+        lr_scheduler_cls : torch.optim.lr_scheduler._LRScheduler or None, optional, default: None
+            The learning rate scheduler class used for training.
+        lr_scheduler_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the learning rate scheduler.
+        use_reversible_instance_norm : bool, optional, default: False
+            Whether to use reversible instance normalization.
+        batch_size : int, optional, default: 32
+            The batch size used during training.
+        n_epochs : int, optional, default: 100
+            The number of epochs for training the model.
+        nr_epochs_val_period : int, optional, default: 1
+            The period for validating the model during training.
+        add_encoders : dict or None, optional, default: None
+            Additional encoder configurations.
+        enable_progress_bar : bool, optional, default: False
+            Whether to display a progress bar during training.
+        enable_model_summary : bool, optional, default: False
+            Whether to print the model summary.
+        pl_trainer_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for the PyTorch Lightning trainer.
+        quantile : float, optional, default: 0.9
+            The quantile used for interval prediction. Set to None for point prediction.
+        random_state : int or None, optional, default: None
+            The random seed for reproducibility.
+        accelerator : str or None, optional, default: None
+            The PyTorch Lightning accelerator to use during training.
 
-        if 'enable_progress_bar' not in pl_trainer_kwargs:
-            pl_trainer_kwargs.update({'enable_progress_bar': enable_progress_bar})
-        if 'enable_model_summary' not in pl_trainer_kwargs:
-            pl_trainer_kwargs.update({'enable_model_summary': enable_model_summary})
+        Attributes
+        ----------
+        model : darts.models.forecasting.nbeats.NBEATSModel
+            The NBEATSModel from the darts library.
+        """
+        super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
+
+        if pl_trainer_kwargs is None:
+            pl_trainer_kwargs = {}
+
+        pl_trainer_kwargs = update_dict_without_conflict(pl_trainer_kwargs, {
+            'accelerator': self.accelerator,
+            'enable_progress_bar': enable_progress_bar,
+            'enable_model_summary': enable_model_summary
+        })
 
         self.all_configs['model_configs'] = generate_function_kwargs(
             n_beats,
@@ -98,9 +167,36 @@ class NBeatsModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
         )
 
     def _define_model(self):
+        """
+        Define the NBEATSModel from the darts library.
+
+        Returns
+        -------
+        darts.models.forecasting.nbeats.NBEATSModel
+            The NBEATSModel from the darts library.
+        """
         return n_beats(**self.all_configs['model_configs'])
 
     def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None):
+        """
+        Train the NBEATS model on the provided data.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The input data containing time and target columns.
+        cv : int, optional, default: 5
+            The number of cross-validation folds.
+        convert_dataframe_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for converting the data to PyTorch tensors.
+        fit_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for training the model.
+
+        Returns
+        -------
+        self
+            The fitted NBeatsModel instance.
+        """
         super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=True)
 
         if self.all_configs['quantile'] is not None:
@@ -114,15 +210,34 @@ class NBeatsModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
 
     @ParameterTypeAssert({
         'n': int,
-        'series': (pd.DataFrame, None),
+        'data': (pd.DataFrame, None),
         'predict_kwargs': (None, dict),
         'convert_dataframe_kwargs': (None, dict),
     })
-    def predict(self, n, series=None, predict_kwargs=None, convert_dataframe_kwargs=None):
+    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None):
+        """
+        Make predictions using the fitted NBEATS model.
+
+        Parameters
+        ----------
+        n : int
+            The number of time steps to predict.
+        data : pd.DataFrame or None, optional, default: None
+            The input data for prediction. If None, the last available data in the model is used.
+        predict_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for making predictions.
+        convert_dataframe_kwargs : dict or None, optional, default: None
+            Additional keyword arguments for converting the data to PyTorch tensors.
+
+        Returns
+        -------
+        pd.DataFrame
+            The predicted values along with time information.
+        """
         if predict_kwargs is None:
             predict_kwargs = {}
 
-        res = super().predict(n, series=series,
+        res = super().predict(n, data=data,
                               predict_kwargs=predict_kwargs, convert_dataframe_kwargs=convert_dataframe_kwargs,
                               convert_float32=True)
         res = self.rename_prediction(res)
