@@ -99,7 +99,7 @@ def _load_zip_file(zipfile_fp):
 
     # To ensure that folder names are as unique as possible
     tmp_unzip_fp = str(Path(zipfile_fp).parent.absolute().joinpath(
-        f'TEMP_UNZIP_FILE_FOR_PIPELINETS_{_hash_string(zipfile_fp)}_{int(datetime.datetime.now().timestamp()*1e6)}/'))
+        f'PIPELINETS_MODEL_{_hash_string(zipfile_fp)}_{int(datetime.datetime.now().timestamp()*1e6)}/'))
 
     with zipfile.ZipFile(zipfile_fp, 'r') as zip_ref:
         zip_ref.extractall(tmp_unzip_fp)
