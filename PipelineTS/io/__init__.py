@@ -1,3 +1,4 @@
+import datetime
 from copy import deepcopy
 
 
@@ -96,7 +97,9 @@ def _load_zip_file(zipfile_fp):
     raise_if_not(ValueError, zipfile_fp.strip().endswith('.zip'),
                  "`zipfile_fp` must be a string with the `.zip` suffix")
 
-    tmp_unzip_fp = str(Path(zipfile_fp).parent.absolute().joinpath(f'TEMP_UNZIP_FILE_{_hash_string(zipfile_fp)}/'))
+    # To ensure that folder names are as unique as possible
+    tmp_unzip_fp = str(Path(zipfile_fp).parent.absolute().joinpath(
+        f'TEMP_UNZIP_FILE_FOR_PIPELINETS_{_hash_string(zipfile_fp)}_{int(datetime.datetime.now().timestamp()*1e6)}/'))
 
     with zipfile.ZipFile(zipfile_fp, 'r') as zip_ref:
         zip_ref.extractall(tmp_unzip_fp)
