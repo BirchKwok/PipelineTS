@@ -1,3 +1,9 @@
+import re
+
+from lightgbm import LGBMRegressor
+import numpy as np
+import pandas as pd
+
 from spinesTS.ml_model import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
 from sklearn.multioutput import RegressorChain
 from spinesTS.preprocessing import split_series, lag_splits
@@ -5,10 +11,11 @@ from spinesUtils import generate_function_kwargs, ParameterTypeAssert, Parameter
 from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import reshape_if
 from spinesTS.pipeline import Pipeline
+
 from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin
-from lightgbm import LGBMRegressor
-import numpy as np
-import pandas as pd
+
+
+from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 
 
 class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
@@ -41,7 +48,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
 
         Attributes
         ----------
-        _base_estimator : sklearn.base.BaseEstimator
+        _base_estimator : BaseEstimator
             The base estimator for the multi-output regression model.
         all_configs : dict
             A dictionary containing all configuration parameters for the model.
@@ -59,6 +66,11 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
             self._base_estimator,
             **model_configs
         )
+
+        if 'LGBMRegressor' in re.split("<|>|class| |\.|\'", str(estimator)):
+            self.all_configs['model_configs'] = update_dict_without_conflict(self.all_configs['model_configs'], {
+                'verbose': -1
+            })
 
         self.last_dt = None
         self.last_lags_dataframe = None
@@ -140,6 +152,8 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
         self
             Returns an instance of the fitted model.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
         self.last_lags_dataframe = data.iloc[-(2 * self.all_configs['lags'] + 1):, :]
@@ -222,6 +236,8 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
             predict_kwargs = {}
 
         if data is not None:
+            check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
             raise_if_not(
                 ValueError, len(data) >= self.all_configs['lags'],
                 'The length of the series must be greater than or equal to the lags.'

@@ -12,7 +12,7 @@ class TCNModel(SpinesNNModelMixin):
             lags=30,
             quantile=0.9,
             random_state=None,
-            kernel_size=2,
+            kernel_size=3,
             dropout=0.2,
             learning_rate=0.001,
             accelerator='auto',

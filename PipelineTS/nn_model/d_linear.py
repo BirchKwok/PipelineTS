@@ -5,7 +5,7 @@ from darts.models.forecasting.dlinear import DLinearModel as d_linear
 from spinesUtils import ParameterTypeAssert
 from spinesUtils.asserts import generate_function_kwargs
 from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
-from PipelineTS.utils import update_dict_without_conflict
+from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 
 # Suppressing unnecessary PyTorch Lightning warnings
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
@@ -182,6 +182,8 @@ class DLinearModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
         self
             Returns an instance of the fitted model.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=True)
 
         if self.all_configs['quantile'] is not None:
@@ -219,6 +221,9 @@ class DLinearModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
         """
         if predict_kwargs is None:
             predict_kwargs = {}
+
+        if data is not None:
+            check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
         res = super().predict(n, data=data,
                               predict_kwargs=predict_kwargs, convert_dataframe_kwargs=convert_dataframe_kwargs,

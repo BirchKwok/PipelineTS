@@ -1,6 +1,7 @@
 from copy import deepcopy
 import numpy as np
 import pandas as pd
+import re
 from lightgbm import LGBMRegressor
 from sklearn.preprocessing import MinMaxScaler
 from spinesTS.ml_model import GBRTPreprocessing
@@ -9,7 +10,7 @@ from spinesUtils import generate_function_kwargs, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import gc_collector, reshape_if
 from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin
-from PipelineTS.utils import update_dict_without_conflict
+from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 
 
 class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
@@ -57,7 +58,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
 
         Attributes
         ----------
-        estimator : sklearn.base.BaseEstimator
+        estimator : BaseEstimator
             The base estimator for the GBRT model.
         processor : spinesTS.ml_model.GBRTPreprocessing
             The preprocessor for transforming input data.
@@ -75,12 +76,12 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             **model_init_configs
         )
 
-        if isinstance(estimator, LGBMRegressor):
+        if 'LGBMRegressor' in re.split("<|>|class| |\.|\'", str(estimator)):
             self.all_configs['model_configs'] = update_dict_without_conflict(self.all_configs['model_configs'], {
                 'verbose': -1
             })
 
-        self.estimator = estimator
+        self._estimator = estimator
 
         self.last_dt = None
         self.last_lags_dataframe = None
@@ -123,7 +124,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         sklearn.multioutput.RegressorChain
             The GBRT model wrapped in a regressor chain.
         """
-        return RegressorChain(self.estimator(**self.all_configs['model_configs']))
+        return RegressorChain(self._estimator(**self.all_configs['model_configs']))
 
     @ParameterValuesAssert({
         'mode': ('train', 'predict')
@@ -179,6 +180,8 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         self
             Returns an instance of the fitted model.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
         self.last_lags_dataframe = data.iloc[-self.all_configs['lags']:, :]
@@ -273,6 +276,8 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             DataFrame containing the predicted values and corresponding timestamps.
         """
         if data is not None:
+            check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
             raise_if_not(
                 ValueError, len(data) >= self.all_configs['lags'],
                 'The length of the series must be greater than or equal to the lags.'

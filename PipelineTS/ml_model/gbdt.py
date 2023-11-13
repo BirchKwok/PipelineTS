@@ -7,6 +7,7 @@ from darts.models import (
 )
 from spinesUtils.asserts import generate_function_kwargs, ParameterTypeAssert
 from PipelineTS.base import DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin
+from PipelineTS.utils import check_time_col_is_timestamp
 
 
 class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
@@ -143,6 +144,8 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
         self
             Returns an instance of the fitted model.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
         # Calculate quantile error if quantile is specified
@@ -184,6 +187,9 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
         """
         if predict_kwargs is None:
             predict_kwargs = {}
+
+        if data is not None:
+            check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
         # Generate predictions
         res = super().predict(n=n, data=data, predict_kwargs=predict_kwargs,
@@ -354,6 +360,8 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
         self
             Returns an instance of the fitted model.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
         # Calculate quantile error if quantile is specified
@@ -395,6 +403,9 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
         """
         if predict_kwargs is None:
             predict_kwargs = {}
+
+        if data is not None:
+            check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
         # Generate predictions
         res = super().predict(n=n, data=data, predict_kwargs=predict_kwargs,
@@ -560,6 +571,8 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
         self
             Returns an instance of the fitted model.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
         # Calculate quantile error if quantile is specified
@@ -601,6 +614,9 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
         """
         if predict_kwargs is None:
             predict_kwargs = {}
+
+        if data is not None:
+            check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
         # Generate predictions
         res = super().predict(n=n, data=data, predict_kwargs=predict_kwargs,
@@ -748,6 +764,8 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
         self
             Returns an instance of the fitted model.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         super().fit(data, convert_dataframe_kwargs, fit_kwargs)
 
         # Calculate quantile error if quantile is specified
@@ -789,6 +807,9 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
         """
         if predict_kwargs is None:
             predict_kwargs = {}
+
+        if data is not None:
+            check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
         # Generate predictions
         res = super().predict(n=n, data=data, predict_kwargs=predict_kwargs,

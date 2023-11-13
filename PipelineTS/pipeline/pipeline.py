@@ -27,7 +27,7 @@ from spinesUtils.utils import (
 from PipelineTS.metrics import quantile_acc
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
 from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
-from PipelineTS.utils import update_dict_without_conflict
+from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 
 
 # TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
@@ -461,11 +461,15 @@ class ModelPipeline:
             sys.stderr.write(self._compute_device_msg)
             time.sleep(0.5)
 
+        check_time_col_is_timestamp(data, self.time_col)
+
         if data.shape[0] <= self.lags:
             raise ValueError(f'length of df must be greater than lags, df length = {data.shape[0]}, lags = {self.lags}')
 
         if valid_data is not None:
             assert data.columns.tolist() == valid_data.columns.tolist()
+            check_time_col_is_timestamp(valid_data, self.time_col)
+
             df, valid_df = data.copy(), valid_data.copy()
         else:
             df, valid_df = data.iloc[:-self.lags, :], data.iloc[-self.lags:, :]

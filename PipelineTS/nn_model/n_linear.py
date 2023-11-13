@@ -7,7 +7,7 @@ from spinesUtils import ParameterTypeAssert
 from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
-from PipelineTS.utils import update_dict_without_conflict
+from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
 logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
@@ -177,6 +177,8 @@ class NLinearModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
         self
             The fitted NLinearModel instance.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=True)
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
@@ -215,6 +217,9 @@ class NLinearModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
         """
         if predict_kwargs is None:
             predict_kwargs = {}
+
+        if data is not None:
+            check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
         res = super().predict(n, data=data,
                               predict_kwargs=predict_kwargs, convert_dataframe_kwargs=convert_dataframe_kwargs,

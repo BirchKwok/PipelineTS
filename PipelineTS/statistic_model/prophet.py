@@ -1,6 +1,7 @@
 import logging
 from spinesUtils import generate_function_kwargs
 from PipelineTS.base import StatisticModelMixin, IntervalEstimationMixin
+from PipelineTS.utils import check_time_col_is_timestamp
 
 logger = logging.getLogger('cmdstanpy')
 logger.addHandler(logging.NullHandler())
@@ -121,6 +122,8 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         self : ProphetModel
             Returns the instance itself.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         if fit_kwargs is None:
             fit_kwargs = {}
         data = self._prophet_preprocessing(data, self.all_configs['time_col'], self.all_configs['target_col'])

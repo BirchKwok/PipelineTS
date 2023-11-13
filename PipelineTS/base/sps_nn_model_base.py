@@ -7,6 +7,7 @@ from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import gc_collector, reshape_if
 
 from PipelineTS.base import NNModelMixin, IntervalEstimationMixin
+from PipelineTS.utils import check_time_col_is_timestamp
 
 
 class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
@@ -171,6 +172,8 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         # Fit the model on training data
         >>> nn_model.fit(train_data, valid_data=valid_data, cv=5, fit_kwargs={'epochs': 100})
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
         if fit_kwargs is None:
@@ -191,6 +194,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         if valid_data is None:
             eval_set = [(x, y)]
         else:
+            check_time_col_is_timestamp(valid_data, self.all_configs['time_col'])
             valid_x, valid_y = self._data_preprocess(valid_data, update_last_data=False, mode='validation')
 
             eval_set = [(valid_x, valid_y)]
@@ -283,6 +287,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             predict_kwargs = {}
 
         if data is not None:
+            check_time_col_is_timestamp(data, self.all_configs['time_col'])
             raise_if_not(
                 ValueError, len(data) >= self.all_configs['lags'],
                 'The length of the series must greater than or equal to the lags. '

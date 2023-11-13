@@ -2,6 +2,7 @@ from darts.models import AutoARIMA
 from spinesUtils import generate_function_kwargs
 
 from PipelineTS.base import DartsForecastMixin, StatisticModelMixin, IntervalEstimationMixin
+from PipelineTS.utils import check_time_col_is_timestamp
 
 
 class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimationMixin):
@@ -108,6 +109,8 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
         self : AutoARIMAModel
             Returns the instance itself.
         """
+        check_time_col_is_timestamp(data, self.all_configs['time_col'])
+
         super().fit(
             data,
             convert_dataframe_kwargs=convert_dataframe_kwargs,
