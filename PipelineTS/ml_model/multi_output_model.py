@@ -12,13 +12,11 @@ from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import reshape_if
 from spinesTS.pipeline import Pipeline
 
-from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin
-
-
+from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 
 
-class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
+class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
     def __init__(
             self,
             time_col,
@@ -26,6 +24,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
             lags=1,
             quantile=0.9,
             estimator=LGBMRegressor,
+            differential_n=1,
             **model_configs
     ):
         """
@@ -43,6 +42,8 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
             The quantile used for interval prediction. Set to None for point prediction.
         estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
             The base estimator used for the multi-output regression model.
+        differential_n : int,  optional, default: 1
+            The number of differencing operations to apply to the target variable.
         **model_configs : dict
             Additional keyword arguments for configuring the base estimator.
 
@@ -81,7 +82,8 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'quantile_error': 0
+                'quantile_error': 0,
+                'differential_n': differential_n
             }
         )
 
@@ -164,9 +166,11 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
         x, y = self._data_preprocess(data, update_last_dt=True, mode='train')
         x = pd.DataFrame(x)
 
-        self.x = x.iloc[-1:, :]
+        self.x = pd.DataFrame(self._data_preprocess(data, mode='predict')).iloc[-1:, :]
 
-        self.model.fit(x, y, **fit_kwargs)
+        # difference
+        x_after_diff = np.diff(x, n=self.all_configs['differential_n'], axis=1)
+        self.model.fit(x_after_diff, y, **fit_kwargs)
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
@@ -195,7 +199,8 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
         assert isinstance(n, int)
         assert x.ndim == 2
 
-        current_res = self.model.predict(x, **predict_kwargs)
+        x_after_diff = np.diff(x, n=self.all_configs['differential_n'], axis=1)
+        current_res = self.model.predict(x_after_diff, **predict_kwargs)
         current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
 
         if n is None:
@@ -207,7 +212,9 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin):
 
             for i in range(n - self.all_configs['lags']):
                 x = np.concatenate((x[:, 1:], current_res[:, 0:1]), axis=1)
-                current_res = self.model.predict(x, **predict_kwargs)
+                
+                x_after_diff = np.diff(x, n=self.all_configs['differential_n'], axis=1)
+                current_res = self.model.predict(x_after_diff, **predict_kwargs)
                 current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
 
                 res.append(current_res.squeeze().tolist()[-1])
