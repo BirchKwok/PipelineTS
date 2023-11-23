@@ -4,10 +4,11 @@ from copy import deepcopy
 import gc
 
 import pandas as pd
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import QuantileTransformer, MinMaxScaler
+from sklearn.base import TransformerMixin
 from frozendict import frozendict
 
-from spinesTS.base._torch_mixin import detect_available_device
+from spinesTS.base import detect_available_device
 from spinesTS.metrics import mae
 from spinesTS.utils import func_has_params
 from spinesUtils.preprocessing import gc_collector
@@ -16,18 +17,20 @@ from spinesUtils.asserts import (
     ParameterValuesAssert,
     check_obj_is_function,
     augmented_isinstance,
-    raise_if
+    raise_if, raise_if_not
 )
 from spinesUtils.utils import (
     Logger,
-    drop_duplicates_with_order,
     Timer
 )
 
+# All model classes in PipelineTS are subclasses of the IntervalEstimationMixin class.
+from PipelineTS.base import IntervalEstimationMixin
 from PipelineTS.metrics import quantile_acc
-from PipelineTS.pipeline.pipeline_models import get_all_available_models
+from PipelineTS.pipeline.pipeline_models import get_all_available_models, get_all_model_class_name
 from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
+from PipelineTS.pipeline.pipeline_utils import generate_models_set
 
 
 # TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
@@ -38,32 +41,38 @@ class ModelPipeline:
         'time_col': str,
         'target_col': str,
         'lags': int,
-        'with_quantile_prediction': bool,
-        'include_models': (None, list, str),
-        'exclude_models': (None, list),
+        'quantile': (None, float),
+        'exclude_models': (None, list, str),
         'metric_less_is_better': bool,
         'configs': (None, PipelineConfigs),
         'random_state': (int, None),
         'verbose': (bool, int),
         'include_init_config_model': bool,
-        'use_standard_scale': (bool, None),
         'accelerator': (str, None),
         'cv': int,
+        'gbdt_differential_n': int
     }, 'Pipeline')
     @ParameterValuesAssert({
         'metric': lambda s: check_obj_is_function(s),
+        'scaler': lambda s: augmented_isinstance(s, (TransformerMixin, None, bool)),
         'accelerator': (
-                lambda s: s in ("cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto", "cuda")
-                          or augmented_isinstance(s, None)
+                lambda s:
+                s in ("cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto", "cuda")
+                or augmented_isinstance(s, None)
         ),
-        'include_models': lambda s: s in ('light', 'all', 'nn', 'ml') or augmented_isinstance(s, (None, list))
+        'include_models': (
+                lambda s:
+                s in ('light', 'all', 'nn', 'ml') or
+                augmented_isinstance(s, (None, list, str)) or
+                issubclass(s, IntervalEstimationMixin)
+        )
     }, 'Pipeline')
     def __init__(
             self,
             time_col,
             target_col,
             lags,
-            with_quantile_prediction=False,  # the quantile prediction switch
+            quantile=None,  # the quantile prediction switch
             include_models='light',
             exclude_models=None,
             metric=mae,
@@ -72,9 +81,10 @@ class ModelPipeline:
             random_state=0,
             verbose=True,
             include_init_config_model=False,
-            use_standard_scale=False,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
+            scaler=None,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
             accelerator='auto',
             cv=5,
+            gbdt_differential_n=1,
             **model_init_kwargs
     ):
         """
@@ -88,11 +98,11 @@ class ModelPipeline:
             Name of the column containing the target variable.
         lags : int
             Number of lagged time steps for modeling.
-        with_quantile_prediction : bool, optional, default: False
-            Enable quantile prediction.
-        include_models : {'light', 'all', 'nn', 'ml'} or list or None, optional, default: 'light'
+        quantile : float, optional, default: None
+            Quantile value of interval prediction.
+        include_models : {'light', 'all', 'nn', 'ml'} or list or None or a available model of PipelineTS, optional, default: 'light'
             Models to include in the pipeline.
-        exclude_models : list or None, optional, default: None
+        exclude_models : list or None or str, optional, default: None
             Models to exclude from the pipeline.
         metric : callable, optional, default: Mean Absolute Error (mae)
             Evaluation metric function.
@@ -106,13 +116,15 @@ class ModelPipeline:
             Verbosity level.
         include_init_config_model : bool, optional, default: False
             Include models with initial configuration.
-        use_standard_scale : bool or None, optional, default: False
-            Use StandardScaler or MinMaxScaler for data scaling.
-            None means no scaling.
+        scaler : bool or None or transformer that has the type of sklearn.base.TransformerMixin, optional, default: False
+            Use scaler for data scaling, False for MinMaxScaler, True for QuantileTransformer, None means no scaling.
+            Alternatively, you can specify your own transformer.
         accelerator : {'cpu', 'gpu', 'tpu', 'ipu', 'hpu', 'mps', 'auto', 'cuda'} or None, optional, default: 'auto'
             Hardware accelerator type.
         cv : int, optional, default: 5
             Number of cross-validation folds.
+        gbdt_differential_n : int, optional, default: 1
+            The number of differencing operations to apply to the target variable.
         **model_init_kwargs
             Additional keyword arguments for model initialization.
 
@@ -120,7 +132,7 @@ class ModelPipeline:
         ------
         ValueError
             If include_models and exclude_models are set simultaneously.
-            If with_quantile_prediction is True and cv is not greater than 1.
+            If quantile is not None and cv is not greater than 1.
             If exclude_models contain invalid model names.
             If include_models contain invalid model names.
             If model names in model_init_kwargs do not match available models.
@@ -133,22 +145,31 @@ class ModelPipeline:
         raise_if(ValueError, include_models is not None and exclude_models is not None,
                  "include_models and exclude_models can not be set at the same time.")
 
+        if augmented_isinstance(exclude_models, str):
+            exclude_models = [exclude_models]
+
         if include_models == 'light':
-            include_models = ['auto_arima', 'd_linear', 'lightgbm', 'multi_step_model', 'n_hits', 'n_linear',
-                              'prophet', 'random_forest', 'seg_rnn', 'tcn', 'xgboost']
+            include_models = ['d_linear', 'lightgbm', 'multi_step_model', 'n_hits', 'n_linear',
+                              'random_forest', 'regressor_chain', 'tcn', 'xgboost']
         elif include_models == 'all':
             include_models = None
         elif include_models == 'nn':
             include_models = ['d_linear', 'gau', 'n_beats', 'n_hits', 'n_linear', 'tcn', 'tft',
-                              'seg_rnn', 'stacking_rnn', 'tide', 'time2vec', 'transformer']
+                              'patch_rnn', 'stacking_rnn', 'tide', 'time2vec', 'transformer']
         elif include_models == 'ml':
             include_models = ['catboost', 'lightgbm', 'multi_output_model',
-                              'multi_step_model','random_forest', 'wide_gbrt', 'xgboost']
+                              'multi_step_model', 'random_forest', 'wide_gbrt', 'xgboost']
+        elif isinstance(include_models, str):
+            raise_if_not(ValueError, include_models in ModelPipeline.list_all_available_models(),
+                         f"{include_models} is not a available model name. ")
+            include_models = [include_models]
+        elif not isinstance(include_models, (list, str)) and issubclass(include_models, IntervalEstimationMixin):
+            include_models = [include_models]
         else:
             include_models = include_models
 
-        if with_quantile_prediction:
-            raise_if(ValueError, cv <= 1, "if with_quantile_prediction is True, cv must be greater than 1.")
+        if quantile:
+            raise_if(ValueError, cv <= 1, "if quantile is not None, cv must be greater than 1.")
 
         self._available_models = get_all_available_models()
 
@@ -157,8 +178,9 @@ class ModelPipeline:
                  "exclude_models must be None or in the list of models.")
 
         raise_if(ValueError, include_models is not None and
-                 (not all([i in self._available_models for i in include_models])),
-                 "include_models must be None or in the list of models.")
+                 (not all([i in self._available_models or
+                           issubclass(i, IntervalEstimationMixin) for i in include_models])),
+                 "include_models must be None or in the list of models or a available PipelineTS model.")
 
         if exclude_models is not None:
             self._available_models = dict(self._available_models)
@@ -177,14 +199,14 @@ class ModelPipeline:
         self.random_state = random_state
         self.configs = configs
         self._given_models = include_models
-        self.with_quantile_prediction = with_quantile_prediction
+        self.quantile = quantile
 
         self.include_init_config_model = include_init_config_model
 
-        if use_standard_scale is not None:
-            self.scaler = StandardScaler() if use_standard_scale else MinMaxScaler()
+        if augmented_isinstance(scaler, bool):
+            self.scaler = QuantileTransformer() if scaler else MinMaxScaler()
         else:
-            self.scaler = use_standard_scale
+            self.scaler = scaler
 
         self._temp_scaler = deepcopy(self.scaler)
 
@@ -212,16 +234,18 @@ class ModelPipeline:
             raise_if(ValueError, '__' not in k,
                      f"{k} must has double underline.")
 
-            raise_if(ValueError, k.split('__')[0] not in self._available_models,
+            raise_if(ValueError, k.split('__')[0] not in self._available_models and k.split('__')[0]
+                     not in get_all_model_class_name(),
                      f"{k.split('__')[0]} is not a valid model name")
             self._model_init_kwargs[k] = v
 
         self._compute_device_msg = detect_available_device(self.accelerator)[1] + '\n\n'
 
+        self.gbdt_differential_n = gbdt_differential_n
+
     def _initial_models(self):
         initial_models = []
-        ms = tuple(sorted(self._available_models.items(), key=lambda s: s[0])) if self._given_models is None else (
-            drop_duplicates_with_order([(k, self._available_models[k]) for k in self._given_models]))
+        ms = generate_models_set(self._available_models, self._given_models)
 
         # 模型训练顺序
         for (model_name, model) in ms:
@@ -231,15 +255,19 @@ class ModelPipeline:
                 target_col=self.target_col,
                 lags=self.lags,
                 random_state=self.random_state,
-                quantile=0.9 if self.with_quantile_prediction else None,
-                accelerator=self.accelerator
+                quantile=self.quantile,
+                accelerator=self.accelerator,
+                differential_n=self.gbdt_differential_n
             )
 
+            # Populate model initialization parameters specified in double underscore format.
+            # This scenario takes precedence over keyword arguments.
             if len(self._model_init_kwargs) > 0:
                 for k, v in self._model_init_kwargs.items():
                     if k.split('__')[0] == model_name:
                         model_kwargs[k[len(model_name) + 2:]] = v
 
+            # The PipelineConfigs class has the highest configuration authority.
             if self.configs is not None:
                 include_in_configs = False
                 for (model_name_in_config, model_name_after_rename_in_config, model_configs_in_config) \
@@ -278,11 +306,27 @@ class ModelPipeline:
         Example
         -------
         >>> ModelPipeline.list_all_available_models()
-        ['auto_arima', 'd_linear', 'gau', 'n_beats', 'n_hits', 'n_linear', 'tcn', 'tft', 'seg_rnn', 'stacking_rnn',
-        'tide', 'time2vec', 'transformer', 'catboost', 'lightgbm', 'multi_output_model', 'multi_step_model',
-        'random_forest', 'wide_gbrt', 'xgboost']
+        ['catboost',
+         'd_linear',
+         'gau',
+         'lightgbm',
+         'multi_output_model',
+         'multi_step_model',
+         'n_beats',
+         'n_hits',
+         'n_linear',
+         'random_forest',
+         'regressor_chain',
+         'patch_rnn',
+         'stacking_rnn',
+         'tcn',
+         'tft',
+         'tide',
+         'time2vec',
+         'transformer',
+         'xgboost']
         """
-        return list(get_all_available_models().keys())
+        return sorted(list(get_all_available_models().keys()))
 
     def _scale_data(self, data, valid_data=None, refit_scaler=True):
         df, valid_df = data.copy(), valid_data  # valid_data will not be deep copy in this step
@@ -343,7 +387,19 @@ class ModelPipeline:
         else:
             fit_kwargs = {}
 
-        model_kwargs = self._fill_func_params(func=model.fit, data=train_df, fit_kwargs=fit_kwargs, cv=self.cv)
+        # --------------------- darts models ----------------------
+        # if isinstance(model, DartsForecastMixin) and hasattr(model, 'valid_data'):
+        #     valid_df = generate_valid_data(train_df, valid_df, self.lags,
+        #                                    self.time_col, self.target_col)
+        #
+        #     valid_df = load_dataset_to_darts(
+        #                     valid_df,
+        #                     time_col=self.time_col,
+        #                     target_col=self.target_col
+        #                 ).astype(np.float32)
+
+        model_kwargs = self._fill_func_params(func=model.fit, data=train_df, fit_kwargs=fit_kwargs, cv=self.cv,
+                                              valid_data=valid_df)
         model.fit(**model_kwargs)
 
         train_cost = self._timer.last_timestamp_diff()
@@ -375,7 +431,7 @@ class ModelPipeline:
         yt = valid_df[self.target_col].values
         yp = eval_res[self.target_col].values
 
-        if self.with_quantile_prediction:
+        if self.quantile:
             left_pred = eval_res[f"{self.target_col}_lower"].values
             right_pred = eval_res[f"{self.target_col}_upper"].values
 
@@ -383,7 +439,7 @@ class ModelPipeline:
             yt = scaler.inverse_transform(yt.reshape(-1, 1)).squeeze()
             yp = scaler.inverse_transform(yp.reshape(-1, 1)).squeeze()
 
-            if self.with_quantile_prediction:
+            if self.quantile:
                 left_pred = scaler.inverse_transform(left_pred.reshape(-1, 1)).squeeze()
                 right_pred = scaler.inverse_transform(right_pred.reshape(-1, 1)).squeeze()
                 res_quantile_acc = quantile_acc(yt, left_pred, right_pred)
@@ -399,7 +455,7 @@ class ModelPipeline:
 
         self._timer.clear()  # 重置计时器
 
-        if self.with_quantile_prediction:
+        if self.quantile:
             res_df = pd.concat(
                 (res_df, pd.DataFrame(
                     [[model_name_after_rename, train_cost, eval_cost, metric, res_quantile_acc]],
@@ -472,14 +528,13 @@ class ModelPipeline:
 
             df, valid_df = data.copy(), valid_data.copy()
         else:
-            df, valid_df = data.iloc[:-self.lags, :], data.iloc[-self.lags:, :]
-            df, valid_df = df.copy(), valid_df.copy()
+            df, valid_df = data.copy(), data.copy()
 
         # 如果指定use_standard_scale，此语句会对数据缩放
         df, valid_df = self._scale_data(df, valid_df, refit_scaler=True)
 
         res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])
-        if self.with_quantile_prediction:
+        if self.quantile:
             res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])
 
         models = self._initial_models()
@@ -618,14 +673,22 @@ class ModelPipeline:
         - If data is not provided, the function uses the last available data in the pipeline.
         - If model_name is not provided, the function uses the best-performing model based on the leaderboard.
         """
+        df = None
+        if data is not None:
+            df = data.copy()
+            if self.scaler is not None:
+                df[self.target_col] = self.scaler.transform(df[self.target_col].values.reshape(-1, 1)).squeeze()
+
         if model_name is not None:
             if func_has_params(self.get_model(model_name).predict, 'data'):
-                res = self.get_model(model_name).predict(n, data=data)
+
+                res = self.get_model(model_name).predict(n, data=df)
             else:
                 res = self.get_model(model_name).predict(n)
         else:
             if func_has_params(self.get_model(model_name).predict, 'data'):
-                res = self.best_model_.predict(n, data=data)
+
+                res = self.best_model_.predict(n, data=df)
             else:
                 res = self.best_model_.predict(n)
 
