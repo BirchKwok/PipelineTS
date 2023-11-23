@@ -1,7 +1,7 @@
 from spinesTS.nn import StackingRNN
 from spinesUtils import generate_function_kwargs
 
-from PipelineTS.base.sps_nn_model_base import SpinesNNModelMixin
+from PipelineTS.base import SpinesNNModelMixin
 
 
 class StackingRNNModel(SpinesNNModelMixin):
@@ -10,13 +10,14 @@ class StackingRNNModel(SpinesNNModelMixin):
             time_col,
             target_col,
             lags=30,
+            dropout=0.1,
+            blocks=2,
             quantile=0.9,
             random_state=None,
-            dropout=0.1,
             learning_rate=0.001,
             accelerator='auto',
             verbose=False,
-            epochs=1000,
+            epochs=3000,
             batch_size='auto',
             patience=100,
             min_delta=0,
@@ -79,9 +80,10 @@ class StackingRNNModel(SpinesNNModelMixin):
             StackingRNN,
             in_features=lags,
             out_features=lags,
-            loss_fn='mae',
-            bias=True,
             dropout=dropout,
+            blocks=blocks,
+            loss_fn='mae',
+            bias=False,
             learning_rate=learning_rate,
             random_seed=random_state,
             device=self.accelerator,

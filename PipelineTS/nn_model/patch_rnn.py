@@ -1,15 +1,17 @@
-from spinesTS.nn import SegRNN
+from spinesTS.nn import PatchRNN
 from spinesUtils import generate_function_kwargs
 
-from PipelineTS.base.sps_nn_model_base import SpinesNNModelMixin
+from PipelineTS.base import SpinesNNModelMixin
 
 
-class SegRNNModel(SpinesNNModelMixin):
+class PatchRNNModel(SpinesNNModelMixin):
     def __init__(
             self,
             time_col,
             target_col,
             lags=30,
+            kernel_size=4,
+            dropout=0.1,
             quantile=0.9,
             random_state=None,
             learning_rate=0.001,
@@ -26,7 +28,7 @@ class SegRNNModel(SpinesNNModelMixin):
             loss_type='min'
     ):
         """
-        SegRNNModel: A wrapper for the SegRNN model from the spinesTS library with additional features.
+        PatchRNNModel: A wrapper for the PatchRNN model from the spinesTS library with additional features.
 
         Parameters
         ----------
@@ -41,7 +43,7 @@ class SegRNNModel(SpinesNNModelMixin):
         random_state : int or None, optional, default: None
             The random seed for reproducibility.
         learning_rate : float, optional, default: 0.001
-            The learning rate for training the SegRNN model.
+            The learning rate for training the PatchRNN model.
         accelerator : str, optional, default: 'auto'
             The PyTorch Lightning accelerator to use during training.
         verbose : bool, optional, default: False
@@ -67,15 +69,17 @@ class SegRNNModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.SegRNN
-            The SegRNN model from the spinesTS library.
+        model : spinesTS.nn.PatchRNN
+            The PatchRNN model from the spinesTS library.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
-            SegRNN,
+            PatchRNN,
             in_features=lags,
             out_features=lags,
+            kernel_size=kernel_size,
+            dropout=dropout,
             loss_fn='mae',
             learning_rate=learning_rate,
             random_seed=random_state,
@@ -110,11 +114,11 @@ class SegRNNModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the SegRNN model from the spinesTS library.
+        Define the PatchRNN model from the spinesTS library.
 
         Returns
         -------
-        spinesTS.nn.SegRNN
-            The SegRNN model from the spinesTS library.
+        spinesTS.nn.PatchRNN
+            The PatchRNN model from the spinesTS library.
         """
-        return SegRNN(**self.all_configs['model_configs'])
+        return PatchRNN(**self.all_configs['model_configs'])
