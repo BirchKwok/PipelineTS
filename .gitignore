@@ -49,7 +49,7 @@ catboost_info/
 
 # DevMustKnow.md
 
-# Unit examples / coverage reports
+# Unit test / coverage reports
 htmlcov/
 .tox/
 .idea/

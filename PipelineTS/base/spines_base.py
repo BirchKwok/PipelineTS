@@ -1,12 +1,12 @@
 import numpy as np
 import pandas as pd
 from spinesTS.preprocessing import split_series, lag_splits
-
-from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
-from spinesUtils.asserts import raise_if_not
-from spinesUtils.preprocessing import gc_collector, reshape_if
+from spinesUtils import ParameterValuesAssert, ParameterTypeAssert
+from spinesUtils.asserts import raise_if, raise_if_not
+from spinesUtils.preprocessing import reshape_if, gc_collector
 
 from PipelineTS.base import NNModelMixin, IntervalEstimationMixin
+from PipelineTS.base.base_utils import generate_valid_data
 from PipelineTS.utils import check_time_col_is_timestamp
 
 
@@ -35,7 +35,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
     _define_model()
         Abstract method to be implemented by subclasses for defining the neural network model.
 
-    _data_preprocess(data, update_last_data=False, mode='train')
+    _data_preprocess(data, mode='train')
         Preprocesses the input data for training, validation, or prediction.
 
     fit(data, valid_data=None, cv=5, fit_kwargs=None)
@@ -61,6 +61,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
     # Instantiate SpinesNNModelMixin
     >>> nn_model = SpinesNNModelMixin(time_col='timestamp', target_col='value', accelerator='auto')
     """
+
     def __init__(self, time_col, target_col, accelerator=None):
 
         super().__init__(time_col, target_col, accelerator=accelerator)
@@ -81,7 +82,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
     @ParameterValuesAssert({
         'mode': ('train', 'validation', 'predict')
     })
-    def _data_preprocess(self, data, update_last_data=False, mode='train'):
+    def _data_preprocess(self, data, mode='train'):
         """
         Preprocesses the input data for training, validation, or prediction.
 
@@ -89,8 +90,6 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         ----------
         data : pd.DataFrame
             The input data in pandas DataFrame format.
-        update_last_data : bool, optional, default: False
-            Whether to update the last input sequence.
         mode : {'train', 'validation', 'predict'}, optional, default: 'train'
             The mode for data preprocessing.
 
@@ -109,15 +108,11 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         Examples
         --------
         # Preprocess training data
-        >>> x_train, y_train = self._data_preprocess(train_data, update_last_data=True, mode='train')
+        >>> x_train, y_train = self._data_preprocess(train_data, mode='train')
         """
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
-        if update_last_data:
-            self.last_dt = data[self.all_configs['time_col']].max()
 
         if mode == 'train':
-            if update_last_data:
-                self.last_x = data[self.all_configs['target_col']].iloc[-(2 * self.all_configs['lags']):]
             # x_train, y_train
             x_train, y_train = split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
                                             window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
@@ -187,15 +182,23 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             if fit_param not in fit_kwargs:
                 fit_kwargs.update({fit_param: self.all_configs[fit_param]})
 
-        x, y = self._data_preprocess(data, update_last_data=True, mode='train')
-
         self.x = data[self.all_configs['target_col']].iloc[-self.all_configs['lags']:]
+        self.last_dt = data[self.all_configs['time_col']].max()
+
+        x, y = self._data_preprocess(data, mode='train')
 
         if valid_data is None:
             eval_set = [(x, y)]
         else:
             check_time_col_is_timestamp(valid_data, self.all_configs['time_col'])
-            valid_x, valid_y = self._data_preprocess(valid_data, update_last_data=False, mode='validation')
+            raise_if(
+                ValueError, valid_data[self.all_configs['time_col']].min() <= data[self.all_configs['time_col']].max(),
+                'validation data should be after the training data.')
+
+            valid_data = generate_valid_data(data.copy(), valid_data, self.all_configs['lags'],
+                                             self.all_configs['time_col'], self.all_configs['target_col'])
+
+            valid_x, valid_y = self._data_preprocess(valid_data, mode='train')
 
             eval_set = [(valid_x, valid_y)]
 
@@ -245,9 +248,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
         current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
 
-        if n is None:
-            return current_res.squeeze().tolist()
-        elif n <= current_res.shape[1]:
+        if n <= current_res.shape[1]:
             return current_res[-1][:n].tolist()
         else:
             res = current_res.squeeze().tolist()
@@ -294,7 +295,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             )
 
             x = self._data_preprocess(data.iloc[-self.all_configs['lags']:, :],
-                                      update_last_data=False, mode='predict')
+                                      mode='predict')
             last_dt = data[self.all_configs['time_col']].max()
         else:
             x = reshape_if(self.x.values, self.x.values.ndim == 1, (1, -1))
@@ -312,3 +313,8 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             res = self.interval_predict(res)
 
         return self.chosen_cols(res)
+
+
+class SpinesMLModelMixin:
+    """spinesTS ml model mixin class"""
+    ...
