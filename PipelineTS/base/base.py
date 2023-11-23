@@ -2,157 +2,10 @@ import sys
 from copy import deepcopy
 
 import numpy as np
-from spinesUtils.asserts import *
 from spinesUtils.preprocessing import gc_collector
 
 from spinesTS.metrics import wmape
 from spinesTS.utils import func_has_params
-
-from PipelineTS.utils import load_dataset_to_darts
-
-
-class DartsForecastMixin:
-    @staticmethod
-    def convert2dts_dataframe(
-            df,
-            time_col,
-            target_col,
-            **kwargs
-    ):
-        return load_dataset_to_darts(df, time_col, target_col, **kwargs)
-
-    @staticmethod
-    def convert2pd_dataframe(df):
-        return df.pd_dataframe()
-
-    @gc_collector()
-    def fit(self, data, convert_dataframe_kwargs=None, fit_kwargs=None, convert_float32=True):
-        """
-        Fits the Darts forecasting model on the training data.
-
-        Parameters
-        ----------
-        data : pd.DataFrame
-            The training data in pandas DataFrame format.
-        convert_dataframe_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for converting the DataFrame to Darts TimeSeries.
-        fit_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for fitting the Darts model.
-        convert_float32 : bool, optional, default: True
-            Whether to convert the data to float32.
-
-        Returns
-        -------
-        self : DartsForecastMixin
-            Returns the instance itself.
-        """
-
-        if convert_dataframe_kwargs is None:
-            convert_dataframe_kwargs = {}
-        if fit_kwargs is None:
-            fit_kwargs = {}
-
-        data = self.convert2dts_dataframe(data, time_col=self.all_configs['time_col'],
-                                          target_col=self.all_configs['target_col'],
-                                          **convert_dataframe_kwargs)
-
-        if convert_float32:
-            data = data.astype(np.float32)
-
-        self.model.fit(data, **fit_kwargs)
-        return self
-
-    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None, convert_float32=True):
-        """
-        Makes predictions using the fitted Darts forecasting model.
-
-        Parameters
-        ----------
-        n : int
-            The number of time steps to predict.
-        data : pd.DataFrame or None, optional, default: None
-            The input data for prediction.
-        predict_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for the prediction function.
-        convert_dataframe_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for converting the DataFrame to Darts TimeSeries.
-        convert_float32 : bool, optional, default: True
-            Whether to convert the data to float32.
-
-        Returns
-        -------
-        predictions : pd.DataFrame
-            The DataFrame containing the predicted values.
-        """
-        if predict_kwargs is None:
-            predict_kwargs = {}
-        if func_has_params(self.model.predict, 'series') and data is not None:
-            raise_if_not(
-                ValueError, len(data) >= self.all_configs['lags'],
-                'The length of the series must greater than or equal to the lags. '
-            )
-
-            convert_dataframe_kwargs = {} if convert_dataframe_kwargs is None else convert_dataframe_kwargs
-            data = self.convert2dts_dataframe(
-                data, time_col=self.all_configs['time_col'],
-                target_col=self.all_configs['target_col'],
-                **convert_dataframe_kwargs
-            )
-
-            if convert_float32:
-                data = data.astype(np.float32)
-
-            predict_kwargs.update({'series': data})
-
-        return self.model.predict(
-            n,
-            **predict_kwargs
-        ).pd_dataframe()
-
-    def rename_prediction(self, data):
-        """
-        Renames the prediction columns for better readability.
-
-        Parameters
-        ----------
-        data : pd.DataFrame
-            The DataFrame containing the predicted values.
-
-        Returns
-        -------
-        data : pd.DataFrame
-            The DataFrame with renamed columns.
-        """
-        data.columns.name = None
-        data[self.all_configs['time_col']] = data.index.copy()
-
-        data = data.reset_index(drop=True)
-
-        for i in data.columns:
-            if i == f"{self.all_configs['target_col']}_q0.50":
-                data.rename(columns={i: f"{self.all_configs['target_col']}"}, inplace=True)
-
-        if self.all_configs['quantile'] is not None:
-            if self.all_configs['quantile'] < round(1 - self.all_configs['quantile'], 1):
-                ratio = self.all_configs['quantile']
-            else:
-                ratio = round(1 - self.all_configs['quantile'], 1)
-
-            if len(str(ratio).split('.')[-1]) == 1:
-                left_ratio = str(ratio) + '0'
-                right_ratio = str(1 - ratio) + '0'
-            else:
-                left_ratio = str(ratio)
-                right_ratio = str(1 - ratio)
-
-            for i in data.columns:
-                if i == f"{self.all_configs['target_col']}_q{right_ratio}":
-                    data.rename(columns={i: f"{self.all_configs['target_col']}_upper"}, inplace=True)
-
-                elif i == f"{self.all_configs['target_col']}_q{left_ratio}":
-                    data.rename(columns={i: f"{self.all_configs['target_col']}_lower"}, inplace=True)
-
-        return self.chosen_cols(data)
 
 
 class GBDTModelMixin:
@@ -344,8 +197,8 @@ class IntervalEstimationMixin:
         kwargs.update({'verbose': False})
 
         return self._calculate_confidence_interval_sps(
-            data, fit_kwargs=kwargs, train_data_process_kwargs={'mode': 'train', 'update_last_data': False},
-            valid_data_process_kwargs={'mode': 'train', 'update_last_data': False}, cv=cv)
+            data, fit_kwargs=kwargs, train_data_process_kwargs={'mode': 'train'},
+            valid_data_process_kwargs={'mode': 'train'}, cv=cv)
 
     @gc_collector(1)
     def calculate_confidence_interval_prophet(self, data, cv=5, freq='D', fit_kwargs=None):
