@@ -1,6 +1,6 @@
 import pandas as pd
 
-from spinesUtils.asserts import ParameterTypeAssert
+from spinesUtils.asserts import ParameterTypeAssert, raise_if_not
 
 
 @ParameterTypeAssert({
@@ -55,12 +55,16 @@ def plot_data_period(data1, data2, time_col, target_col, labels=None, date_fmt='
         if labels is None:
             labels = ('True Data', 'Prediction Data', 'Upper Bound', 'Lower Bound')
         else:
-            assert len(labels) == 4
+            raise_if_not(ValueError, len(labels) == 4,
+                         "If 'target_upper' and 'target_lower' are provided, the labels must be provided as a list of "
+                         "4 strings.")
     else:
         if labels is None:
             labels = ('Data', 'Test Data')
         else:
-            assert len(labels) == 2
+            raise_if_not(ValueError, len(labels) == 2,
+                         "If 'target_upper' and 'target_lower' are not provided, the labels must be provided as a "
+                         "list of 2 strings.")
 
     # Set x-axis as date format
     date_fmt = m_dates.DateFormatter(date_fmt)
@@ -86,6 +90,63 @@ def plot_data_period(data1, data2, time_col, target_col, labels=None, date_fmt='
     valid_period = [data2[time_col].iloc[0], data2[time_col].iloc[-1]]
     plt.axvspan(valid_period[0], valid_period[1], ymin=0, ymax=valid_data_max,
                 facecolor='lightyellow', alpha=0.5)
+
+    # Add grid lines
+    plt.grid(True)
+
+    # Disable outer box
+    plt.box(False)
+
+    # Automatically adjust date label formats and positions to avoid overlap
+    plt.gcf().autofmt_xdate()
+
+    # Add legend
+    plt.legend()
+
+    # Display the plot
+    plt.show()
+
+
+@ParameterTypeAssert({
+    'series': pd.DataFrame,
+    'time_col': str,
+    'target_col': str,
+    'label': (None, str),
+    'date_fmt': str
+})
+def plot_single_series(series, time_col, target_col, label=None, date_fmt='%Y-%m-%d'):
+    """
+    Visualize time-series data.
+
+    Parameters
+    ----------
+    series : pd.DataFrame
+        The dataset containing time-series data for plotting.
+    time_col : str
+        Column name in the dataframes representing the time information.
+    target_col : str
+        Column name in the dataframes representing the target variable.
+    label : None or str, optional, default: None
+        Label for the plot. If None, default label 'Data' will be used.
+    date_fmt : str, optional, default: '%Y-%m-%d'
+        Date format for the x-axis labels.
+
+    """
+
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as m_dates
+
+    if label is None:
+        label = 'Data'
+    else:
+        raise_if_not(TypeError, isinstance(label, str), "Label must be a string.")
+
+    # Set x-axis as date format
+    date_fmt = m_dates.DateFormatter(date_fmt)
+    plt.gca().xaxis.set_major_formatter(date_fmt)
+
+    # Plot curves
+    plt.plot_date(series[time_col], series[target_col], label=label, color='black', fmt='')
 
     # Add grid lines
     plt.grid(True)
