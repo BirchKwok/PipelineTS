@@ -1,11 +1,9 @@
 import logging
-import pandas as pd
 import torch
 from darts.models.forecasting.dlinear import DLinearModel as d_linear
-from spinesUtils import ParameterTypeAssert
 from spinesUtils.asserts import generate_function_kwargs
 from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
-from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
+from PipelineTS.utils import update_dict_without_conflict
 
 # Suppressing unnecessary PyTorch Lightning warnings
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
@@ -155,81 +153,3 @@ class DLinearModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             The Darts DLinear forecasting model.
         """
         return d_linear(**self.all_configs['model_configs'])
-
-    @ParameterTypeAssert({
-        'data': pd.DataFrame,
-        'cv': int,
-        'convert_dataframe_kwargs': (None, dict),
-        'fit_kwargs': (None, dict)
-    })
-    def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None):
-        """
-        Fit the DLinear forecasting model to the training data.
-
-        Parameters
-        ----------
-        data : pd.DataFrame
-            The training data.
-        cv : int, optional, default: 5
-            The number of cross-validation folds.
-        convert_dataframe_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for converting the input dataframe.
-        fit_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for the fitting process.
-
-        Returns
-        -------
-        self
-            Returns an instance of the fitted model.
-        """
-        check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=True)
-
-        if self.all_configs['quantile'] is not None:
-            self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_darts(
-                    data, fit_kwargs=fit_kwargs, convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
-
-        return self
-
-    @ParameterTypeAssert({
-        'n': int,
-        'data': (pd.DataFrame, None),
-        'predict_kwargs': (None, dict),
-        'convert_dataframe_kwargs': (None, dict),
-    })
-    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None):
-        """
-        Predict future values using the trained DLinear forecasting model.
-
-        Parameters
-        ----------
-        n : int
-            Number of steps to predict into the future.
-        data : pd.DataFrame or None, optional, default: None
-            Additional data for prediction. If provided, the length of the series must be greater than or equal to lags.
-        predict_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for the prediction process.
-        convert_dataframe_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for converting the input dataframe.
-
-        Returns
-        -------
-        pd.DataFrame
-            DataFrame containing the predicted values and corresponding timestamps.
-        """
-        if predict_kwargs is None:
-            predict_kwargs = {}
-
-        if data is not None:
-            check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        res = super().predict(n, data=data,
-                              predict_kwargs=predict_kwargs, convert_dataframe_kwargs=convert_dataframe_kwargs,
-                              convert_float32=True)
-        res = self.rename_prediction(res)
-        if self.all_configs['quantile'] is not None:
-            res = self.interval_predict(res)
-
-        return self.chosen_cols(res)

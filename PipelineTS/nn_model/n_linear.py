@@ -1,13 +1,11 @@
 import logging
 
-import pandas as pd
 import torch
 from darts.models.forecasting.nlinear import NLinearModel as n_linear
-from spinesUtils import ParameterTypeAssert
 from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
-from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
+from PipelineTS.utils import update_dict_without_conflict
 
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
 logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
@@ -156,76 +154,3 @@ class NLinearModel(DartsForecastMixin, NNModelMixin, IntervalEstimationMixin):
             The NLinearModel from the darts library.
         """
         return n_linear(**self.all_configs['model_configs'])
-
-    def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None):
-        """
-        Train the NLinear model on the provided data.
-
-        Parameters
-        ----------
-        data : pd.DataFrame
-            The input data containing time and target columns.
-        cv : int, optional, default: 5
-            The number of cross-validation folds.
-        convert_dataframe_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for converting the data to PyTorch tensors.
-        fit_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for training the model.
-
-        Returns
-        -------
-        self
-            The fitted NLinearModel instance.
-        """
-        check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        super().fit(data, convert_dataframe_kwargs, fit_kwargs, convert_float32=True)
-        if self.all_configs['quantile'] is not None:
-            self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_darts(
-                    data, fit_kwargs=fit_kwargs, convert2dts_dataframe_kwargs=convert_dataframe_kwargs,
-                    cv=5
-                )
-
-        return self
-
-    @ParameterTypeAssert({
-        'n': int,
-        'data': (pd.DataFrame, None),
-        'predict_kwargs': (None, dict),
-        'convert_dataframe_kwargs': (None, dict),
-    })
-    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None):
-        """
-        Make predictions using the fitted NLinear model.
-
-        Parameters
-        ----------
-        n : int
-            The number of time steps to predict.
-        data : pd.DataFrame or None, optional, default: None
-            The input data for prediction. If None, the last available data in the model is used.
-        predict_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for making predictions.
-        convert_dataframe_kwargs : dict or None, optional, default: None
-            Additional keyword arguments for converting the data to PyTorch tensors.
-
-        Returns
-        -------
-        pd.DataFrame
-            The predicted values along with time information.
-        """
-        if predict_kwargs is None:
-            predict_kwargs = {}
-
-        if data is not None:
-            check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        res = super().predict(n, data=data,
-                              predict_kwargs=predict_kwargs, convert_dataframe_kwargs=convert_dataframe_kwargs,
-                              convert_float32=True)
-        res = self.rename_prediction(res)
-        if self.all_configs['quantile'] is not None:
-            res = self.interval_predict(res)
-
-        return self.chosen_cols(res)

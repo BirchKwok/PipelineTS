@@ -7,7 +7,7 @@ from darts.models import (
 )
 from spinesUtils.asserts import generate_function_kwargs, ParameterTypeAssert
 from PipelineTS.base import DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin
-from PipelineTS.utils import check_time_col_is_timestamp
+from PipelineTS.utils import check_time_col_is_timestamp  # , update_dict_without_conflict
 
 
 class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
@@ -114,93 +114,6 @@ class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
     def _define_model(self):
         """Define the CatBoost model."""
         return CBT(**self.all_configs['model_configs'])
-
-    @ParameterTypeAssert({
-        'data': pd.DataFrame,
-        'convert_dataframe_kwargs': (None, dict),
-        'cv': int,
-        'fit_kwargs': (None, dict)
-    })
-    def fit(self, data, cv=5, convert_dataframe_kwargs=None, fit_kwargs=None):
-        """
-        Fit the model to the provided data.
-
-        Parameters
-        ----------
-        data : pd.DataFrame
-            The input data.
-
-        cv : int, optional
-            The number of cross-validation folds. Default is 5.
-
-        convert_dataframe_kwargs : dict or None, optional
-            Additional keyword arguments for converting the DataFrame. Default is None.
-
-        fit_kwargs : dict or None, optional
-            Additional keyword arguments for fitting the model. Default is None.
-
-        Returns
-        -------
-        self
-            Returns an instance of the fitted model.
-        """
-        check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        super().fit(data, convert_dataframe_kwargs, fit_kwargs)
-
-        # Calculate quantile error if quantile is specified
-        if self.all_configs['quantile'] is not None:
-            self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_darts(data, fit_kwargs=fit_kwargs,
-                                                         convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
-
-        return self
-
-    @ParameterTypeAssert({
-        'n': int,
-        'data': (pd.DataFrame, None),
-        'predict_kwargs': (None, dict),
-        'convert_dataframe_kwargs': (None, dict),
-    })
-    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None):
-        """
-        Generate predictions for future time steps.
-
-        Parameters
-        ----------
-        n : int
-            The number of time steps to predict.
-
-        data : pd.DataFrame or None, optional
-            Additional data for prediction. Default is None.
-
-        predict_kwargs : dict or None, optional
-            Additional keyword arguments for prediction. Default is None.
-
-        convert_dataframe_kwargs : dict or None, optional
-            Additional keyword arguments for converting the DataFrame. Default is None.
-
-        Returns
-        -------
-        pd.DataFrame
-            Returns a DataFrame with predicted values and intervals.
-        """
-        if predict_kwargs is None:
-            predict_kwargs = {}
-
-        if data is not None:
-            check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        # Generate predictions
-        res = super().predict(n=n, data=data, predict_kwargs=predict_kwargs,
-                              convert_dataframe_kwargs=convert_dataframe_kwargs)
-        res = self.rename_prediction(res)
-
-        # Generate prediction intervals if quantile is specified
-        if self.all_configs['quantile'] is not None:
-            res = self.interval_predict(res)
-
-        return self.chosen_cols(res)
 
 
 class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
@@ -331,93 +244,6 @@ class LightGBMModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin)
         """Define the LightGBM model."""
         return LGB(**self.all_configs['model_configs'])
 
-    @ParameterTypeAssert({
-        'data': pd.DataFrame,
-        'convert_dataframe_kwargs': (None, dict),
-        'cv': int,
-        'fit_kwargs': (None, dict)
-    })
-    def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
-        """
-        Fit the model to the provided data.
-
-        Parameters
-        ----------
-        data : pd.DataFrame
-            The input data.
-
-        cv : int, optional
-            The number of cross-validation folds. Default is 5.
-
-        convert_dataframe_kwargs : dict or None, optional
-            Additional keyword arguments for converting the DataFrame. Default is None.
-
-        fit_kwargs : dict or None, optional
-            Additional keyword arguments for fitting the model. Default is None.
-
-        Returns
-        -------
-        self
-            Returns an instance of the fitted model.
-        """
-        check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        super().fit(data, convert_dataframe_kwargs, fit_kwargs)
-
-        # Calculate quantile error if quantile is specified
-        if self.all_configs['quantile'] is not None:
-            self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_darts(data, fit_kwargs=fit_kwargs,
-                                                         convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
-
-        return self
-
-    @ParameterTypeAssert({
-        'n': int,
-        'data': (pd.DataFrame, None),
-        'predict_kwargs': (None, dict),
-        'convert_dataframe_kwargs': (None, dict),
-    })
-    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None):
-        """
-        Generate predictions for future time steps.
-
-        Parameters
-        ----------
-        n : int
-            The number of time steps to predict.
-
-        data : pd.DataFrame or None, optional
-            Additional data for prediction. Default is None.
-
-        predict_kwargs : dict or None, optional
-            Additional keyword arguments for prediction. Default is None.
-
-        convert_dataframe_kwargs : dict or None, optional
-            Additional keyword arguments for converting the DataFrame. Default is None.
-
-        Returns
-        -------
-        pd.DataFrame
-            Returns a DataFrame with predicted values and intervals.
-        """
-        if predict_kwargs is None:
-            predict_kwargs = {}
-
-        if data is not None:
-            check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        # Generate predictions
-        res = super().predict(n=n, data=data, predict_kwargs=predict_kwargs,
-                              convert_dataframe_kwargs=convert_dataframe_kwargs)
-        res = self.rename_prediction(res)
-
-        # Generate prediction intervals if quantile is specified
-        if self.all_configs['quantile'] is not None:
-            res = self.interval_predict(res)
-
-        return self.chosen_cols(res)
-
 
 class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
     @ParameterTypeAssert({
@@ -541,93 +367,6 @@ class XGBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
     def _define_model(self):
         """Define the XGBoost model."""
         return XGB(**self.all_configs['model_configs'])
-
-    @ParameterTypeAssert({
-        'data': pd.DataFrame,
-        'convert_dataframe_kwargs': (None, dict),
-        'cv': int,
-        'fit_kwargs': (None, dict)
-    })
-    def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
-        """
-        Fit the model to the provided data.
-
-        Parameters
-        ----------
-        data : pd.DataFrame
-            The input data.
-
-        cv : int, optional
-            The number of cross-validation folds. Default is 5.
-
-        convert_dataframe_kwargs : dict or None, optional
-            Additional keyword arguments for converting the DataFrame. Default is None.
-
-        fit_kwargs : dict or None, optional
-            Additional keyword arguments for fitting the model. Default is None.
-
-        Returns
-        -------
-        self
-            Returns an instance of the fitted model.
-        """
-        check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        super().fit(data, convert_dataframe_kwargs, fit_kwargs)
-
-        # Calculate quantile error if quantile is specified
-        if self.all_configs['quantile'] is not None:
-            self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_darts(data, fit_kwargs=fit_kwargs,
-                                                         convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
-
-        return self
-
-    @ParameterTypeAssert({
-        'n': int,
-        'data': (pd.DataFrame, None),
-        'predict_kwargs': (None, dict),
-        'convert_dataframe_kwargs': (None, dict),
-    })
-    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None):
-        """
-        Generate predictions for future time steps.
-
-        Parameters
-        ----------
-        n : int
-            The number of time steps to predict.
-
-        data : pd.DataFrame or None, optional
-            Additional data for prediction. Default is None.
-
-        predict_kwargs : dict or None, optional
-            Additional keyword arguments for prediction. Default is None.
-
-        convert_dataframe_kwargs : dict or None, optional
-            Additional keyword arguments for converting the DataFrame. Default is None.
-
-        Returns
-        -------
-        pd.DataFrame
-            Returns a DataFrame with predicted values and intervals.
-        """
-        if predict_kwargs is None:
-            predict_kwargs = {}
-
-        if data is not None:
-            check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        # Generate predictions
-        res = super().predict(n=n, data=data, predict_kwargs=predict_kwargs,
-                              convert_dataframe_kwargs=convert_dataframe_kwargs)
-        res = self.rename_prediction(res)
-
-        # Generate prediction intervals if quantile is specified
-        if self.all_configs['quantile'] is not None:
-            res = self.interval_predict(res)
-
-        return self.chosen_cols(res)
 
 
 class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):
@@ -766,7 +505,8 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
         """
         check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
-        super().fit(data, convert_dataframe_kwargs, fit_kwargs)
+        super().fit(data=data, convert_dataframe_kwargs=convert_dataframe_kwargs,
+                    fit_kwargs=fit_kwargs, valid_data=None)
 
         # Calculate quantile error if quantile is specified
         if self.all_configs['quantile'] is not None:
@@ -775,50 +515,3 @@ class RandomForestModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMi
                                                          convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
 
         return self
-
-    @ParameterTypeAssert({
-        'n': int,
-        'data': (pd.DataFrame, None),
-        'predict_kwargs': (None, dict),
-        'convert_dataframe_kwargs': (None, dict),
-    })
-    def predict(self, n, data=None, predict_kwargs=None, convert_dataframe_kwargs=None):
-        """
-        Generate predictions for future time steps.
-
-        Parameters
-        ----------
-        n : int
-            The number of time steps to predict.
-
-        data : pd.DataFrame or None, optional
-            Additional data for prediction. Default is None.
-
-        predict_kwargs : dict or None, optional
-            Additional keyword arguments for prediction. Default is None.
-
-        convert_dataframe_kwargs : dict or None, optional
-            Additional keyword arguments for converting the DataFrame. Default is None.
-
-        Returns
-        -------
-        pd.DataFrame
-            Returns a DataFrame with predicted values and intervals.
-        """
-        if predict_kwargs is None:
-            predict_kwargs = {}
-
-        if data is not None:
-            check_time_col_is_timestamp(data, self.all_configs['time_col'])
-
-        # Generate predictions
-        res = super().predict(n=n, data=data, predict_kwargs=predict_kwargs,
-                              convert_dataframe_kwargs=convert_dataframe_kwargs)
-        res = self.rename_prediction(res)
-
-        # Generate prediction intervals if quantile is specified
-        if self.all_configs['quantile'] is not None:
-            res = self.interval_predict(res)
-
-        return self.chosen_cols(res)
-
