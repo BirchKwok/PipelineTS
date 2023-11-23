@@ -4,6 +4,8 @@ from PipelineTS.statistic_model import *
 from PipelineTS.ml_model import *
 from PipelineTS.nn_model import *
 
+from PipelineTS.pipeline.pipeline_utils import get_model_name_before_initial
+
 
 def get_all_available_models():
     """
@@ -45,10 +47,22 @@ def get_all_available_models():
         'transformer': TransformerModel,
         'random_forest': RandomForestModel,
         'tide': TiDEModel,
-        'seg_rnn': SegRNNModel
+        'patch_rnn': PatchRNNModel,
+        'regressor_chain': RegressorChainModel
     })
 
     if extra_pkg_installed:
         MODELS = MODELS.set('prophet', ProphetModel)
 
     return MODELS
+
+
+def get_all_model_class_name():
+    models = dict(get_all_available_models())
+
+    res = {}
+
+    for k, v in models.items():
+        res[get_model_name_before_initial(v)] = v
+
+    return frozendict(res)
