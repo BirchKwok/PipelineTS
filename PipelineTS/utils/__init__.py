@@ -1,4 +1,6 @@
 # utility functions
+import numpy as np
+
 
 def load_dataset_to_darts(
         data,
@@ -37,3 +39,11 @@ def check_time_col_is_timestamp(data, time_col):
     raise_if_not(TypeError, data[time_col].dtype == 'datetime64[ns]',
                  'The time column must be of type datetime64[ns], '
                  'consider use pandas.to_datetime to convert it.')
+
+
+def compute_time_interval(data, time_col):
+    return data[time_col].diff().mode().values[0]
+
+
+def time_diff(a, b):
+    return np.timedelta64(a - b)
