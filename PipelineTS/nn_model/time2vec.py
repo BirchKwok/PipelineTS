@@ -1,7 +1,7 @@
 from spinesTS.nn import Time2VecNet
 from spinesUtils import generate_function_kwargs
 
-from PipelineTS.base.sps_nn_model_base import SpinesNNModelMixin
+from PipelineTS.base import SpinesNNModelMixin
 
 
 class Time2VecModel(SpinesNNModelMixin):

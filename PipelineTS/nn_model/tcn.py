@@ -1,7 +1,7 @@
 from spinesTS.nn import TCN
 from spinesUtils import generate_function_kwargs
 
-from PipelineTS.base.sps_nn_model_base import SpinesNNModelMixin
+from PipelineTS.base import SpinesNNModelMixin
 
 
 class TCNModel(SpinesNNModelMixin):

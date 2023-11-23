@@ -9,11 +9,12 @@ from sklearn.multioutput import RegressorChain
 from spinesUtils import generate_function_kwargs, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import gc_collector, reshape_if
-from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin
+
+from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 
 
-class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
+class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
     def __init__(
             self,
             time_col,
@@ -22,7 +23,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
             n_estimators=100,
             quantile=0.9,
             random_state=None,
-            differential_n=0,
+            differential_n=1,
             moving_avg_n=0,
             extend_daily_target_features=True,
             estimator=LGBMRegressor,
@@ -228,9 +229,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin):
         current_res = self.model.predict(x)  # np.ndarray
         current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
 
-        if n is None:
-            return current_res.squeeze().tolist()
-        elif n <= current_res.shape[1]:
+        if n <= current_res.shape[1]:
             return current_res.squeeze().tolist()[:n]
         else:
             res = current_res.squeeze().tolist()
