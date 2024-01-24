@@ -7,10 +7,11 @@ from sklearn.preprocessing import MinMaxScaler
 from spinesTS.ml_model import GBRTPreprocessing
 from sklearn.multioutput import RegressorChain
 from spinesUtils import generate_function_kwargs, ParameterValuesAssert
-from spinesUtils.asserts import raise_if_not
+from spinesUtils.asserts import raise_if_not, raise_if
 from spinesUtils.preprocessing import gc_collector, reshape_if
 
-from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin
+from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
+from PipelineTS.base.spines_base import SpinesMLModelMixin
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 
 

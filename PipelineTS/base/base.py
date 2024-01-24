@@ -5,7 +5,7 @@ import numpy as np
 from spinesUtils.preprocessing import gc_collector
 
 from spinesTS.metrics import wmape
-from spinesTS.utils import func_has_params
+from spinesUtils.asserts import check_has_param
 
 
 class GBDTModelMixin:
@@ -161,7 +161,7 @@ class IntervalEstimationMixin:
 
             model = self._define_model()
 
-            if func_has_params(model.fit, 'eval_set'):
+            if check_has_param(model.fit, 'eval_set'):
                 model.fit(data_x, data_y, eval_set=[(data_x, data_y)], **fit_kwargs)
             else:
                 model.fit(data_x, data_y, **fit_kwargs)

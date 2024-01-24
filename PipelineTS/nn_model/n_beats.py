@@ -4,7 +4,8 @@ import torch
 from darts.models.forecasting.nbeats import NBEATSModel as n_beats
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base import NNModelMixin, DartsForecastMixin, IntervalEstimationMixin
+from PipelineTS.base.base import NNModelMixin, IntervalEstimationMixin
+from PipelineTS.base.darts_base import DartsForecastMixin
 from PipelineTS.utils import update_dict_without_conflict
 
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)

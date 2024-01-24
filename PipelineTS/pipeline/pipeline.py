@@ -1,4 +1,3 @@
-import sys
 import time
 from copy import deepcopy
 import gc
@@ -10,27 +9,26 @@ from frozendict import frozendict
 
 from spinesTS.base import detect_available_device
 from spinesTS.metrics import mae
-from spinesTS.utils import func_has_params
 from spinesUtils.preprocessing import gc_collector
 from spinesUtils.asserts import (
     ParameterTypeAssert,
     ParameterValuesAssert,
     check_obj_is_function,
     augmented_isinstance,
-    raise_if, raise_if_not
+    raise_if,
+    raise_if_not,
+    check_has_param
 )
-from spinesUtils.utils import (
-    Logger,
-    Timer
-)
+from spinesUtils.logging import Logger
+from spinesUtils.timer import Timer
 
 # All model classes in PipelineTS are subclasses of the IntervalEstimationMixin class.
-from PipelineTS.base import IntervalEstimationMixin
+from PipelineTS.base.base import IntervalEstimationMixin
 from PipelineTS.metrics import quantile_acc
 from PipelineTS.pipeline.pipeline_models import get_all_available_models, get_all_model_class_name
 from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
-from PipelineTS.pipeline.pipeline_utils import generate_models_set
+from PipelineTS.base.base_utils import generate_models_set
 
 
 # TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
@@ -46,7 +44,6 @@ class ModelPipeline:
         'metric_less_is_better': bool,
         'configs': (None, PipelineConfigs),
         'random_state': (int, None),
-        'verbose': (bool, int),
         'include_init_config_model': bool,
         'accelerator': (str, None),
         'cv': int,
@@ -79,7 +76,6 @@ class ModelPipeline:
             metric_less_is_better=True,
             configs=None,
             random_state=0,
-            verbose=True,
             include_init_config_model=False,
             scaler=None,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
             accelerator='auto',
@@ -189,7 +185,7 @@ class ModelPipeline:
                 del self._available_models[em]
             self._available_models = frozendict(self._available_models)
 
-        self.logger = Logger(name='PipelineTS', verbose=verbose)
+        self.logger = Logger(name='PipelineTS')
 
         self.target_col = target_col
         self.time_col = time_col
@@ -369,7 +365,7 @@ class ModelPipeline:
         init_kwargs = {}
 
         for i in kwargs:
-            if func_has_params(func, i):
+            if check_has_param(func, i):
                 init_kwargs.update({i: kwargs[i]})
 
         return init_kwargs
@@ -386,17 +382,6 @@ class ModelPipeline:
                 fit_kwargs = {}
         else:
             fit_kwargs = {}
-
-        # --------------------- darts models ----------------------
-        # if isinstance(model, DartsForecastMixin) and hasattr(model, 'valid_data'):
-        #     valid_df = generate_valid_data(train_df, valid_df, self.lags,
-        #                                    self.time_col, self.target_col)
-        #
-        #     valid_df = load_dataset_to_darts(
-        #                     valid_df,
-        #                     time_col=self.time_col,
-        #                     target_col=self.target_col
-        #                 ).astype(np.float32)
 
         model_kwargs = self._fill_func_params(func=model.fit, data=train_df, fit_kwargs=fit_kwargs, cv=self.cv,
                                               valid_data=valid_df)
@@ -418,8 +403,8 @@ class ModelPipeline:
         else:
             predict_kwargs = {}
 
-        if func_has_params(model.predict, 'predict_kwargs'):
-            eval_res = model.predict(valid_df.shape[0], predict_kwargs=predict_kwargs)
+        if check_has_param(model.predict, 'predict_kwargs'):
+            eval_res = model.predict(valid_df.shape[0], data=valid_df, predict_kwargs=predict_kwargs)
         else:
             eval_res = model.predict(valid_df.shape[0])
 
@@ -513,9 +498,8 @@ class ModelPipeline:
         - The optional valid_data parameter allows for model evaluation on a separate validation dataset.
         - The resulting leaderboard provides a ranked list of models based on the specified evaluation metric.
         """
-        if self.logger.verbose:
-            sys.stderr.write(self._compute_device_msg)
-            time.sleep(0.5)
+        self.logger.info('Information about the device used for computation:\n'+self._compute_device_msg)
+        time.sleep(0.5)
 
         check_time_col_is_timestamp(data, self.time_col)
 
@@ -528,7 +512,7 @@ class ModelPipeline:
 
             df, valid_df = data.copy(), valid_data.copy()
         else:
-            df, valid_df = data.copy(), data.copy()
+            df, valid_df = data.copy(), data.iloc[-(2 * self.lags):, :]
 
         # 如果指定use_standard_scale，此语句会对数据缩放
         df, valid_df = self._scale_data(df, valid_df, refit_scaler=True)
@@ -538,10 +522,10 @@ class ModelPipeline:
             res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])
 
         models = self._initial_models()
-        self.logger.print(f"There are a total of {len(models)} models to be trained.")
+        self.logger.info(f"There are a total of {len(models)} models to be trained.")
 
         for idx, (model_name_after_rename, model) in enumerate(models):
-            self.logger.print(f"[model {idx:>{len(str(len(models)))}d}] fitting and "
+            self.logger.info(f"[model {idx:>{len(str(len(models)))}d}] fitting and "
                               f"evaluating {model_name_after_rename}...")
 
             model_name_after_rename, model, res = self._fit(
@@ -680,13 +664,13 @@ class ModelPipeline:
                 df[self.target_col] = self.scaler.transform(df[self.target_col].values.reshape(-1, 1)).squeeze()
 
         if model_name is not None:
-            if func_has_params(self.get_model(model_name).predict, 'data'):
+            if check_has_param(self.get_model(model_name).predict, 'data'):
 
                 res = self.get_model(model_name).predict(n, data=df)
             else:
                 res = self.get_model(model_name).predict(n)
         else:
-            if func_has_params(self.get_model(model_name).predict, 'data'):
+            if check_has_param(self.get_model(model_name).predict, 'data'):
 
                 res = self.best_model_.predict(n, data=df)
             else:

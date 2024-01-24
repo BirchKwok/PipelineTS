@@ -12,7 +12,8 @@ from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import reshape_if
 from spinesTS.pipeline import Pipeline
 
-from PipelineTS.base import GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin
+from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
+from PipelineTS.base.spines_base import SpinesMLModelMixin
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 
 

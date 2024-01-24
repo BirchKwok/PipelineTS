@@ -1,7 +1,7 @@
 from spinesTS.nn import StackingRNN
 from spinesUtils import generate_function_kwargs
 
-from PipelineTS.base import SpinesNNModelMixin
+from PipelineTS.base.spines_base import SpinesNNModelMixin
 
 
 class StackingRNNModel(SpinesNNModelMixin):

@@ -1,6 +1,6 @@
 from spinesTS.nn import GAUNet
 from spinesUtils import generate_function_kwargs
-from PipelineTS.base import SpinesNNModelMixin
+from PipelineTS.base.spines_base import SpinesNNModelMixin
 
 
 class GAUModel(SpinesNNModelMixin):

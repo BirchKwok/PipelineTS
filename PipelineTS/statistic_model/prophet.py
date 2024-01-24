@@ -1,6 +1,6 @@
 import logging
 from spinesUtils import generate_function_kwargs
-from PipelineTS.base import StatisticModelMixin, IntervalEstimationMixin
+from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
 from PipelineTS.utils import check_time_col_is_timestamp
 
 logger = logging.getLogger('cmdstanpy')

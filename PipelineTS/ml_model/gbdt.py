@@ -6,8 +6,9 @@ from darts.models import (
     RandomForest as RF
 )
 from spinesUtils.asserts import generate_function_kwargs, ParameterTypeAssert
-from PipelineTS.base import DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin
-from PipelineTS.utils import check_time_col_is_timestamp  # , update_dict_without_conflict
+from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
+from PipelineTS.base.darts_base import DartsForecastMixin
+from PipelineTS.utils import check_time_col_is_timestamp
 
 
 class CatBoostModel(DartsForecastMixin, GBDTModelMixin, IntervalEstimationMixin):

@@ -7,15 +7,13 @@ from darts.models import (
     RandomForest as RF
 )
 
-from spinesTS.utils import func_has_params
 from spinesUtils import ParameterTypeAssert
-from spinesUtils.utils import Logger
-from spinesUtils.asserts import raise_if_not
+from spinesUtils.logging import Logger
+from spinesUtils.asserts import raise_if_not, check_has_param
 from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base_utils import generate_valid_data
 from PipelineTS.utils import load_dataset_to_darts, check_time_col_is_timestamp
-
 
 logger = Logger(with_time=False)
 
@@ -65,7 +63,7 @@ class DartsForecastMixin:
 
         if valid_data is not None:
             if valid_data.shape[0] < self.all_configs['lags'] * 2 and isinstance(self.model, (CBT, LGB, XGB, RF)):
-                logger.print(
+                logger.info(
                     "The provided validation time series dataset is too short for obtaining even one training point."
                     "\nIt is recommended that the `lags` parameter be less than or equal to half the length of the "
                     "validation set."
@@ -160,7 +158,7 @@ class DartsForecastMixin:
         """
         if predict_kwargs is None:
             predict_kwargs = {}
-        if func_has_params(self.model.predict, 'series') and data is not None:
+        if check_has_param(self.model.predict, 'series') and data is not None:
             raise_if_not(
                 ValueError, len(data) >= self.all_configs['lags'],
                 'The length of the series must greater than or equal to the lags. '

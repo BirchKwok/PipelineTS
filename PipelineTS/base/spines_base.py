@@ -4,10 +4,14 @@ from spinesTS.preprocessing import split_series, lag_splits
 from spinesUtils import ParameterValuesAssert, ParameterTypeAssert
 from spinesUtils.asserts import raise_if, raise_if_not
 from spinesUtils.preprocessing import reshape_if, gc_collector
+from spinesUtils.logging import Logger
 
-from PipelineTS.base import NNModelMixin, IntervalEstimationMixin
+from PipelineTS.base.base import NNModelMixin, IntervalEstimationMixin
 from PipelineTS.base.base_utils import generate_valid_data
 from PipelineTS.utils import check_time_col_is_timestamp
+
+
+logger = Logger(with_time=False)
 
 
 class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
@@ -188,7 +192,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         x, y = self._data_preprocess(data, mode='train')
 
         if valid_data is None:
-            eval_set = [(x, y)]
+            eval_set = None  # [(x, y)]
         else:
             check_time_col_is_timestamp(valid_data, self.all_configs['time_col'])
             raise_if(
@@ -314,7 +318,13 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
         return self.chosen_cols(res)
 
+    def backtest(self, data):
+        raise_if_not(ValueError, data.shape[0] >= 3 * self.all_configs['lags'],
+                     "The length of the series must greater than or equal to 3 * lags. ")
 
-class SpinesMLModelMixin:
+        ...
+
+
+class SpinesMLModelMixin(STLMixin):
     """spinesTS ml model mixin class"""
     ...

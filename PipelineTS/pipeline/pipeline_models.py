@@ -4,7 +4,7 @@ from PipelineTS.statistic_model import *
 from PipelineTS.ml_model import *
 from PipelineTS.nn_model import *
 
-from PipelineTS.pipeline.pipeline_utils import get_model_name_before_initial
+from PipelineTS.base.base_utils import get_model_name_before_initial
 
 
 def get_all_available_models():
