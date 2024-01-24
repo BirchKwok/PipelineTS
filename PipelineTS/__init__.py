@@ -1,5 +1,5 @@
 
 
-__version__ = '0.3.9'
+__version__ = '0.3.11'
 
 from PipelineTS import *
