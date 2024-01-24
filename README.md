@@ -241,7 +241,7 @@ pipeline = ModelPipeline(
     metric_less_is_better=True,
     configs=pipeline_configs,
     include_init_config_model=False,
-    use_standard_scale=False,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
+    scaler=False,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
     # include_models=['d_linear', 'random_forest', 'n_linear', 'n_beats'],  # specifying the model used
     # exclude_models=['catboost', 'tcn', 'transformer'],  # exclude specified models
     # Note that `include_models` and `exclude_models` cannot be specified simultaneously.
@@ -293,7 +293,7 @@ pipeline = ModelPipeline(
     metric_less_is_better=True,
     configs=pipeline_configs,
     include_init_config_model=False,
-    use_standard_scale=False,
+    scaler=False,
     with_quantile_prediction=True,  # turn on the quantile prediction switch, if you like
     accelerator=accelerator,
     # models=['wide_gbrt']  # Specify the model
