@@ -2,7 +2,7 @@
 [\[English Documentation\]](https://github.com/BirchKwok/PipelineTS/blob/main/README.md)
 
 
-一站式时间序列分析工具，支持时间序列数据预处理、特征工程、模型训练、模型评估、模型预测等。基于spinesTS和dart。
+一站式时间序列分析工具，支持时间序列数据预处理、特征工程、模型训练、模型评估、模型预测等。基于spinesTS和darts。
 
 ## 安装
 
