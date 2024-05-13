@@ -4,7 +4,7 @@ from copy import deepcopy
 import numpy as np
 from spinesUtils.preprocessing import gc_collector
 
-from spinesTS.metrics import wmape
+from PipelineTS.spinesTS.metrics import wmape
 from spinesUtils.asserts import check_has_param
 
 
@@ -88,11 +88,13 @@ class IntervalEstimationMixin:
         if len(data) < 2 * self.all_configs['lags']:
             raise ValueError("data length must be greater than or equal to 2 * lags.")
 
-    def _split_train_valid_data(self, data, cv=5, is_prophet=False):
+    def _split_train_valid_data(self, data, cv=5, is_prophet=False, is_gbrt=False):
         self.check_data(data)
 
         if is_prophet:
             data = data[['ds', 'y']]
+        elif is_gbrt:
+            ...
         else:
             data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
@@ -143,7 +145,7 @@ class IntervalEstimationMixin:
 
     @gc_collector(1)
     def _calculate_confidence_interval_sps(self, data, cv=5, fit_kwargs=None, train_data_process_kwargs=None,
-                                           valid_data_process_kwargs=None):
+                                           valid_data_process_kwargs=None, is_gbrt=False):
         if fit_kwargs is None:
             fit_kwargs = {}
 
@@ -154,7 +156,7 @@ class IntervalEstimationMixin:
             valid_data_process_kwargs = {}
 
         residuals = []
-        for train_data, valid_data in self._split_train_valid_data(data, cv=cv):
+        for train_data, valid_data in self._split_train_valid_data(data, cv=cv, is_gbrt=is_gbrt):
             data_x, data_y = self._data_preprocess(train_data, **train_data_process_kwargs)
 
             valid_data_x, valid_data_y = self._data_preprocess(valid_data, **valid_data_process_kwargs)
@@ -186,7 +188,7 @@ class IntervalEstimationMixin:
         return self._calculate_confidence_interval_sps(data, fit_kwargs=fit_kwargs,
                                                        train_data_process_kwargs={'mode': 'train'},
                                                        valid_data_process_kwargs={'mode': 'train'},
-                                                       cv=cv)
+                                                       cv=cv, is_gbrt=True)
 
     def calculate_confidence_interval_nn(self, data, cv=5, fit_kwargs=None):
         if fit_kwargs is None:

@@ -4,11 +4,11 @@ import pandas as pd
 import re
 from lightgbm import LGBMRegressor
 from sklearn.preprocessing import MinMaxScaler
-from spinesTS.ml_model import GBRTPreprocessing
+from PipelineTS.spinesTS.ml_model import GBRTPreprocessing
 from sklearn.multioutput import RegressorChain
-from spinesUtils import generate_function_kwargs, ParameterValuesAssert
-from spinesUtils.asserts import raise_if_not, raise_if
-from spinesUtils.preprocessing import gc_collector, reshape_if
+from spinesUtils.asserts import generate_function_kwargs, ParameterValuesAssert
+from spinesUtils.asserts import raise_if_not
+from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
 from PipelineTS.base.spines_base import SpinesMLModelMixin
@@ -25,7 +25,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             quantile=0.9,
             random_state=None,
             differential_n=1,
-            moving_avg_n=0,
+            moving_avg_n=2,
             extend_daily_target_features=True,
             estimator=LGBMRegressor,
             **model_init_configs
@@ -184,7 +184,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
         """
         check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
-        data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
+        # data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
         self.last_lags_dataframe = data.iloc[-self.all_configs['lags']:, :]
 
@@ -224,11 +224,13 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
         list
             List of predicted values.
         """
-        assert isinstance(n, int)
-        assert x.ndim == 2
+        raise_if_not(TypeError, isinstance(x, np.ndarray), 'The input data must be a numpy.ndarray.')
+        raise_if_not(ValueError, np.ndim(x) == 2, 'The input data must have 2 dimensions.')
+        raise_if_not(TypeError, isinstance(n, int), 'The number of steps to predict must be an integer.')
 
         current_res = self.model.predict(x)  # np.ndarray
-        current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
+        if current_res.ndim == 1:
+            current_res = current_res.reshape((1, -1))
 
         if n <= current_res.shape[1]:
             return current_res.squeeze().tolist()[:n]
@@ -240,13 +242,15 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
 
             last_dt = deepcopy(self.last_dt)
             for i in range(n - self.all_configs['lags']):
-                tmp_data = pd.DataFrame(columns=[self.all_configs['time_col'], self.all_configs['target_col']])
+                tmp_data = pd.DataFrame(columns=last_data.columns)
                 tmp_data[self.all_configs['time_col']] = (last_dt +
                                                           pd.to_timedelta(range(self.all_configs['lags'] + 1),
                                                                           unit='D'))[1:]
 
                 tmp_data[self.all_configs['target_col']] = res[-self.all_configs['lags']:]
                 last_data = pd.concat((last_data.iloc[1:, :], tmp_data.iloc[:1, :]), axis=0)
+                last_data = last_data.interpolate(
+                    method='linear', limit_direction='forward', axis=0)
 
                 last_dt = last_data[self.all_configs['time_col']].max()
 
@@ -291,7 +295,9 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
 
         res = self._extend_predict(x, n)  # list
 
-        assert len(res) == n
+        raise_if_not(ValueError, len(res) == n,
+                     'The length of the predicted values must be equal to the number of steps.')
+
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
         res[self.all_configs['time_col']] = \
             last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]

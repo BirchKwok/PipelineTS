@@ -1,6 +1,6 @@
 import pandas as pd
 from frozendict import frozendict
-from spinesUtils import ParameterTypeAssert
+from spinesUtils.asserts import ParameterTypeAssert
 from spinesUtils.asserts import raise_if
 
 from PipelineTS.base.base import IntervalEstimationMixin

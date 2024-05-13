@@ -1,5 +1,5 @@
 from darts.models import AutoARIMA
-from spinesUtils import generate_function_kwargs
+from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
 from PipelineTS.base.darts_base import DartsForecastMixin

@@ -7,7 +7,7 @@ from darts.models import (
     RandomForest as RF
 )
 
-from spinesUtils import ParameterTypeAssert
+from spinesUtils.asserts import ParameterTypeAssert
 from spinesUtils.logging import Logger
 from spinesUtils.asserts import raise_if_not, check_has_param
 from spinesUtils.preprocessing import gc_collector

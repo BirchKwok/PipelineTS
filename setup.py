@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from setuptools import find_packages, setup
+from setuptools import setup
 
 
 def read_requirements(path):
@@ -15,14 +15,21 @@ all_reqs = base_reqs + extra_reqs
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
+packages = ['PipelineTS', 'PipelineTS.base', 'PipelineTS.pipeline', 'PipelineTS.ml_model', 'PipelineTS.spinesTS',
+            'PipelineTS.plot', 'PipelineTS.io', 'PipelineTS.utils', 'PipelineTS.nn_model',
+            'PipelineTS.preprocessing', 'PipelineTS.statistic_model', 'PipelineTS.spinesTS.ml_model',
+            'PipelineTS.spinesTS.layers', 'PipelineTS.spinesTS.nn', 'PipelineTS.spinesTS.utils',
+            'PipelineTS.spinesTS.plotting', 'PipelineTS.spinesTS.preprocessing', 'PipelineTS.spinesTS.data',
+            'PipelineTS.spinesTS.base', 'PipelineTS.spinesTS.nn.utils']
+
 setup(
     name='PipelineTS',
-    version="0.3.11",
+    version="0.3.12",
     description='One-stop time series analysis tool, supporting time series data preprocessing,'
                 ' feature engineering, model training, model evaluation, model prediction, etc. '
                 'Based on spinesTS and darts.',
     keywords='time series forecasting',
-    packages=find_packages(),
+    packages=packages,
     long_description=long_description,
     long_description_content_type="text/markdown",
     classifiers=[

@@ -1,5 +1,5 @@
 import logging
-from spinesUtils import generate_function_kwargs
+from spinesUtils.asserts import generate_function_kwargs
 from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
 from PipelineTS.utils import check_time_col_is_timestamp
 

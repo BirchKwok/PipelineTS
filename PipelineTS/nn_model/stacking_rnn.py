@@ -1,5 +1,5 @@
-from spinesTS.nn import StackingRNN
-from spinesUtils import generate_function_kwargs
+from PipelineTS.spinesTS.nn import StackingRNN
+from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base.spines_base import SpinesNNModelMixin
 

@@ -1,4 +1,12 @@
 # PipelineTS
+
+![PyPI](https://img.shields.io/pypi/v/PipelineTS)
+![PyPI - License](https://img.shields.io/pypi/l/PipelineTS)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/PipelineTS)
+[![Downloads](https://pepy.tech/badge/pipelinets)](https://pepy.tech/project/pipelinets)
+[![Downloads](https://pepy.tech/badge/pipelinets/month)](https://pepy.tech/project/pipelinets)
+[![Downloads](https://pepy.tech/badge/pipelinets/week)](https://pepy.tech/project/pipelinets)
+
 [\[English Documentation\]](https://github.com/BirchKwok/PipelineTS/blob/main/README.md)
 
 

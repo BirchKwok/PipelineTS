@@ -4,13 +4,12 @@ from lightgbm import LGBMRegressor
 import numpy as np
 import pandas as pd
 
-from spinesTS.ml_model import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
+from PipelineTS.spinesTS.ml_model import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
 from sklearn.multioutput import RegressorChain
-from spinesTS.preprocessing import split_series, lag_splits
-from spinesUtils import generate_function_kwargs, ParameterTypeAssert, ParameterValuesAssert
+from PipelineTS.spinesTS.preprocessing import split_series, lag_splits
+from spinesUtils.asserts import generate_function_kwargs, ParameterTypeAssert, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
-from spinesUtils.preprocessing import reshape_if
-from spinesTS.pipeline import Pipeline
+from PipelineTS.spinesTS.pipeline import Pipeline
 
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
 from PipelineTS.base.spines_base import SpinesMLModelMixin
@@ -197,13 +196,14 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
         list
             List of predictions.
         """
-        assert isinstance(n, int)
-        assert x.ndim == 2
+        raise_if_not(TypeError, isinstance(n, int), 'n must be an integer.')
+        raise_if_not(TypeError, isinstance(x, np.ndarray), 'x must be a numpy.ndarray.')
+        raise_if_not(ValueError, np.ndim(x) == 2, 'x must be 2-dimensional.')
 
         x_after_diff = np.diff(x, n=self.all_configs['differential_n'], axis=1)
         current_res = self.model.predict(x_after_diff, **predict_kwargs)
-        current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
-
+        if current_res.ndim == 1:
+            current_res = current_res.view((1, -1))
         if n is None:
             return current_res.squeeze().tolist()
         elif n <= current_res.shape[1]:
@@ -216,7 +216,8 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
                 
                 x_after_diff = np.diff(x, n=self.all_configs['differential_n'], axis=1)
                 current_res = self.model.predict(x_after_diff, **predict_kwargs)
-                current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
+                if current_res.ndim == 1:
+                    current_res = current_res.view((1, -1))
 
                 res.append(current_res.squeeze().tolist()[-1])
 
@@ -254,15 +255,18 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
             x = self._data_preprocess(
                 data, mode='predict', update_last_dt=False
             )[-1, :]
-            x = reshape_if(x, x.ndim == 1, (1, -1))
+
+            if x.ndim == 1:
+                x = x.view((1, -1))
             last_dt = data[self.all_configs['time_col']].max()
         else:
-            x = reshape_if(self.x.values, self.x.values.ndim == 1, (1, -1))
+            if self.x.values.ndim == 1:
+                x = self.x.values.view((1, -1))
             last_dt = self.last_dt
 
         res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
 
-        assert len(res) == n
+        raise_if_not(ValueError, len(res) == n, 'The length of the prediction must be equal to n.')
 
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
         res[self.all_configs['time_col']] = \

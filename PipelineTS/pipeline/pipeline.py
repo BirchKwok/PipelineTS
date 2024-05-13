@@ -3,12 +3,12 @@ from copy import deepcopy
 import gc
 
 import pandas as pd
-from sklearn.preprocessing import QuantileTransformer, MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.base import TransformerMixin
 from frozendict import frozendict
 
-from spinesTS.base import detect_available_device
-from spinesTS.metrics import mae
+from PipelineTS.spinesTS.base import detect_available_device
+from PipelineTS.spinesTS.metrics import mae
 from spinesUtils.preprocessing import gc_collector
 from spinesUtils.asserts import (
     ParameterTypeAssert,
@@ -77,7 +77,7 @@ class ModelPipeline:
             configs=None,
             random_state=0,
             include_init_config_model=False,
-            scaler=None,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
+            scaler=True,  # whether to use the scaler, default is True, use MinMaxScaler
             accelerator='auto',
             cv=5,
             gbdt_differential_n=1,
@@ -112,8 +112,8 @@ class ModelPipeline:
             Verbosity level.
         include_init_config_model : bool, optional, default: False
             Include models with initial configuration.
-        scaler : bool or None or transformer that has the type of sklearn.base.TransformerMixin, optional, default: False
-            Use scaler for data scaling, False for MinMaxScaler, True for QuantileTransformer, None means no scaling.
+        scaler : bool or None or transformer that has the type of sklearn.base.TransformerMixin, optional, default: True
+            Use scaler for data scaling, True for MinMaxScaler, None means no scaling.
             Alternatively, you can specify your own transformer.
         accelerator : {'cpu', 'gpu', 'tpu', 'ipu', 'hpu', 'mps', 'auto', 'cuda'} or None, optional, default: 'auto'
             Hardware accelerator type.
@@ -199,10 +199,10 @@ class ModelPipeline:
 
         self.include_init_config_model = include_init_config_model
 
-        if augmented_isinstance(scaler, bool):
-            self.scaler = QuantileTransformer() if scaler else MinMaxScaler()
+        if augmented_isinstance(scaler, bool) and scaler is True:
+            self.scaler = MinMaxScaler()
         else:
-            self.scaler = scaler
+            self.scaler = scaler if scaler is not False else None
 
         self._temp_scaler = deepcopy(self.scaler)
 
@@ -507,14 +507,15 @@ class ModelPipeline:
             raise ValueError(f'length of df must be greater than lags, df length = {data.shape[0]}, lags = {self.lags}')
 
         if valid_data is not None:
-            assert data.columns.tolist() == valid_data.columns.tolist()
+            raise_if_not(AssertionError, data.columns.tolist() == valid_data.columns.tolist(),
+                         "columns of data and valid_data do not match.")
             check_time_col_is_timestamp(valid_data, self.time_col)
 
             df, valid_df = data.copy(), valid_data.copy()
         else:
             df, valid_df = data.copy(), data.iloc[-(2 * self.lags):, :]
 
-        # 如果指定use_standard_scale，此语句会对数据缩放
+        # 如果指定scaler，此语句会对数据缩放
         df, valid_df = self._scale_data(df, valid_df, refit_scaler=True)
 
         res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])

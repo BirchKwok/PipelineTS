@@ -1,5 +1,5 @@
-from spinesTS.nn import TCN
-from spinesUtils import generate_function_kwargs
+from PipelineTS.spinesTS.nn import TCN
+from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base.spines_base import SpinesNNModelMixin
 

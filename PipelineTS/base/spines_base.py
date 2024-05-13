@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
-from spinesTS.preprocessing import split_series, lag_splits
-from spinesUtils import ParameterValuesAssert, ParameterTypeAssert
+from PipelineTS.spinesTS.preprocessing import split_series, lag_splits
+from spinesUtils.asserts import ParameterValuesAssert, ParameterTypeAssert
 from spinesUtils.asserts import raise_if, raise_if_not
-from spinesUtils.preprocessing import reshape_if, gc_collector
+from spinesUtils.preprocessing import gc_collector
 from spinesUtils.logging import Logger
 
 from PipelineTS.base.base import NNModelMixin, IntervalEstimationMixin
@@ -121,8 +121,10 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             x_train, y_train = split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
                                             window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
 
-            x_train = reshape_if(x_train, x_train.ndim == 1, (1, -1))
-            y_train = reshape_if(y_train, y_train.ndim == 1, (1, -1))
+            if x_train.ndim == 1:
+                x_train = x_train.view((1, -1))
+            if y_train.ndim == 1:
+                y_train = y_train.view((1, -1))
 
             return x_train, y_train
 
@@ -131,14 +133,17 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                                 pd.concat((self.last_x, data[self.all_configs['target_col']])),
                                 window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
 
-            x = reshape_if(x, x.ndim == 1, (1, -1))
-            y = reshape_if(y, y.ndim == 1, (1, -1))
+            if x.ndim == 1:
+                x = x.view((1, -1))
+            if y.ndim == 1:
+                y = y.view((1, -1))
 
             return x, y
 
         else:
             x = lag_splits(data[self.all_configs['target_col']], window_size=self.all_configs['lags'])
-            x = reshape_if(x, x.ndim == 1, (1, -1))
+            if x.ndim == 1:
+                x = x.view((1, -1))
 
             return x
 
@@ -245,12 +250,14 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         >>> predictions = self._extend_predict(x, n, predict_kwargs={'verbose': True})
         """
 
-        assert isinstance(n, int)
-        assert x.ndim == 2
+        raise_if_not(ValueError, n > 0, 'n must be greater than 0.')
+        raise_if_not(TypeError, isinstance(n, int), 'n must be an integer.')
+        raise_if_not(AssertionError, x.ndim == 2, 'x must be a 2D array.')
 
         current_res = self.model.predict(x, **predict_kwargs)
 
-        current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
+        if current_res.ndim == 1:
+            current_res = current_res.view((1, -1))
 
         if n <= current_res.shape[1]:
             return current_res[-1][:n].tolist()
@@ -259,7 +266,8 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             for i in range(n - self.all_configs['lags']):
                 x = np.concatenate((x[:, 1:], current_res[:, 0:1]), axis=1)
                 current_res = self.model.predict(x, **predict_kwargs)
-                current_res = reshape_if(current_res, current_res.ndim == 1, (1, -1))
+                if current_res.ndim == 1:
+                    current_res = current_res.view((1, -1))
 
                 res.append(current_res.squeeze().tolist()[-1])
 
@@ -302,12 +310,13 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                                       mode='predict')
             last_dt = data[self.all_configs['time_col']].max()
         else:
-            x = reshape_if(self.x.values, self.x.values.ndim == 1, (1, -1))
+            if self.x.values.ndim == 1:
+                x = self.x.values.view((1, -1))
             last_dt = self.last_dt
 
         res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
 
-        assert len(res) == n
+        raise_if_not(ValueError, len(res) == n, "The length of the predictions must equal to n.")
 
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
         res[self.all_configs['time_col']] = \
@@ -325,6 +334,6 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         ...
 
 
-class SpinesMLModelMixin(STLMixin):
+class SpinesMLModelMixin:
     """spinesTS ml model mixin class"""
     ...

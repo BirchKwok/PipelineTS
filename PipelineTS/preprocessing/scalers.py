@@ -1,5 +1,5 @@
 from sklearn.preprocessing import MinMaxScaler, QuantileTransformer, StandardScaler
-from spinesTS.preprocessing import GaussRankScaler
+from PipelineTS.spinesTS.preprocessing import GaussRankScaler
 
 
 class Scaler:
@@ -12,7 +12,7 @@ class Scaler:
         scaler_name : str, default='min_max'
             The name of the scaler. It can be 'min_max', 'gauss_rank', 'quantile', or 'standard'.
             - 'min_max': MinMaxScaler from sklearn.preprocessing.
-            - 'gauss_rank': GaussRankScaler from spinesTS.preprocessing.
+            - 'gauss_rank': GaussRankScaler from PipelineTS.spinesTS.preprocessing.
             - 'quantile': QuantileTransformer from sklearn.preprocessing.
             - 'standard': StandardScaler from sklearn.preprocessing.
         """

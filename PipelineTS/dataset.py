@@ -1,4 +1,4 @@
-from spinesTS.data import (
+from PipelineTS.spinesTS.data import (
     DataGenerator,
     RandomEventGenerator,
     LoadElectricDataSets,

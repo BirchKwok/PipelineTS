@@ -5,7 +5,7 @@ from spinesUtils.utils import (
     reindex_iterable_object,
     is_in_ipython
 )
-from spinesUtils import ParameterTypeAssert, ParameterValuesAssert
+from spinesUtils.asserts import ParameterTypeAssert, ParameterValuesAssert
 
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
 from PipelineTS.base.base_utils import drop_duplicates_with_order

@@ -1,5 +1,5 @@
-from spinesTS.nn import PatchRNN
-from spinesUtils import generate_function_kwargs
+from PipelineTS.spinesTS.nn import PatchRNN
+from spinesUtils.asserts import generate_function_kwargs
 
 from PipelineTS.base.spines_base import SpinesNNModelMixin
 
@@ -11,6 +11,7 @@ class PatchRNNModel(SpinesNNModelMixin):
             target_col,
             lags=30,
             kernel_size=4,
+            multi_steps=True,
             dropout=0.1,
             quantile=0.9,
             random_state=None,
@@ -38,6 +39,10 @@ class PatchRNNModel(SpinesNNModelMixin):
             The column containing the target variable in the input data.
         lags : int, optional, default: 30
             The number of lagged values to use as input features for training and prediction.
+        kernel_size : int, optional, default: 4
+            The kernel size used for the PatchRNN model.
+        multi_steps : bool, optional, default: True
+            Whether to use multi-steps prediction.
         quantile : float, optional, default: 0.9
             The quantile used for interval prediction. Set to None for point prediction.
         random_state : int or None, optional, default: None
@@ -79,6 +84,7 @@ class PatchRNNModel(SpinesNNModelMixin):
             in_features=lags,
             out_features=lags,
             kernel_size=kernel_size,
+            multi_steps=multi_steps,
             dropout=dropout,
             loss_fn='mae',
             learning_rate=learning_rate,

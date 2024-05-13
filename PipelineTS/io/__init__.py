@@ -133,7 +133,8 @@ def _save_single_model(path, model, scaler=None):
     import cloudpickle
     from spinesUtils.asserts import raise_if, raise_if_not
 
-    from PipelineTS.base import DartsForecastMixin, NNModelMixin
+    from PipelineTS.base.darts_base import DartsForecastMixin
+    from PipelineTS.base.base import NNModelMixin
 
     raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
     raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
@@ -196,7 +197,8 @@ def _load_single_model(path, unzip_file_path=None, unzip=True):
     import cloudpickle
     from spinesUtils.asserts import raise_if, raise_if_not
 
-    from PipelineTS.base import DartsForecastMixin, NNModelMixin
+    from PipelineTS.base.darts_base import DartsForecastMixin
+    from PipelineTS.base.base import NNModelMixin
 
     raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
     raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")

@@ -46,9 +46,18 @@ def plot_data_period(data1, data2, time_col, target_col, labels=None, date_fmt='
     import matplotlib.pyplot as plt
     import matplotlib.dates as m_dates
 
-    # Check if the starting time of data1 is before or equal to the starting time of data2
-    assert data1[time_col].iloc[0] <= data2[time_col].iloc[0], \
-        'The starting time of data1 must be before data2, or equal to the starting time of data2.'
+    raise_if_not(ValueError, len(data1) > 0, "The first dataset must contain at least one row.")
+    raise_if_not(ValueError, len(data2) > 0, "The second dataset must contain at least one row.")
+    raise_if_not(ValueError, time_col in data1.columns, f"The column '{time_col}' is not found in data1.")
+    raise_if_not(ValueError, time_col in data2.columns, f"The column '{time_col}' is not found in data2.")
+    raise_if_not(ValueError, target_col in data1.columns, f"The column '{target_col}' is not found in data1.")
+    raise_if_not(ValueError, target_col in data2.columns, f"The column '{target_col}' is not found in data2.")
+    raise_if_not(ValueError, data1[time_col].dtype == 'datetime64[ns]',
+                 f"The column '{time_col}' in data1 must be of type datetime64[ns].")
+    raise_if_not(ValueError, data2[time_col].dtype == 'datetime64[ns]',
+                 f"The column '{time_col}' in data2 must be of type datetime64[ns].")
+    raise_if_not(ValueError, data1[time_col].iloc[0] <= data2[time_col].iloc[0],
+                 'The starting time of data1 must be before data2, or equal to the starting time of data2.')
 
     # Check if labels are provided and in the correct format
     if f'{target_col}_upper' in data2.columns and f'{target_col}_lower' in data2.columns:
