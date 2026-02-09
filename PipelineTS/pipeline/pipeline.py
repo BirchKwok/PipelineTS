@@ -70,6 +70,7 @@ class ModelPipeline:
             target_col,
             lags,
             quantile=None,  # the quantile prediction switch
+            feature_cols=None,  # input feature columns for multivariate models
             include_models='light',
             exclude_models=None,
             metric=mae,
@@ -151,7 +152,8 @@ class ModelPipeline:
             include_models = None
         elif include_models == 'nn':
             include_models = ['d_linear', 'gau', 'n_beats', 'n_hits', 'n_linear', 'tcn', 'tft',
-                              'patch_rnn', 'stacking_rnn', 'tide', 'time2vec', 'transformer']
+                              'patch_rnn', 'stacking_rnn', 'tide', 'time2vec', 'transformer',
+                              'itransformer', 'srs_net']
         elif include_models == 'ml':
             include_models = ['catboost', 'lightgbm', 'multi_output_model',
                               'multi_step_model', 'random_forest', 'wide_gbrt', 'xgboost']
@@ -190,6 +192,7 @@ class ModelPipeline:
         self.target_col = target_col
         self.time_col = time_col
         self.lags = lags
+        self.feature_cols = feature_cols
         self.metric = metric
         self.metric_less_is_better = metric_less_is_better
         self.random_state = random_state
@@ -253,7 +256,8 @@ class ModelPipeline:
                 random_state=self.random_state,
                 quantile=self.quantile,
                 accelerator=self.accelerator,
-                differential_n=self.gbdt_differential_n
+                differential_n=self.gbdt_differential_n,
+                feature_cols=self.feature_cols
             )
 
             # Populate model initialization parameters specified in double underscore format.

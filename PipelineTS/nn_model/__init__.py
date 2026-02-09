@@ -10,3 +10,5 @@ from PipelineTS.nn_model.transformer import TransformerModel
 from PipelineTS.nn_model.tide import TiDEModel
 from PipelineTS.nn_model.patch_rnn import PatchRNNModel
 from PipelineTS.nn_model.tcn import TCNModel
+from PipelineTS.nn_model.itransformer import ITransformerModel
+from PipelineTS.nn_model.srs_net import SRSNetModel

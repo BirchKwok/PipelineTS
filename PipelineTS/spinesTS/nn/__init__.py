@@ -5,3 +5,10 @@ from ._patch_rnn import PatchRNN
 from ._tcn import TCN
 from ._itransformer import ITransformer
 from ._srs_net import SRSNet
+from ._n_linear import NLinear
+from ._d_linear import DLinear
+from ._n_beats import NBeats
+from ._n_hits import NHiTS
+from ._transformer import TSTransformer
+from ._tft import TFT
+from ._tide import TiDE

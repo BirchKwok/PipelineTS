@@ -126,3 +126,63 @@ def lag_splits(x_seq, window_size, skip_steps=1, pred_steps=1):
 
 
 train_test_split_ts = partial(train_test_split, shuffle=False)  # train_test_split for time series
+
+
+def split_series_multivariate(features, targets, window_size: int, pred_steps: int, skip_steps: int = 1):
+    """Split multivariate time series into sliding window samples.
+
+    Produces 3D input arrays (N, window_size, C_features) and output arrays
+    whose shape depends on the number of target channels.
+
+    Parameters
+    ----------
+    features : np.ndarray, shape (T, C_features)
+        All input feature channels (may include target channels).
+    targets : np.ndarray, shape (T,) or (T, C_targets)
+        Target channel(s) to predict.
+    window_size : int
+        Sliding window size for input.
+    pred_steps : int
+        Number of steps to predict forward.
+    skip_steps : int, default 1
+        Number of steps to skip between windows.
+
+    Returns
+    -------
+    X : np.ndarray, shape (N, window_size, C_features)
+    y : np.ndarray, shape (N, pred_steps) if single target,
+        or (N, pred_steps, C_targets) if multiple targets.
+    """
+    raise_if_not(TypeError, isinstance(window_size, int), "window_size must be an integer")
+    raise_if_not(ValueError, window_size > 0, "window_size must be greater than 0")
+    raise_if_not(TypeError, isinstance(pred_steps, int), "pred_steps must be an integer")
+    raise_if_not(ValueError, pred_steps > 0, "pred_steps must be greater than 0")
+    raise_if_not(TypeError, isinstance(skip_steps, int), "skip_steps must be an integer")
+    raise_if_not(ValueError, skip_steps > 0, "skip_steps must be greater than 0")
+
+    if isinstance(features, pd.DataFrame):
+        features = features.values
+    if isinstance(targets, (pd.DataFrame, pd.Series)):
+        targets = targets.values
+
+    raise_if_not(ValueError, features.ndim == 2,
+                 "features must be a 2D array with shape (T, C_features)")
+    raise_if_not(ValueError, len(features) == len(targets),
+                 "features and targets must have the same length")
+    raise_if_not(ValueError, len(features) >= window_size + pred_steps,
+                 "data length must be >= window_size + pred_steps")
+
+    T = len(features)
+    X, y = [], []
+
+    for i in range(T):
+        end_index = i * skip_steps + window_size
+        out_end_index = end_index + pred_steps
+
+        if out_end_index > T:
+            break
+
+        X.append(features[i * skip_steps:end_index])
+        y.append(targets[end_index:out_end_index])
+
+    return np.array(X), np.array(y)

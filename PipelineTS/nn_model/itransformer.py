@@ -1,21 +1,30 @@
-from PipelineTS.spinesTS.nn import TSTransformer
+from PipelineTS.spinesTS.nn import ITransformer
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.spines_base import SpinesMultivariateNNModelMixin
 
 
-class TransformerModel(SpinesNNModelMixin):
+class ITransformerModel(SpinesMultivariateNNModelMixin):
+    _train_on_all_features = True
+
     def __init__(
             self,
             time_col,
             target_col,
             lags=6,
-            d_model=64,
-            nhead=4,
-            num_encoder_layers=3,
-            dim_feedforward=256,
+            feature_cols=None,
+            d_model=512,
+            n_heads=8,
+            d_ff=2048,
+            e_layers=2,
+            factor=1,
+            embed='timeF',
+            freq='h',
             dropout=0.1,
-            use_revin=True,
+            activation='gelu',
+            output_attention=False,
+            use_norm=True,
+            class_strategy='projection',
             quantile=0.9,
             random_state=None,
             learning_rate=0.001,
@@ -33,28 +42,51 @@ class TransformerModel(SpinesNNModelMixin):
             weight_decay=1e-4
     ):
         """
-        TransformerModel: A wrapper for the Transformer model from spinesTS.
+        ITransformerModel: A wrapper for the ITransformer model from spinesTS.
+
+        The ITransformer (Inverted Transformer) treats each variate as a token
+        and applies attention across variates instead of time steps.
+        Paper: https://arxiv.org/abs/2310.06625
+
+        Supports three prediction modes:
+        - Univariate: target_col='y', feature_cols=None
+        - Multi-input, single-output: target_col='y', feature_cols=['a', 'b', 'y']
+        - Multi-input, multi-output: target_col=['a', 'b'], feature_cols=['a', 'b', 'c']
 
         Parameters
         ----------
         time_col : str
             The column containing time information in the input data.
-        target_col : str
-            The column containing the target variable in the input data.
+        target_col : str or list of str
+            The column(s) containing the target variable(s) to predict.
         lags : int, optional, default: 6
             The number of lagged values to use as input features.
-        d_model : int, optional, default: 64
+        feature_cols : list of str or None, optional, default: None
+            Input feature columns. If None, uses target_col only (univariate mode).
+        d_model : int, optional, default: 512
             Dimensionality of the model.
-        nhead : int, optional, default: 4
+        n_heads : int, optional, default: 8
             Number of attention heads.
-        num_encoder_layers : int, optional, default: 3
-            Number of encoder layers.
-        dim_feedforward : int, optional, default: 256
+        d_ff : int, optional, default: 2048
             Feedforward dimension.
+        e_layers : int, optional, default: 2
+            Number of encoder layers.
+        factor : int, optional, default: 1
+            Attention factor.
+        embed : str, optional, default: 'timeF'
+            Time features encoding type. Options: 'timeF', 'fixed', 'learned'.
+        freq : str, optional, default: 'h'
+            Frequency of time series.
         dropout : float, optional, default: 0.1
             Dropout rate.
-        use_revin : bool, optional, default: True
-            Whether to use RevIN normalization.
+        activation : str, optional, default: 'gelu'
+            Activation function. Options: 'relu', 'gelu'.
+        output_attention : bool, optional, default: False
+            Whether to output attention weights.
+        use_norm : bool, optional, default: True
+            Whether to use Non-stationary Transformer normalization.
+        class_strategy : str, optional, default: 'projection'
+            Classification strategy. Options: 'projection', 'average', 'cls_token'.
         quantile : float, optional, default: 0.9
             Quantile for interval prediction.
         random_state : int or None, optional, default: None
@@ -88,21 +120,28 @@ class TransformerModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.TSTransformer
-            The Transformer model from spinesTS.
+        model : spinesTS.nn.ITransformer
+            The ITransformer model from spinesTS.
         """
-        super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
+        super().__init__(time_col=time_col, target_col=target_col,
+                         feature_cols=feature_cols, accelerator=accelerator)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
-            TSTransformer,
+            ITransformer,
             in_features=lags,
             out_features=lags,
             d_model=d_model,
-            nhead=nhead,
-            num_encoder_layers=num_encoder_layers,
-            dim_feedforward=dim_feedforward,
+            n_heads=n_heads,
+            d_ff=d_ff,
+            e_layers=e_layers,
+            factor=factor,
+            embed=embed,
+            freq=freq,
             dropout=dropout,
-            use_revin=use_revin,
+            activation=activation,
+            output_attention=output_attention,
+            use_norm=use_norm,
+            class_strategy=class_strategy,
             loss_fn='huber',
             learning_rate=learning_rate,
             random_seed=random_state,
@@ -117,7 +156,7 @@ class TransformerModel(SpinesNNModelMixin):
                 'lags': lags,
                 'quantile': quantile,
                 'time_col': time_col,
-                'target_col': target_col,
+                'target_col': self._primary_target,
                 'quantile_error': 0,
                 'verbose': verbose,
                 'epochs': epochs,
@@ -138,11 +177,11 @@ class TransformerModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the Transformer model from spinesTS.
+        Define the ITransformer model from spinesTS.
 
         Returns
         -------
-        spinesTS.nn.TSTransformer
-            The Transformer model.
+        spinesTS.nn.ITransformer
+            The ITransformer model.
         """
-        return TSTransformer(**self.all_configs['model_configs'])
+        return ITransformer(**self.all_configs['model_configs'])

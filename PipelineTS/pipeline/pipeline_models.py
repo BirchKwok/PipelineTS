@@ -21,14 +21,9 @@ def get_all_available_models():
     - The function attempts to import external dependencies to check for additional models.
     - If the 'prophet' package is installed, a 'prophet' model will be added to the available models.
     """
-    try:
-        from prophet import Prophet
-        extra_pkg_installed = True
-    except ImportError:
-        extra_pkg_installed = False
-
     MODELS = frozendict({
         'auto_arima': AutoARIMAModel,
+        'prophet': ProphetModel,
         'catboost': CatBoostModel,
         'lightgbm': LightGBMModel,
         'xgboost': XGBoostModel,
@@ -48,11 +43,10 @@ def get_all_available_models():
         'random_forest': RandomForestModel,
         'tide': TiDEModel,
         'patch_rnn': PatchRNNModel,
-        'regressor_chain': RegressorChainModel
+        'regressor_chain': RegressorChainModel,
+        'itransformer': ITransformerModel,
+        'srs_net': SRSNetModel
     })
-
-    if extra_pkg_installed:
-        MODELS = MODELS.set('prophet', ProphetModel)
 
     return MODELS
 

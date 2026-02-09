@@ -1,20 +1,22 @@
-from PipelineTS.spinesTS.nn import TSTransformer
+from PipelineTS.spinesTS.nn import SRSNet
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.spines_base import SpinesMultivariateNNModelMixin
 
 
-class TransformerModel(SpinesNNModelMixin):
+class SRSNetModel(SpinesMultivariateNNModelMixin):
     def __init__(
             self,
             time_col,
             target_col,
             lags=6,
+            feature_cols=None,
             d_model=64,
-            nhead=4,
-            num_encoder_layers=3,
-            dim_feedforward=256,
+            patch_sizes=None,
+            n_heads=4,
+            top_k_ratio=0.5,
             dropout=0.1,
+            stride_ratio=0.5,
             use_revin=True,
             quantile=0.9,
             random_state=None,
@@ -27,34 +29,50 @@ class TransformerModel(SpinesNNModelMixin):
             min_delta=0,
             lr_scheduler='CosineAnnealingLR',
             lr_scheduler_patience=10,
-            lr_factor=0.7,
+            lr_factor=0.5,
             restore_best_weights=True,
             loss_type='min',
             weight_decay=1e-4
     ):
         """
-        TransformerModel: A wrapper for the Transformer model from spinesTS.
+        SRSNetModel: A wrapper for the SRSNet model from spinesTS.
+
+        SRSNet (Selective Representation Space Network) uses multi-scale adaptive
+        patching and selective representation via attention-based scoring and selection,
+        combined with a simple MLP head for time series forecasting.
+
+        Architecture:
+            Input -> RevIN -> SRSBlock (Multi-Scale Patching + Selective Representation) -> MLP Head -> Output
+
+        Supports three prediction modes:
+        - Univariate: target_col='y', feature_cols=None
+        - Multi-input, single-output: target_col='y', feature_cols=['a', 'b', 'y']
+        - Multi-input, multi-output: target_col=['a', 'b'], feature_cols=['a', 'b', 'c']
 
         Parameters
         ----------
         time_col : str
             The column containing time information in the input data.
-        target_col : str
-            The column containing the target variable in the input data.
+        target_col : str or list of str
+            The column(s) containing the target variable(s) to predict.
         lags : int, optional, default: 6
             The number of lagged values to use as input features.
+        feature_cols : list of str or None, optional, default: None
+            Input feature columns. If None, uses target_col only (univariate mode).
         d_model : int, optional, default: 64
-            Dimensionality of the model.
-        nhead : int, optional, default: 4
-            Number of attention heads.
-        num_encoder_layers : int, optional, default: 3
-            Number of encoder layers.
-        dim_feedforward : int, optional, default: 256
-            Feedforward dimension.
+            Embedding dimension for patch representations.
+        patch_sizes : list of int or None, optional, default: None
+            Patch sizes for multi-scale patching. Auto-determined if None.
+        n_heads : int, optional, default: 4
+            Number of attention heads in SRS cross-attention.
+        top_k_ratio : float, optional, default: 0.5
+            Fraction of patches to retain after selection (0.0 to 1.0).
         dropout : float, optional, default: 0.1
             Dropout rate.
+        stride_ratio : float, optional, default: 0.5
+            Stride as fraction of patch size (controls overlap).
         use_revin : bool, optional, default: True
-            Whether to use RevIN normalization.
+            Whether to use Reversible Instance Normalization.
         quantile : float, optional, default: 0.9
             Quantile for interval prediction.
         random_state : int or None, optional, default: None
@@ -77,7 +95,7 @@ class TransformerModel(SpinesNNModelMixin):
             Learning rate scheduler.
         lr_scheduler_patience : int, optional, default: 10
             LR scheduler patience.
-        lr_factor : float, optional, default: 0.7
+        lr_factor : float, optional, default: 0.5
             LR reduction factor.
         restore_best_weights : bool, optional, default: True
             Whether to restore best weights.
@@ -88,20 +106,24 @@ class TransformerModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.TSTransformer
-            The Transformer model from spinesTS.
+        model : spinesTS.nn.SRSNet
+            The SRSNet model from spinesTS.
         """
-        super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
+        super().__init__(time_col=time_col, target_col=target_col,
+                         feature_cols=feature_cols, accelerator=accelerator)
 
         self.all_configs['model_configs'] = generate_function_kwargs(
-            TSTransformer,
+            SRSNet,
             in_features=lags,
             out_features=lags,
+            n_vars=self._n_vars,
+            n_targets=self._n_targets,
             d_model=d_model,
-            nhead=nhead,
-            num_encoder_layers=num_encoder_layers,
-            dim_feedforward=dim_feedforward,
+            patch_sizes=patch_sizes,
+            n_heads=n_heads,
+            top_k_ratio=top_k_ratio,
             dropout=dropout,
+            stride_ratio=stride_ratio,
             use_revin=use_revin,
             loss_fn='huber',
             learning_rate=learning_rate,
@@ -117,7 +139,7 @@ class TransformerModel(SpinesNNModelMixin):
                 'lags': lags,
                 'quantile': quantile,
                 'time_col': time_col,
-                'target_col': target_col,
+                'target_col': self._primary_target,
                 'quantile_error': 0,
                 'verbose': verbose,
                 'epochs': epochs,
@@ -138,11 +160,11 @@ class TransformerModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the Transformer model from spinesTS.
+        Define the SRSNet model from spinesTS.
 
         Returns
         -------
-        spinesTS.nn.TSTransformer
-            The Transformer model.
+        spinesTS.nn.SRSNet
+            The SRSNet model.
         """
-        return TSTransformer(**self.all_configs['model_configs'])
+        return SRSNet(**self.all_configs['model_configs'])

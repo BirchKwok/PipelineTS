@@ -235,8 +235,15 @@ class Model(nn.Module):
         return dec_out
 
     def forward(self, x_enc, x_mark_enc=None):
+        squeeze_output = False
+        if x_enc.ndim == 2:
+            x_enc = x_enc.unsqueeze(-1)  # (B, L) -> (B, L, 1)
+            squeeze_output = True
         dec_out = self.forecast(x_enc, x_mark_enc)
-        return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+        dec_out = dec_out[:, -self.pred_len:, :]  # [B, L, D]
+        if squeeze_output:
+            dec_out = dec_out.squeeze(-1)  # (B, L, 1) -> (B, L)
+        return dec_out
 
 
 class ITransformer(TorchModelMixin, ForecastingMixin):

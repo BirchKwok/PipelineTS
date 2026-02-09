@@ -81,67 +81,43 @@ class NNModelMixin:
 
 class IntervalEstimationMixin:
     def check_data(self, data):
-        from darts.timeseries import TimeSeries
-        if isinstance(data, TimeSeries):
-            data = data.pd_dataframe()
-
         if len(data) < 2 * self.all_configs['lags']:
             raise ValueError("data length must be greater than or equal to 2 * lags.")
 
-    def _split_train_valid_data(self, data, cv=5, is_prophet=False, is_gbrt=False):
+    def _split_train_valid_data(self, data, cv=5, is_gbrt=False):
         self.check_data(data)
 
-        if is_prophet:
-            data = data[['ds', 'y']]
-        elif is_gbrt:
+        if is_gbrt:
             ...
         else:
             data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
 
-        from mapie.subsample import BlockBootstrap
+        n = len(data)
+        block_len = self.all_configs['lags']
+        rng = np.random.RandomState(0)
 
-        cv = BlockBootstrap(n_resamplings=cv, length=self.all_configs['lags'], random_state=0)
+        for _ in range(cv):
+            # Block bootstrap: sample blocks of length `block_len` to form train set
+            n_blocks = max(1, n // block_len)
+            # Use ~80% of blocks for training, rest for validation
+            all_block_starts = np.arange(0, n - block_len + 1)
+            if len(all_block_starts) == 0:
+                continue
 
-        for train_index, test_index in cv.split(data):
-            if len(test_index) > 0 and len(train_index) >= self.all_configs['lags']:
-                yield (data.iloc[train_index, :].reset_index(drop=True),
-                       data.iloc[test_index, :].reset_index(drop=True))
+            chosen = rng.choice(len(all_block_starts), size=n_blocks, replace=True)
+            train_indices = set()
+            for c in chosen:
+                start = all_block_starts[c]
+                for j in range(start, min(start + block_len, n)):
+                    train_indices.add(j)
 
-    @gc_collector(1)
-    def calculate_confidence_interval_darts(self, data, cv=5, fit_kwargs=None, convert2dts_dataframe_kwargs=None):
-        if fit_kwargs is None:
-            fit_kwargs = {}
+            all_indices = set(range(n))
+            test_indices = sorted(all_indices - train_indices)
+            train_indices = sorted(train_indices)
 
-        if convert2dts_dataframe_kwargs is None:
-            convert2dts_dataframe_kwargs = {}
-
-        residuals = []
-
-        for train_data, valid_data in self._split_train_valid_data(data, cv=cv):
-            valid_y = valid_data[[self.all_configs['target_col']]].values
-
-            train_ds = self.convert2dts_dataframe(
-                data.reset_index(drop=True),
-                time_col=self.all_configs['time_col'],
-                target_col=self.all_configs['target_col'],
-                **convert2dts_dataframe_kwargs
-            ).astype(np.float32)
-
-            model = self._define_model()
-
-            model.fit(train_ds, **fit_kwargs)
-
-            res = model.predict(len(valid_y)).pd_dataframe()[self.all_configs['target_col']].values
-
-            y_cal_error = wmape(valid_y.flatten(), res.flatten())
-
-            residuals.append(y_cal_error)
-
-            del train_data, train_ds, valid_data, valid_y, model, y_cal_error, res
-
-        quantile = np.percentile(residuals, q=self.all_configs['quantile'])
-
-        return quantile
+            if len(test_indices) > 0 and len(train_indices) >= block_len:
+                yield (data.iloc[train_indices, :].reset_index(drop=True),
+                       data.iloc[test_indices, :].reset_index(drop=True))
 
     @gc_collector(1)
     def _calculate_confidence_interval_sps(self, data, cv=5, fit_kwargs=None, train_data_process_kwargs=None,
@@ -201,38 +177,6 @@ class IntervalEstimationMixin:
         return self._calculate_confidence_interval_sps(
             data, fit_kwargs=kwargs, train_data_process_kwargs={'mode': 'train'},
             valid_data_process_kwargs={'mode': 'train'}, cv=cv)
-
-    @gc_collector(1)
-    def calculate_confidence_interval_prophet(self, data, cv=5, freq='D', fit_kwargs=None):
-        if fit_kwargs is None:
-            fit_kwargs = {}
-
-        residuals = []
-        for train_data, valid_data in self._split_train_valid_data(data, cv=cv, is_prophet=True):
-            train_ds = train_data[['ds', 'y']]
-
-            valid_data_y = valid_data['y'].values
-
-            model = self._define_model()
-
-            model.fit(train_ds, **fit_kwargs)
-
-            res = model.predict(
-                self.model.make_future_dataframe(
-                    periods=len(valid_data_y),
-                    freq=freq,
-                    include_history=False,
-                ))['yhat'].values
-
-            y_cal_error = wmape(valid_data_y.flatten(), res.flatten())
-
-            residuals.append(y_cal_error)
-
-            del train_data, valid_data, train_ds, valid_data_y, model, res, y_cal_error
-
-        quantile = np.percentile(residuals, q=self.all_configs['quantile'])
-
-        return quantile
 
     def interval_predict(self, res):
         res[f"{self.all_configs['target_col']}_lower"] = \

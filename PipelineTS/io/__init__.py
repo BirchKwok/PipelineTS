@@ -133,15 +133,12 @@ def _save_single_model(path, model, scaler=None):
     import cloudpickle
     from spinesUtils.asserts import raise_if, raise_if_not
 
-    from PipelineTS.base.darts_base import DartsForecastMixin
-    from PipelineTS.base.base import NNModelMixin
-
     raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
     raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
 
     path = str(Path(path).absolute())
 
-    zipfile_fp, pkl_file_fp, darts_model_weights_fp = path, path.strip()[:-4] + '.pkl', None
+    zipfile_fp = path
 
     model_fp = Path(path.strip()[:-4] + '/')
 
@@ -150,20 +147,13 @@ def _save_single_model(path, model, scaler=None):
 
     pkl_file_fp = str(model_fp.joinpath(Path(path.strip()[:-4] + '.pkl').name))
 
-    if isinstance(model, DartsForecastMixin) and isinstance(model, NNModelMixin):
-        model.model.save(str(model_fp.joinpath(_get_object_name(model) + '.pt')))
-
     with open(pkl_file_fp, 'wb') as f:
         if scaler is not None:
             cloudpickle.dump([model, scaler], f)
         else:
             cloudpickle.dump(model, f)
 
-    if isinstance(model, DartsForecastMixin) and isinstance(model, NNModelMixin):
-        _zip_file(zipfile_fp, pkl_file_fp, model_fp.joinpath(_get_object_name(model) + '.pt'),
-                  model_fp.joinpath(_get_object_name(model) + '.pt.ckpt'))
-    else:
-        _zip_file(zipfile_fp, pkl_file_fp)
+    _zip_file(zipfile_fp, pkl_file_fp)
 
     shutil.rmtree(model_fp)
 
@@ -197,9 +187,6 @@ def _load_single_model(path, unzip_file_path=None, unzip=True):
     import cloudpickle
     from spinesUtils.asserts import raise_if, raise_if_not
 
-    from PipelineTS.base.darts_base import DartsForecastMixin
-    from PipelineTS.base.base import NNModelMixin
-
     raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
     raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
     raise_if(ValueError, unzip_file_path is None and unzip is False,
@@ -225,11 +212,6 @@ def _load_single_model(path, unzip_file_path=None, unzip=True):
 
             if isinstance(model, list) and len(model) == 2:
                 (model, scaler) = model
-
-    if isinstance(model, DartsForecastMixin) and isinstance(model, NNModelMixin):
-        model.model = model.model.load(
-            str(Path(unzip_file_fp).joinpath(_get_object_name(model) + '.pt'))
-        )
 
     shutil.rmtree(unzip_file_fp)
 
@@ -260,7 +242,7 @@ def _save_pipeline(path, model):
     raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
     raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
 
-    zipfile_fp, darts_model_weights_fp = path, None
+    zipfile_fp = path
 
     # Make a directory with the pkl file name
     name_subfix = _hash_string(path.strip()[:-4])

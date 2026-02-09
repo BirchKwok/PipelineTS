@@ -1,28 +1,117 @@
-from darts.models import AutoARIMA
-from spinesUtils.asserts import generate_function_kwargs
+import warnings
+import itertools
+
+import numpy as np
+import pandas as pd
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.stattools import adfuller
+from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
-from PipelineTS.base.darts_base import DartsForecastMixin
+from PipelineTS.spinesTS.metrics import wmape
 from PipelineTS.utils import check_time_col_is_timestamp
 
 
-class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimationMixin):
+def _determine_d(y, max_d=2):
+    """Determine differencing order using ADF test."""
+    for d in range(max_d + 1):
+        series = y.copy()
+        for _ in range(d):
+            series = np.diff(series)
+        if len(series) < 3:
+            return d
+        try:
+            p_value = adfuller(series, autolag='AIC')[1]
+            if p_value < 0.05:
+                return d
+        except Exception:
+            return d
+    return max_d
+
+
+def _fit_arima(y, order, seasonal_order=None, suppress_warnings=True):
+    """Fit a SARIMAX model and return (model_result, aic) or None on failure."""
+    try:
+        with warnings.catch_warnings():
+            if suppress_warnings:
+                warnings.simplefilter("ignore")
+            model = SARIMAX(
+                y, order=order,
+                seasonal_order=seasonal_order if seasonal_order else (0, 0, 0, 0),
+                enforce_stationarity=False,
+                enforce_invertibility=False
+            )
+            result = model.fit(disp=False, maxiter=200)
+            return result, result.aic
+    except Exception:
+        return None
+
+
+def _auto_arima_search(y, start_p=0, max_p=5, start_q=0, max_q=5,
+                       max_d=2, seasonal=False, m=1,
+                       max_P=2, max_Q=2, max_D=1, information_criterion='aic'):
+    """Grid search for best ARIMA/SARIMA order by AIC."""
+    d = _determine_d(y, max_d=max_d)
+
+    p_range = range(start_p, max_p + 1)
+    q_range = range(start_q, max_q + 1)
+
+    best_result = None
+    best_aic = np.inf
+    best_order = (0, d, 0)
+    best_seasonal = (0, 0, 0, 0)
+
+    if seasonal and m > 1:
+        D = min(1, max_D)
+        seasonal_combos = list(itertools.product(range(max_P + 1), range(max_Q + 1)))
+    else:
+        seasonal_combos = [(0, 0)]
+        D = 0
+        m = 0
+
+    for p, q in itertools.product(p_range, q_range):
+        for P, Q in seasonal_combos:
+            order = (p, d, q)
+            seasonal_order = (P, D, Q, m) if seasonal and m > 1 else (0, 0, 0, 0)
+
+            out = _fit_arima(y, order, seasonal_order)
+            if out is not None:
+                result, aic = out
+                if aic < best_aic:
+                    best_aic = aic
+                    best_result = result
+                    best_order = order
+                    best_seasonal = seasonal_order
+
+    # Fallback: if grid search failed entirely, try (1, d, 0)
+    if best_result is None:
+        out = _fit_arima(y, (1, d, 0))
+        if out is not None:
+            best_result, best_aic = out
+            best_order = (1, d, 0)
+
+    return best_result, best_order, best_seasonal
+
+
+class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
     def __init__(
             self,
             time_col,
             target_col,
             lags=1,
-            start_p=8,
-            max_p=12,
-            start_q=1,
+            start_p=0,
+            max_p=5,
+            start_q=0,
+            max_q=5,
+            max_d=2,
             seasonal=False,
             quantile=0.9,
-            seasonal_length=12,
-            n_jobs=-1,
-            **darts_auto_arima_configs
+            m=12,
+            **arima_configs
     ):
         """
-        AutoARIMAModel: A wrapper for the AutoARIMA model from the darts library with additional features.
+        AutoARIMAModel: Auto ARIMA using statsmodels SARIMAX with AIC-based grid search.
+        No dependency on pmdarima or darts.
 
         Parameters
         ----------
@@ -31,97 +120,139 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
         target_col : str
             The column containing the target variable in the input data.
         lags : int, optional, default: 1
-            The number of lagged values to use as input features for training and prediction.
-        start_p : int, optional, default: 8
-            The starting value for the order of autoregressive (AR) component.
-        max_p : int, optional, default: 12
-            The maximum value for the order of autoregressive (AR) component.
-        start_q : int, optional, default: 1
-            The starting value for the order of moving average (MA) component.
+            The number of lagged values (kept for API compatibility).
+        start_p : int, optional, default: 0
+            Starting value for AR order search.
+        max_p : int, optional, default: 5
+            Maximum AR order to search.
+        start_q : int, optional, default: 0
+            Starting value for MA order search.
+        max_q : int, optional, default: 5
+            Maximum MA order to search.
+        max_d : int, optional, default: 2
+            Maximum differencing order (auto-determined via ADF test).
         seasonal : bool, optional, default: False
             Whether the time series exhibits seasonality.
-        seasonal_length : int, optional, default: 12
-            The length of the seasonal cycle, if seasonality is True.
+        m : int, optional, default: 12
+            The number of observations per seasonal cycle.
         quantile : float, optional, default: 0.9
             The quantile used for interval prediction. Set to None for point prediction.
-        n_jobs : int, optional, default: -1
-            The number of jobs to run in parallel during model fitting.
-        **darts_auto_arima_configs
-            Additional keyword arguments for configuring the AutoARIMA model.
+        **arima_configs
+            Reserved for future extensions.
 
         Attributes
         ----------
-        model : darts.models.AutoARIMA
-            The AutoARIMA model from the darts library.
+        model : statsmodels SARIMAX result
+            The fitted SARIMAX model.
         """
         super().__init__(time_col=time_col, target_col=target_col)
 
-        self.all_configs['model_configs'] = generate_function_kwargs(
-            AutoARIMA,
-            start_p=start_p,
-            max_p=max_p,
-            start_q=start_q,
-            seasonal=seasonal,
-            seasonal_length=seasonal_length,
-            n_jobs=n_jobs,
-            **darts_auto_arima_configs
-        )
-
-        self.model = self._define_model()
-
         self.all_configs.update(
             {
-                'lags': lags,   # meanness, but only to follow coding conventions
+                'lags': lags,
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'quantile_error': 0
+                'quantile_error': 0,
+                'start_p': start_p,
+                'max_p': max_p,
+                'start_q': start_q,
+                'max_q': max_q,
+                'max_d': max_d,
+                'seasonal': seasonal,
+                'm': m,
             }
         )
 
+        self.model = None
+        self.last_dt = None
+        self._order = None
+        self._seasonal_order = None
+
     def _define_model(self):
-        """
-        Define the AutoARIMA model from the darts library.
+        """Not used - model is created during fit."""
+        return None
 
-        Returns
-        -------
-        darts.models.AutoARIMA
-            The AutoARIMA model from the darts library.
-        """
-        return AutoARIMA(**self.all_configs['model_configs'])
+    def _cv_split(self, data, cv=5):
+        """Expanding-window CV splits for time series."""
+        n = len(data)
+        fold_size = max(1, n // (cv + 1))
+        for i in range(cv):
+            train_end = n - (cv - i) * fold_size
+            valid_end = train_end + fold_size
+            if train_end < 3 or valid_end > n:
+                continue
+            yield data.iloc[:train_end], data.iloc[train_end:valid_end]
 
-    def fit(self, data, convert_dataframe_kwargs=None, cv=5, fit_kwargs=None):
+    @gc_collector()
+    def _calculate_confidence_interval(self, data, cv=5):
+        """Calculate quantile error via expanding-window cross-validation."""
+        residuals = []
+        target_col = self.all_configs['target_col']
+
+        for train_data, valid_data in self._cv_split(data, cv=cv):
+            valid_y = valid_data[target_col].values
+            train_y = train_data[target_col].values.astype(np.float64)
+
+            try:
+                result, _, _ = _auto_arima_search(
+                    train_y,
+                    start_p=self.all_configs['start_p'],
+                    max_p=self.all_configs['max_p'],
+                    start_q=self.all_configs['start_q'],
+                    max_q=self.all_configs['max_q'],
+                    max_d=self.all_configs['max_d'],
+                    seasonal=self.all_configs['seasonal'],
+                    m=self.all_configs['m'],
+                )
+                if result is not None:
+                    preds = result.forecast(steps=len(valid_y))
+                    y_cal_error = wmape(valid_y.flatten(), preds.flatten())
+                    residuals.append(y_cal_error)
+            except Exception:
+                continue
+
+        if len(residuals) == 0:
+            return 0.0
+        return np.percentile(residuals, q=self.all_configs['quantile'])
+
+    def fit(self, data, cv=5, **kwargs):
         """
         Fit the AutoARIMA model on the input data.
 
         Parameters
         ----------
         data : pd.DataFrame
-            The input data in pandas DataFrame format.
-        convert_dataframe_kwargs : None, optional, default: None
-            Additional keyword arguments for converting the input data to the required format.
+            The input data.
         cv : int, optional, default: 5
             The number of cross-validation folds.
-        fit_kwargs : None, optional, default: None
-            Additional keyword arguments for fitting the model.
 
         Returns
         -------
-        self : AutoARIMAModel
-            Returns the instance itself.
+        self
         """
         check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
-        super().fit(
-            data,
-            convert_dataframe_kwargs=convert_dataframe_kwargs,
-            fit_kwargs=fit_kwargs
+        data = data[[self.all_configs['time_col'], self.all_configs['target_col']]].copy()
+        data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
+        self.last_dt = data[self.all_configs['time_col']].max()
+
+        train_y = data[self.all_configs['target_col']].values.astype(np.float64)
+
+        self.model, self._order, self._seasonal_order = _auto_arima_search(
+            train_y,
+            start_p=self.all_configs['start_p'],
+            max_p=self.all_configs['max_p'],
+            start_q=self.all_configs['start_q'],
+            max_q=self.all_configs['max_q'],
+            max_d=self.all_configs['max_d'],
+            seasonal=self.all_configs['seasonal'],
+            m=self.all_configs['m'],
         )
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_darts(data, fit_kwargs=fit_kwargs,
-                                                         convert2dts_dataframe_kwargs=convert_dataframe_kwargs, cv=cv)
+                self._calculate_confidence_interval(data, cv=cv)
 
         return self
 
@@ -133,11 +264,18 @@ class AutoARIMAModel(DartsForecastMixin, StatisticModelMixin, IntervalEstimation
         ----------
         n : int
             The number of time steps to predict.
-        kwargs : dict
-            Additional keyword arguments for making predictions.
+
+        Returns
+        -------
+        pd.DataFrame
         """
-        res = super().predict(n, **kwargs)
-        res = self.rename_prediction(res)
+        preds = self.model.forecast(steps=n)
+
+        res = pd.DataFrame({
+            self.all_configs['target_col']: preds
+        })
+        res[self.all_configs['time_col']] = \
+            self.last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
