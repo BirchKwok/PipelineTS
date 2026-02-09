@@ -1,7 +1,8 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 
-from PipelineTS.spinesTS.layers import Time2Vec, MultivariateWrapper
+from PipelineTS.spinesTS.layers import Time2Vec, MultivariateWrapper, RWKVEncoder
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
 from PipelineTS.spinesTS.nn.utils import get_weight_norm
 
@@ -10,40 +11,104 @@ import os
 os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'
 
 
+class MovingAvgDecompose(nn.Module):
+    """Decompose input into trend (moving average) and seasonal (remainder)."""
+
+    def __init__(self, kernel_size):
+        super().__init__()
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        self.avg = nn.AvgPool1d(
+            kernel_size=kernel_size, stride=1,
+            padding=kernel_size // 2, count_include_pad=False
+        )
+
+    def forward(self, x):
+        # x: (B, L)
+        trend = self.avg(x.unsqueeze(1)).squeeze(1)
+        if trend.shape[1] > x.shape[1]:
+            trend = trend[:, :x.shape[1]]
+        seasonal = x - trend
+        return trend, seasonal
+
+
+class StableTime2Vec(nn.Module):
+    """Time2Vec with structured frequency initialization for stable training.
+
+    Instead of random initialization, uses log-spaced base frequencies
+    so that the model starts with a useful multi-scale periodic basis.
+    """
+
+    def __init__(self, n_freqs=16):
+        super().__init__()
+        self.n_freqs = n_freqs
+
+        # Initialize frequencies as log-spaced: covers low to high frequency
+        init_freqs = torch.logspace(-2, 1, n_freqs)  # 0.01 to 10
+        self.sin_w = nn.Parameter(init_freqs.unsqueeze(0))  # (1, n_freqs)
+        self.sin_p = nn.Parameter(torch.zeros(n_freqs))  # phase starts at 0
+        self.cos_w = nn.Parameter(init_freqs.unsqueeze(0) * 1.5)  # offset cos freqs
+        self.cos_p = nn.Parameter(torch.zeros(n_freqs))
+
+        # Linear component
+        self.W = nn.Parameter(torch.zeros(1, 1))  # (1, 1)
+        self.P = nn.Parameter(torch.zeros(1))
+
+        # Output dim: sin(n) + cos(n) + linear(1) = 2*n + 1
+        self.out_dim = n_freqs * 2 + 1
+
+    def forward(self, x):
+        # x: (B, L, 1)
+        sin_part = torch.sin(x * self.sin_w + self.sin_p)  # (B, L, n_freqs)
+        cos_part = torch.cos(x * self.cos_w + self.cos_p)  # (B, L, n_freqs)
+        lin_part = x * self.W + self.P  # (B, L, 1)
+        return torch.cat([sin_part, cos_part, lin_part], dim=-1)  # (B, L, 2*n+1)
+
+
 class T2V(nn.Module):
     def __init__(self, in_features, out_features, dropout=0.1, num_layers=2, device=None):
         super(T2V, self).__init__()
-        weight_norm = get_weight_norm(device)
 
         self.in_features, self.out_features = in_features, out_features
         self.eps = 1e-5
+        d_model = 64
 
-        # Per-timestep Time2Vec: scalar -> t2v_dim
-        t2v_dim = 16
-        self.t2v = Time2Vec(1, t2v_dim)
-        t2v_out_dim = t2v_dim * 2 - 1  # sin + cos + linear
+        # --- Trend-seasonal decomposition ---
+        kernel_size = max(3, in_features // 4)
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        self.decompose = MovingAvgDecompose(kernel_size)
 
-        # LSTM processes full sequence: (B, L, t2v_out_dim)
-        hidden_size = min(max(in_features * 2, 32), 128)
-        self.lstm = nn.LSTM(
-            t2v_out_dim, hidden_size,
-            batch_first=True, bidirectional=True, bias=False,
-            num_layers=num_layers, dropout=dropout if num_layers > 1 else 0.
+        # --- Trend path: lightweight DLinear-style ---
+        self.trend_proj = nn.Linear(in_features, out_features)
+
+        # --- Seasonal path: StableTime2Vec + raw signal → RWKV ---
+        n_freqs = 24
+        self.t2v = StableTime2Vec(n_freqs=n_freqs)
+        t2v_out = n_freqs * 2 + 1  # 49
+
+        # Combine periodic features + raw value → d_model
+        self.embed = nn.Sequential(
+            nn.Linear(t2v_out + 1, d_model),  # +1 for raw seasonal value
+            nn.GELU(),
+            nn.LayerNorm(d_model)
         )
 
-        lstm_out_dim = hidden_size * 2  # bidirectional
-        self.norm = nn.LayerNorm(lstm_out_dim)
+        # RWKV temporal mixing
+        self.rwkv = RWKVEncoder(
+            seq_len=in_features, d_model=d_model,
+            n_blocks=max(2, num_layers), expand_ratio=2.0,
+            dropout=dropout
+        )
 
-        # Compress sequence: (B, L, lstm_out_dim) -> (B, lstm_out_dim) via attention pooling
-        self.attn_weight = nn.Linear(lstm_out_dim, 1)
-
-        # Output head
-        hidden_dim = min(max(in_features * 2, 64), 256)
-        self.output_head = nn.Sequential(
-            weight_norm(nn.Linear(lstm_out_dim, hidden_dim)),
+        # Per-timestep compress → flatten → output head
+        self.step_compress = nn.Linear(d_model, d_model // 4)
+        flatten_dim = in_features * (d_model // 4)
+        self.seasonal_head = nn.Sequential(
+            nn.Linear(flatten_dim, d_model),
             nn.GELU(),
             nn.Dropout(dropout),
-            weight_norm(nn.Linear(hidden_dim, out_features))
+            nn.Linear(d_model, out_features)
         )
 
         # Direct residual shortcut
@@ -61,19 +126,29 @@ class T2V(nn.Module):
 
         B, L = x_norm.shape
 
-        # Per-timestep Time2Vec: (B, L, 1) -> (B, L, t2v_out_dim)
-        h = self.t2v(x_norm.unsqueeze(-1))  # (B, L, t2v_out_dim)
+        # Decompose into trend + seasonal
+        trend, seasonal = self.decompose(x_norm)
 
-        # LSTM processes full temporal sequence
-        h, _ = self.lstm(h)  # (B, L, lstm_out_dim)
-        h = self.norm(h)
+        # --- Trend path ---
+        trend_out = self.trend_proj(trend)  # (B, out_features)
 
-        # Attention-weighted pooling: (B, L, lstm_out_dim) -> (B, lstm_out_dim)
-        weights = torch.softmax(self.attn_weight(h).squeeze(-1), dim=1)  # (B, L)
-        h = (h * weights.unsqueeze(-1)).sum(dim=1)  # (B, lstm_out_dim)
+        # --- Seasonal path ---
+        s = seasonal.unsqueeze(-1)  # (B, L, 1)
+        t2v_feats = self.t2v(s)     # (B, L, 49)
 
-        # Output + residual
-        out = self.output_head(h) + self.residual_proj(x_norm)
+        # Concatenate raw seasonal value with periodic features
+        h = torch.cat([s, t2v_feats], dim=-1)  # (B, L, 50)
+        h = self.embed(h)  # (B, L, d_model)
+
+        # RWKV temporal mixing
+        h = self.rwkv(h)  # (B, L, d_model)
+
+        # Per-timestep compress → flatten → output
+        h = self.step_compress(h)  # (B, L, d_model//4)
+        seasonal_out = self.seasonal_head(h.reshape(B, -1))  # (B, out_features)
+
+        # Combine: trend + seasonal + residual
+        out = trend_out + seasonal_out + self.residual_proj(x_norm)
 
         # RevIN denormalize
         out = out * std + mean
