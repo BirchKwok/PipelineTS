@@ -60,6 +60,8 @@ class TemporalBlock(nn.Module):
 class TemporalConvNet(nn.Module):
     def __init__(self, in_features, out_features, kernel_size=2, dropout=0.2, num_levels=None, hidden_channels=None, device=None):
         super(TemporalConvNet, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
 
         # Auto-determine number of TCN levels based on input length for full receptive field
         if num_levels is None:
@@ -68,12 +70,13 @@ class TemporalConvNet(nn.Module):
             num_levels = min(num_levels, 6)  # Cap at 6 levels
 
         if hidden_channels is None:
-            hidden_channels = min(max(in_features, 32), 128)
+            hidden_channels = min(max(in_features * 2, 32), 128)
 
+        # Input: (B, 1, L) — single channel, temporal sequence
         layers = []
         for i in range(num_levels):
             dilation_size = 2 ** i
-            in_ch = in_features if i == 0 else hidden_channels
+            in_ch = 1 if i == 0 else hidden_channels
             out_ch = hidden_channels
             layers.append(
                 TemporalBlock(in_ch, out_ch, kernel_size, stride=1,
@@ -83,15 +86,45 @@ class TemporalConvNet(nn.Module):
             )
 
         self.network = nn.Sequential(*layers)
-        self.output_proj = nn.Linear(hidden_channels, out_features)
+
+        # RevIN
+        self.eps = 1e-5
+
+        # Adaptive pooling to fixed length + projection
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
+        self.output_head = nn.Sequential(
+            nn.Linear(hidden_channels + in_features, out_features * 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(out_features * 2, out_features)
+        )
+        # Direct residual shortcut
+        self.residual_proj = nn.Linear(in_features, out_features)
 
     def forward(self, x):
-        if x.ndim == 2:
-            x = x.unsqueeze(-1)
-        x = self.network(x)
-        # Take the last time step's features and project to output
-        x = x[:, :, -1] if x.ndim == 3 else x
-        return self.output_proj(x)
+        # x: (B, L) for univariate
+        if x.ndim == 3:
+            x = x.squeeze(-1)
+
+        # RevIN normalize
+        mean = x.mean(dim=1, keepdim=True).detach()
+        std = (x.std(dim=1, keepdim=True) + self.eps).detach()
+        x_norm = (x - mean) / std
+
+        # (B, L) -> (B, 1, L) for Conv1d: 1 channel, L timesteps
+        h = x_norm.unsqueeze(1)
+        h = self.network(h)  # (B, hidden_channels, L)
+
+        # Global pooling: (B, hidden_channels, L) -> (B, hidden_channels)
+        pooled = self.adaptive_pool(h).squeeze(-1)
+
+        # Concatenate pooled features with original input for richer context
+        combined = torch.cat([pooled, x_norm], dim=1)  # (B, hidden_channels + in_features)
+        out = self.output_head(combined) + self.residual_proj(x_norm)
+
+        # RevIN denormalize
+        out = out * std + mean
+        return out
 
 
 class TCN(TorchModelMixin, ForecastingMixin):

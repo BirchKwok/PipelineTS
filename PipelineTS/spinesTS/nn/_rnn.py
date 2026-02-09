@@ -6,6 +6,7 @@ from torch import nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
 from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers import RWKVEncoder
 
 
 class GatedResBlock(nn.Module):
@@ -27,26 +28,39 @@ class GatedResBlock(nn.Module):
 
 
 class Seq2SeqBlock(nn.Module):
-    """Gated residual MLP backbone for time series forecasting.
+    """RWKV (linear RNN) + Gated residual blocks for time series forecasting.
 
-    Processes the full sequence as a single flattened vector through
-    stacked GatedResBlocks with SiLU gating and residual connections.
+    Embeds each timestep, processes with stacked RWKVBlocks for temporal
+    mixing (all nn.Linear, no sequential recurrence), then refines with
+    gated residual blocks. Includes RevIN and a direct residual shortcut.
 
     Args:
         in_features: Input sequence length.
         out_features: Prediction horizon.
         d_model: Hidden dimension.
         n_blocks: Number of gated residual blocks.
+        n_rwkv_blocks: Number of RWKV temporal mixing blocks.
         dropout: Dropout rate.
     """
 
-    def __init__(self, in_features, out_features, d_model=48, n_blocks=3, dropout=0.1):
+    def __init__(self, in_features, out_features, d_model=48, n_blocks=3,
+                 n_rwkv_blocks=3, dropout=0.1):
         super().__init__()
+        self.in_features = in_features
+        self.eps = 1e-5
 
-        self.input_proj = nn.Sequential(
-            nn.Linear(in_features, d_model),
-            nn.LayerNorm(d_model)
+        # Per-timestep embedding
+        self.step_embed = nn.Linear(1, d_model)
+
+        # RWKV encoder: linear temporal mixing (replaces LSTM)
+        self.rwkv = RWKVEncoder(
+            seq_len=in_features, d_model=d_model,
+            n_blocks=n_rwkv_blocks, expand_ratio=2.0,
+            dropout=dropout
         )
+
+        # Flatten RWKV output and process through gated blocks
+        self.compress = nn.Linear(in_features * d_model, d_model)
 
         self.blocks = nn.ModuleList([
             GatedResBlock(d_model, dropout)
@@ -56,16 +70,40 @@ class Seq2SeqBlock(nn.Module):
         self.output_norm = nn.LayerNorm(d_model)
         self.output_proj = nn.Linear(d_model, out_features)
 
+        # Direct residual shortcut
+        self.residual_proj = nn.Linear(in_features, out_features)
+
     def forward(self, x):
         # x: (B, L)
         if x.ndim == 3:
             x = x.squeeze(-1)
 
-        x = self.input_proj(x)
+        # RevIN
+        mean = x.mean(dim=1, keepdim=True).detach()
+        std = (x.std(dim=1, keepdim=True) + self.eps).detach()
+        x_norm = (x - mean) / std
+
+        B, L = x_norm.shape
+
+        # (B, L) -> (B, L, 1) -> (B, L, d_model)
+        h = self.step_embed(x_norm.unsqueeze(-1))
+
+        # RWKV temporal mixing: all nn.Linear, O(T) time, no sequential loops
+        h = self.rwkv(h)  # (B, L, d_model)
+
+        # Flatten and compress
+        h = h.reshape(B, -1)  # (B, L * d_model)
+        h = self.compress(h)  # (B, d_model)
+
+        # Gated residual refinement
         for block in self.blocks:
-            x = block(x)
-        x = self.output_norm(x)
-        return self.output_proj(x)
+            h = block(h)
+        h = self.output_norm(h)
+        out = self.output_proj(h) + self.residual_proj(x_norm)
+
+        # RevIN denormalize
+        out = out * std + mean
+        return out
 
 
 class StackingRNN(TorchModelMixin, ForecastingMixin):

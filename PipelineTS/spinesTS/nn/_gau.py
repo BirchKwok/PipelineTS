@@ -28,70 +28,66 @@ class GAUBlock(nn.Module):
 
 
 class GAUBase(nn.Module):
-    def __init__(self, in_features, out_features, level=2, dropout=0.2):
+    def __init__(self, in_features, out_features, level=2, dropout=0.2, d_model=64):
         super(GAUBase, self).__init__()
         self.in_features = in_features   # lags (sequence length)
         self.out_features = out_features
-        d_model = in_features
+        self.eps = 1e-5
 
         # Learned feature projection: each raw value -> d_model dimensional representation
-        # This replaces external feature engineering with learned features
         self.feature_head = nn.Sequential(
             nn.Linear(1, d_model),
             nn.GELU(),
             nn.LayerNorm(d_model)
         )
 
-        # GAU blocks: temporal attention across lag time steps
+        # GAU blocks: temporal attention across lag time steps (GAU already has attention)
         self.gau = GAUBlock(d_model, level=level, dropout=dropout)
-        
-        # Multi-head self-attention - dynamically choose valid num_heads
-        num_heads = 1
-        for h in [8, 4, 2, 1]:
-            if d_model % h == 0:
-                num_heads = h
-                break
-        self.multihead_attn = nn.MultiheadAttention(
-            embed_dim=d_model, 
-            num_heads=num_heads, 
-            dropout=dropout, 
-            batch_first=True
-        )
-        self.norm = nn.LayerNorm(d_model)
-        self.dropout_layer = nn.Dropout(dropout)
 
-        # Temporal compression: (B, lags, d_model) -> (B, lags)
-        self.temporal_proj = nn.Linear(d_model, 1)
+        # Temporal compression via learned weighted pooling
+        self.temporal_weight = nn.Linear(d_model, 1)
+        self.final_norm = nn.LayerNorm(d_model)
 
-        # Output head: (B, lags) -> (B, out_features)
+        # Output head: (B, d_model) -> (B, out_features)
         self.output_head = nn.Sequential(
-            nn.Linear(in_features, in_features * 2),
+            nn.Linear(d_model, d_model),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(in_features * 2, out_features)
+            nn.Linear(d_model, out_features)
         )
+
+        # Direct residual shortcut
+        self.residual_proj = nn.Linear(in_features, out_features)
 
     def forward(self, x):
         # x: (B, lags) 2D — standard univariate input
-        if x.ndim == 2:
-            x = x.unsqueeze(-1)  # (B, lags) -> (B, lags, 1)
+        if x.ndim == 3:
+            x = x.squeeze(-1)
+
+        # RevIN
+        mean = x.mean(dim=1, keepdim=True).detach()
+        std = (x.std(dim=1, keepdim=True) + self.eps).detach()
+        x_norm = (x - mean) / std
+
+        h = x_norm.unsqueeze(-1)  # (B, lags, 1)
 
         # Learned feature projection: (B, lags, 1) -> (B, lags, d_model)
-        x = self.feature_head(x)
+        h = self.feature_head(h)
 
         # GAU temporal processing: attention across lag time steps
-        x = self.gau(x)  # (B, lags, d_model)
+        h = self.gau(h)  # (B, lags, d_model)
 
-        # Multi-head self-attention with residual connection
-        attn_output, _ = self.multihead_attn(x, x, x)
-        x = x + self.dropout_layer(attn_output)
-        x = self.norm(x)
+        # Learned weighted pooling: (B, lags, d_model) -> (B, d_model)
+        weights = torch.softmax(self.temporal_weight(h).squeeze(-1), dim=1)  # (B, lags)
+        h = (h * weights.unsqueeze(-1)).sum(dim=1)  # (B, d_model)
+        h = self.final_norm(h)
 
-        # Temporal compression: (B, lags, d_model) -> (B, lags, 1) -> (B, lags)
-        x = self.temporal_proj(x).squeeze(-1)
+        # Output projection + residual shortcut
+        out = self.output_head(h) + self.residual_proj(x_norm)
 
-        # Output projection: (B, lags) -> (B, out_features)
-        return self.output_head(x)
+        # RevIN denormalize
+        out = out * std + mean
+        return out
 
 
 class GAUNet(TorchModelMixin, ForecastingMixin):

@@ -16,22 +16,28 @@ class T2V(nn.Module):
         weight_norm = get_weight_norm(device)
 
         self.in_features, self.out_features = in_features, out_features
-        t2v_out_dim = in_features * 2 - 1
-        self.t2v = Time2Vec(self.in_features, in_features)
+        self.eps = 1e-5
 
+        # Per-timestep Time2Vec: scalar -> t2v_dim
+        t2v_dim = 16
+        self.t2v = Time2Vec(1, t2v_dim)
+        t2v_out_dim = t2v_dim * 2 - 1  # sin + cos + linear
+
+        # LSTM processes full sequence: (B, L, t2v_out_dim)
+        hidden_size = min(max(in_features * 2, 32), 128)
         self.lstm = nn.LSTM(
-            t2v_out_dim, in_features,
+            t2v_out_dim, hidden_size,
             batch_first=True, bidirectional=True, bias=False,
             num_layers=num_layers, dropout=dropout if num_layers > 1 else 0.
         )
 
-        lstm_out_dim = in_features * 2  # bidirectional
+        lstm_out_dim = hidden_size * 2  # bidirectional
         self.norm = nn.LayerNorm(lstm_out_dim)
 
-        # Residual projection from input to match lstm output dim
-        self.residual_proj = nn.Linear(in_features, lstm_out_dim)
+        # Compress sequence: (B, L, lstm_out_dim) -> (B, lstm_out_dim) via attention pooling
+        self.attn_weight = nn.Linear(lstm_out_dim, 1)
 
-        # Richer output head
+        # Output head
         hidden_dim = min(max(in_features * 2, 64), 256)
         self.output_head = nn.Sequential(
             weight_norm(nn.Linear(lstm_out_dim, hidden_dim)),
@@ -40,21 +46,38 @@ class T2V(nn.Module):
             weight_norm(nn.Linear(hidden_dim, out_features))
         )
 
+        # Direct residual shortcut
+        self.residual_proj = nn.Linear(in_features, out_features)
+
     def forward(self, x):
-        residual = x
-        x = self.t2v(x)
-        output, (h, c) = self.lstm(x.unsqueeze(1))
+        # x: (B, L)
+        if x.ndim == 3:
+            x = x.squeeze(-1)
 
-        # Handle squeeze safely for batch_size=1
-        if output.ndim == 3:
-            output = output.squeeze(1)
-        if output.ndim == 1:
-            output = output.unsqueeze(0)
+        # RevIN
+        mean = x.mean(dim=1, keepdim=True).detach()
+        std = (x.std(dim=1, keepdim=True) + self.eps).detach()
+        x_norm = (x - mean) / std
 
-        # Residual connection
-        output = self.norm(output + self.residual_proj(residual))
+        B, L = x_norm.shape
 
-        return self.output_head(output)
+        # Per-timestep Time2Vec: (B, L, 1) -> (B, L, t2v_out_dim)
+        h = self.t2v(x_norm.unsqueeze(-1))  # (B, L, t2v_out_dim)
+
+        # LSTM processes full temporal sequence
+        h, _ = self.lstm(h)  # (B, L, lstm_out_dim)
+        h = self.norm(h)
+
+        # Attention-weighted pooling: (B, L, lstm_out_dim) -> (B, lstm_out_dim)
+        weights = torch.softmax(self.attn_weight(h).squeeze(-1), dim=1)  # (B, L)
+        h = (h * weights.unsqueeze(-1)).sum(dim=1)  # (B, lstm_out_dim)
+
+        # Output + residual
+        out = self.output_head(h) + self.residual_proj(x_norm)
+
+        # RevIN denormalize
+        out = out * std + mean
+        return out
 
 
 class Time2VecNet(TorchModelMixin, ForecastingMixin):

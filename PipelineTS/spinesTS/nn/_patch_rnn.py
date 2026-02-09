@@ -94,10 +94,12 @@ class PatchRNNBlock(nn.Module):
     def __init__(self, in_features, out_features, kernel_size=4, dropout=0.1, device=None, multi_steps=False,
                  use_srs=False, srs_d_model=64, srs_n_heads=4, srs_top_k_ratio=0.5, srs_n_vars=1):
         super(PatchRNNBlock, self).__init__()
+        self.in_features = in_features
         self.out_features = out_features
         self.kernel_size = kernel_size
         self.device = device
         self.use_srs = use_srs
+        self.eps = 1e-5
 
         if use_srs:
             # SRS path: multi-scale patching + selective representation
@@ -111,8 +113,8 @@ class PatchRNNBlock(nn.Module):
             self.splitter = SegmentationBlock(in_features, kernel_size, device=device)
             rnn_input_size = kernel_size
 
-        # Use adaptive hidden size and add dropout to LSTM
-        hidden_size = max(rnn_input_size // 2, 4)
+        # Larger hidden size for better capacity
+        hidden_size = max(rnn_input_size * 2, 32)
         self.encoder_rnn = nn.LSTM(
             rnn_input_size, hidden_size, num_layers=2,
             bias=False, bidirectional=True, batch_first=True,
@@ -121,21 +123,19 @@ class PatchRNNBlock(nn.Module):
         rnn_out_size = hidden_size * 2  # bidirectional
 
         if use_srs:
-            # SRS path: weighted aggregation -> decoder
             fc_input_features = rnn_out_size
         else:
             seq_len_adjusted = in_features - kernel_size + 1
-            fc_input_features = seq_len_adjusted * rnn_out_size if not multi_steps else rnn_out_size
+            fc_input_features = seq_len_adjusted * rnn_out_size
 
-        self.decoder = FCBlock(fc_input_features, 1 if multi_steps and not use_srs else out_features,
+        # Always use direct projection to full output (no autoregressive loop)
+        self.decoder = FCBlock(fc_input_features, out_features,
                                dropout=dropout, device=device)
         self.layer_norm = nn.LayerNorm(rnn_out_size)
-        # Residual projection: rnn_input_size -> rnn_out_size
         self.residual_proj = nn.Linear(rnn_input_size, rnn_out_size)
 
-        # For multi_steps (only in non-SRS path): project rnn output back to LSTM input size
-        if multi_steps and not use_srs:
-            self.feedback_proj = nn.Linear(rnn_out_size, rnn_input_size)
+        # Direct residual shortcut from input to output
+        self.shortcut = nn.Linear(in_features, out_features)
 
         self.multi_steps = multi_steps
 
@@ -164,9 +164,14 @@ class PatchRNNBlock(nn.Module):
         return self.decoder(aggregated)
 
     def _forward_original(self, x):
-        """Original PatchRNN forward path."""
-        x = self.splitter(x)
-        output, (h, c) = self.encoder_rnn(x)  # Preserve the last state of RNN for next step generation
+        """Original PatchRNN forward path — direct projection, no autoregressive loop."""
+        # RevIN
+        mean = x.mean(dim=1, keepdim=True).detach()
+        std = (x.std(dim=1, keepdim=True) + self.eps).detach()
+        x_norm = (x - mean) / std
+
+        patches = self.splitter(x_norm)
+        output, _ = self.encoder_rnn(patches)
 
         batch_size, seq_len, features = output.shape
         output_2d = output.reshape(batch_size * seq_len, features)
@@ -174,32 +179,17 @@ class PatchRNNBlock(nn.Module):
         output = output_norm.view(batch_size, seq_len, features)
 
         # Residual connection with projection to match dimensions
-        output = output + self.residual_proj(x)
+        output = output + self.residual_proj(patches)
 
-        if not self.multi_steps:
-            res = self.decoder(output.reshape(output.size(0), -1))
-            return res
+        # Direct projection to full output
+        out = self.decoder(output.reshape(output.size(0), -1))
 
-        # Initialize hidden and cell state for generation
-        h_gen, c_gen = h, c
-        # Initialize feedback input: project back to LSTM input size
-        feedback_input = self.feedback_proj(output[:, -1, :]).unsqueeze(1)
+        # Add residual shortcut
+        out = out + self.shortcut(x_norm)
 
-        outputs = []
-        for _ in range(self.out_features):
-            # Generate next step output
-            output_gen, (h_gen, c_gen) = self.encoder_rnn(feedback_input, (h_gen, c_gen))
-            output_gen_2d = output_gen.reshape(output_gen.size(0), -1)
-            output_gen_norm = self.layer_norm(output_gen_2d)
-            res = self.decoder(output_gen_norm)
-            outputs.append(res.squeeze(-1))
-            # Project back to LSTM input size for next step
-            feedback_input = self.feedback_proj(output_gen.squeeze(1)).unsqueeze(1)
-
-        # Concatenate along the sequence length dimension to form a 2D output
-        outputs = torch.stack(outputs, dim=1)
-
-        return outputs
+        # RevIN denormalize
+        out = out * std + mean
+        return out
 
     def forward(self, x):
         if self.use_srs:
