@@ -161,7 +161,7 @@ class ModelPipeline:
             raise_if_not(ValueError, include_models in ModelPipeline.list_all_available_models(),
                          f"{include_models} is not a available model name. ")
             include_models = [include_models]
-        elif not isinstance(include_models, (list, str)) and issubclass(include_models, IntervalEstimationMixin):
+        elif include_models is not None and not isinstance(include_models, (list, str)) and issubclass(include_models, IntervalEstimationMixin):
             include_models = [include_models]
         else:
             include_models = include_models
@@ -233,10 +233,12 @@ class ModelPipeline:
             raise_if(ValueError, '__' not in k,
                      f"{k} must has double underline.")
 
-            raise_if(ValueError, k.split('__')[0] not in self._available_models and k.split('__')[0]
+            all_models = get_all_available_models()
+            raise_if(ValueError, k.split('__')[0] not in all_models and k.split('__')[0]
                      not in get_all_model_class_name(),
                      f"{k.split('__')[0]} is not a valid model name")
-            self._model_init_kwargs[k] = v
+            if k.split('__')[0] in self._available_models:
+                self._model_init_kwargs[k] = v
 
         self._compute_device_msg = detect_available_device(self.accelerator)[1] + '\n\n'
 

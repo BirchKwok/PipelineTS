@@ -83,7 +83,6 @@ class StackingRNNModel(SpinesNNModelMixin):
             dropout=dropout,
             n_blocks=blocks,
             loss_fn='mae',
-            bias=False,
             learning_rate=learning_rate,
             random_seed=random_state,
             device=self.accelerator,

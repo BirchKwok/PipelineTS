@@ -8,12 +8,12 @@ from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
 
 
 class GAUBlock(nn.Module):
-    def __init__(self, in_features, level=2, query_key_dim=512, expansion_factor=4., skip_connect=True, dropout=0.2, **kwargs):
+    def __init__(self, d_model, level=2, query_key_dim=512, expansion_factor=4., skip_connect=True, dropout=0.2, **kwargs):
         super(GAUBlock, self).__init__()
         self.gau = nn.ModuleList([
             nn.Sequential(
-                PositionalEncoding(in_features, add_x=True),
-                GAU(in_features, query_key_dim=query_key_dim, expansion_factor=expansion_factor, 
+                PositionalEncoding(d_model, add_x=True),
+                GAU(d_model, query_key_dim=query_key_dim, expansion_factor=expansion_factor, 
                     skip_connect=skip_connect, dropout=dropout, **kwargs)
             )
             for i in range(level)
@@ -21,80 +21,77 @@ class GAUBlock(nn.Module):
         self.level = level
 
     def forward(self, x):
-        if x.ndim == 2:
-            x = x.unsqueeze(1)
-
+        # x: (B, seq_len, d_model) — always 3D
         for i in self.gau:
             x = i(x)
-
         return x
 
 
 class GAUBase(nn.Module):
-    def __init__(self, in_shapes, out_features, level=2, dropout=0.2):
+    def __init__(self, in_features, out_features, level=2, dropout=0.2):
         super(GAUBase, self).__init__()
-        self.in_shapes_type = type(in_shapes)
+        self.in_features = in_features   # lags (sequence length)
+        self.out_features = out_features
+        d_model = in_features
 
-        self.in_features, self.out_features = \
-            in_shapes[-1] if self.in_shapes_type == tuple else in_shapes, out_features
+        # Learned feature projection: each raw value -> d_model dimensional representation
+        # This replaces external feature engineering with learned features
+        self.feature_head = nn.Sequential(
+            nn.Linear(1, d_model),
+            nn.GELU(),
+            nn.LayerNorm(d_model)
+        )
 
-        self.gau = GAUBlock(self.in_features, level=level, dropout=dropout)
+        # GAU blocks: temporal attention across lag time steps
+        self.gau = GAUBlock(d_model, level=level, dropout=dropout)
         
-        # 添加多头注意力机制 - dynamically choose valid num_heads
+        # Multi-head self-attention - dynamically choose valid num_heads
         num_heads = 1
         for h in [8, 4, 2, 1]:
-            if self.in_features % h == 0:
+            if d_model % h == 0:
                 num_heads = h
                 break
         self.multihead_attn = nn.MultiheadAttention(
-            embed_dim=self.in_features, 
+            embed_dim=d_model, 
             num_heads=num_heads, 
             dropout=dropout, 
             batch_first=True
         )
-        
-        # 添加层归一化
-        self.norm1 = nn.LayerNorm(self.in_features)
-        self.norm2 = nn.LayerNorm(self.in_features)
-        
-        # Dropout
-        self.dropout = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout_layer = nn.Dropout(dropout)
 
-        ln_layer_in_fea = in_shapes[0] * in_shapes[1] if self.in_shapes_type == tuple else self.in_features
+        # Temporal compression: (B, lags, d_model) -> (B, lags)
+        self.temporal_proj = nn.Linear(d_model, 1)
 
-        # 使用更复杂的输出层
-        self.linear = nn.Sequential(
-            nn.Linear(ln_layer_in_fea, ln_layer_in_fea*2),
+        # Output head: (B, lags) -> (B, out_features)
+        self.output_head = nn.Sequential(
+            nn.Linear(in_features, in_features * 2),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(ln_layer_in_fea*2, out_features)
+            nn.Linear(in_features * 2, out_features)
         )
 
     def forward(self, x):
-        # GAU处理
-        gau_output = self.gau(x)
-        
-        # 对于注意力机制，确保输入形状正确
-        if gau_output.ndim == 3:
-            # 应用多头注意力并添加残差连接
-            attn_output, _ = self.multihead_attn(gau_output, gau_output, gau_output)
-            gau_output = gau_output + self.dropout(attn_output)
-            gau_output = self.norm1(gau_output)
-            
-            # 将3D张量压缩为2D用于线性层
-            # 如果batch维度为1，需要特殊处理
-            if gau_output.shape[0] == 1:
-                gau_output = gau_output.reshape(1, -1)
-            else:
-                gau_output = gau_output.reshape(gau_output.shape[0], -1)
-        
-        # 如果输入已经是2D张量
-        elif x.ndim == 2:
-            gau_output = gau_output.reshape(gau_output.shape[0], -1)
+        # x: (B, lags) 2D — standard univariate input
+        if x.ndim == 2:
+            x = x.unsqueeze(-1)  # (B, lags) -> (B, lags, 1)
 
-        # 应用线性层并归一化
-        output = self.linear(gau_output)
-        return output
+        # Learned feature projection: (B, lags, 1) -> (B, lags, d_model)
+        x = self.feature_head(x)
+
+        # GAU temporal processing: attention across lag time steps
+        x = self.gau(x)  # (B, lags, d_model)
+
+        # Multi-head self-attention with residual connection
+        attn_output, _ = self.multihead_attn(x, x, x)
+        x = x + self.dropout_layer(attn_output)
+        x = self.norm(x)
+
+        # Temporal compression: (B, lags, d_model) -> (B, lags, 1) -> (B, lags)
+        x = self.temporal_proj(x).squeeze(-1)
+
+        # Output projection: (B, lags) -> (B, out_features)
+        return self.output_head(x)
 
 
 class GAUNet(TorchModelMixin, ForecastingMixin):

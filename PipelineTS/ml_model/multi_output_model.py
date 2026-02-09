@@ -203,7 +203,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
         x_after_diff = np.diff(x, n=self.all_configs['differential_n'], axis=1)
         current_res = self.model.predict(x_after_diff, **predict_kwargs)
         if current_res.ndim == 1:
-            current_res = current_res.view((1, -1))
+            current_res = current_res.reshape((1, -1))
         if n is None:
             return current_res.squeeze().tolist()
         elif n <= current_res.shape[1]:
@@ -217,7 +217,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
                 x_after_diff = np.diff(x, n=self.all_configs['differential_n'], axis=1)
                 current_res = self.model.predict(x_after_diff, **predict_kwargs)
                 if current_res.ndim == 1:
-                    current_res = current_res.view((1, -1))
+                    current_res = current_res.reshape((1, -1))
 
                 res.append(current_res.squeeze().tolist()[-1])
 
@@ -257,11 +257,12 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
             )[-1, :]
 
             if x.ndim == 1:
-                x = x.view((1, -1))
+                x = x.reshape((1, -1))
             last_dt = data[self.all_configs['time_col']].max()
         else:
-            if self.x.values.ndim == 1:
-                x = self.x.values.view((1, -1))
+            x = self.x.values
+            if x.ndim == 1:
+                x = x.reshape((1, -1))
             last_dt = self.last_dt
 
         res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list

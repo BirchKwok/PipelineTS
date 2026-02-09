@@ -215,6 +215,8 @@ class TimeSeriesAugmenter:
         ret = np.zeros_like(x)
         for i, pat in enumerate(x):
             warper = CubicSpline(warp_steps[i], random_warps[i])(orig_steps)
+            if pat.ndim == 2:
+                warper = warper[:, np.newaxis]
             ret[i] = pat * warper
             
         return ret
@@ -231,9 +233,15 @@ class TimeSeriesAugmenter:
         
         ret = np.zeros_like(x)
         for i, pat in enumerate(x):
-            time_warp = CubicSpline(warp_steps[i], warp_steps[i] * random_warps[i])(orig_steps)
-            scale = (x.shape[1] - 1) / time_warp[-1]
-            ret[i] = np.interp(orig_steps, np.clip(scale * time_warp, 0, x.shape[1] - 1), pat)
+            tw = CubicSpline(warp_steps[i], warp_steps[i] * random_warps[i])(orig_steps)
+            denom = tw[-1] if tw[-1] != 0 else 1.0
+            scale = (x.shape[1] - 1) / denom
+            warped_steps = np.clip(scale * tw, 0, x.shape[1] - 1)
+            if pat.ndim == 1:
+                ret[i] = np.interp(orig_steps, warped_steps, pat)
+            else:
+                for dim in range(pat.shape[1]):
+                    ret[i, :, dim] = np.interp(orig_steps, warped_steps, pat[:, dim])
             
         return ret
     

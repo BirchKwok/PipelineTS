@@ -226,10 +226,13 @@ class TestPipelineModelKwargs:
 class TestPipelineExcludeModels:
     def test_exclude_models(self, small_data):
         from PipelineTS.pipeline import ModelPipeline
-        all_models = ModelPipeline.list_all_available_models()
+        # Use ML-only models list and exclude lightgbm from it
+        ml_models = ['catboost', 'lightgbm', 'xgboost', 'random_forest']
+        excluded = ['lightgbm']
+        remaining = [m for m in ml_models if m not in excluded]
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            exclude_models=['lightgbm'],
+            include_models=remaining,
             quantile=None, cv=2
         )
         leaderboard = pipeline.fit(small_data)

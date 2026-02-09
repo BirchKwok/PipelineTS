@@ -1,7 +1,6 @@
 from PipelineTS.spinesTS.nn import GAUNet
 from spinesUtils.asserts import generate_function_kwargs
 from PipelineTS.base.spines_base import SpinesNNModelMixin
-from PipelineTS.spinesTS.preprocessing import GAUDataPreprocessor
 
 
 class GAUModel(SpinesNNModelMixin):
@@ -25,16 +24,17 @@ class GAUModel(SpinesNNModelMixin):
             lr_factor=0.5,
             restore_best_weights=True,
             loss_type='min',
-            use_features=True,
-            use_augmentation=True,
-            augmentation_ratio=0.3,
             dropout=0.2,
             weight_decay=1e-4,
             query_key_dim=512,
             expansion_factor=4.0
     ):
         """
-        GAUModel: A wrapper for the GAUNet neural network model with additional features.
+        GAUModel: A wrapper for the GAUNet neural network model.
+
+        The model uses a learned feature projection head inside GAUBase to automatically
+        extract rich per-timestep features from raw input values, enabling proper temporal
+        attention across all lag time steps. This replaces external feature engineering.
 
         Parameters
         ----------
@@ -49,7 +49,7 @@ class GAUModel(SpinesNNModelMixin):
         random_state : int or None, optional, default: None
             The random seed for reproducibility.
         level : int, optional, default: 3
-            The level parameter for the GAUNet model.
+            The number of stacked GAU layers.
         learning_rate : float, optional, default: 0.001
             The learning rate for training the GAUNet model.
         accelerator : str, optional, default: 'auto'
@@ -74,12 +74,6 @@ class GAUModel(SpinesNNModelMixin):
             Whether to restore the model weights from the epoch with the best value of the monitored quantity.
         loss_type : str, optional, default: 'min'
             The type of loss function to use during training.
-        use_features : bool, optional, default: True
-            Whether to use feature engineering.
-        use_augmentation : bool, optional, default: True
-            Whether to use data augmentation.
-        augmentation_ratio : float, optional, default: 0.3
-            The ratio of data to augment.
         dropout : float, optional, default: 0.2
             The dropout rate for the GAUNet model.
         weight_decay : float, optional, default: 1e-4
@@ -93,8 +87,6 @@ class GAUModel(SpinesNNModelMixin):
         ----------
         model : spinesTS.nn.GAUNet
             The GAUNet neural network model.
-        preprocessor : GAUDataPreprocessor
-            The data preprocessor for feature engineering and augmentation.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -114,8 +106,6 @@ class GAUModel(SpinesNNModelMixin):
         )
 
         self.last_dt = None
-        
-        self.preprocessor = GAUDataPreprocessor()
 
         self.all_configs.update(
             {
@@ -133,10 +123,7 @@ class GAUModel(SpinesNNModelMixin):
                 'lr_scheduler_patience': lr_scheduler_patience,
                 'lr_factor': lr_factor,
                 'restore_best_weights': restore_best_weights,
-                'loss_type': loss_type,
-                'use_features': use_features,
-                'use_augmentation': use_augmentation,
-                'augmentation_ratio': augmentation_ratio
+                'loss_type': loss_type
             }
         )
 
@@ -154,50 +141,3 @@ class GAUModel(SpinesNNModelMixin):
             The GAUNet neural network model.
         """
         return GAUNet(**self.all_configs['model_configs'])
-        
-    def _data_preprocess(self, data, mode='train'):
-        """
-        重写数据预处理方法，使用高级特征工程
-        
-        Parameters
-        ----------
-        data : pd.DataFrame
-            输入数据
-        mode : str, default='train'
-            模式，'train'或'predict'
-            
-        Returns
-        -------
-        x : numpy.ndarray
-            处理后的特征
-        y : numpy.ndarray, optional
-            目标值，仅在mode='train'时返回
-        """
-        if mode == 'train':
-            if self.all_configs['use_features']:
-                X, y = self.preprocessor.fit_transform(
-                    data, 
-                    self.all_configs['time_col'], 
-                    self.all_configs['target_col'], 
-                    self.all_configs['lags']
-                )
-                
-                if self.all_configs['use_augmentation'] and X.shape[0] > 0:
-                    X, y = self.preprocessor.augment(
-                        X, y, augment_ratio=self.all_configs['augmentation_ratio']
-                    )
-                    
-                return X, y
-            else:
-                return super()._data_preprocess(data, mode)
-        else:
-            if self.all_configs['use_features']:
-                X, _ = self.preprocessor.transform(
-                    data, 
-                    self.all_configs['time_col'], 
-                    self.all_configs['target_col'], 
-                    self.all_configs['lags']
-                )
-                return X
-            else:
-                return super()._data_preprocess(data, mode)
