@@ -158,13 +158,12 @@ class NHiTSBackbone(nn.Module):
                 pooling_kernel_sizes.append(k)
 
         # Auto-determine frequency downsampling (decreasing across stacks)
-        # Ensure downsample never exceeds half of out_features to maintain resolution
         if n_freq_downsample is None:
             n_freq_downsample = []
-            max_downsample = max(1, out_features // 2)
             for i in range(num_stacks):
-                d = max(1, min(2 ** (num_stacks - 1 - i), max_downsample))
+                d = max(1, out_features // (2 ** i))
                 n_freq_downsample.append(d)
+            n_freq_downsample = list(reversed(n_freq_downsample))
 
         # Pad if needed
         while len(pooling_kernel_sizes) < num_stacks:
