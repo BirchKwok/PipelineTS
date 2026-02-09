@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
-import scipy.stats
-from scipy import signal
+from scipy.stats import skew, kurtosis
 from sklearn.preprocessing import MinMaxScaler
 from spinesUtils.asserts import raise_if_not
 
@@ -52,44 +51,115 @@ class GBRTPreprocessing:
         """Processing date column"""
         return self.date_features_preprocessor.transform(x)
 
+    @staticmethod
+    def _row_autocorr(x, lag):
+        """Vectorized lag-k autocorrelation for each row."""
+        n = x.shape[1]
+        if lag >= n:
+            return np.zeros((x.shape[0], 1))
+        x1 = x[:, :n - lag]
+        x2 = x[:, lag:]
+        m1 = x1.mean(axis=1, keepdims=True)
+        m2 = x2.mean(axis=1, keepdims=True)
+        num = ((x1 - m1) * (x2 - m2)).mean(axis=1, keepdims=True)
+        denom = x1.std(axis=1, keepdims=True) * x2.std(axis=1, keepdims=True) + 1e-12
+        return num / denom
+
     def process_target_col(self, x, fit=False):
         if not x.ndim == 2:
             x = x.reshape(1, -1)
 
+        eps = 1e-12
+        n_cols = x.shape[1]
+
+        # --- Basic statistics ---
         mean_res = x.mean(axis=1).reshape((-1, 1))
         median_res = np.percentile(x, q=50, axis=1).reshape((-1, 1))
         min_res = x.min(axis=1).reshape((-1, 1))
         max_res = x.max(axis=1).reshape((-1, 1))
+        p10 = np.percentile(x, q=10, axis=1).reshape((-1, 1))
         p25 = np.percentile(x, q=25, axis=1).reshape((-1, 1))
         p75 = np.percentile(x, q=75, axis=1).reshape((-1, 1))
+        p90 = np.percentile(x, q=90, axis=1).reshape((-1, 1))
         std = np.std(x, axis=1).reshape((-1, 1))
-        entropy = scipy.stats.entropy(x, base=2, axis=1).reshape((-1, 1))
-        avg_diff = np.diff(x, n=1, axis=1).mean(axis=1).reshape((-1, 1))
-        avg_abs_diff = np.abs(np.diff(x, n=1, axis=1)).mean(axis=1).reshape((-1, 1))
-        avg_median_diff = np.percentile(np.diff(x, n=1, axis=1), q=50, axis=1).reshape((-1, 1))
-        avg_abs_median_diff = np.percentile(np.abs(np.diff(x, n=1, axis=1)), q=50, axis=1).reshape((-1, 1))
 
-        autocorrelation = scipy.signal.correlate(x, x, mode='same')
-        autocorrelation_diff = scipy.signal.correlate(x, np.diff(x, n=1, axis=1), mode='same')
+        # --- Distribution shape ---
+        skewness = skew(x, axis=1, nan_policy='omit').reshape((-1, 1))
+        kurt = kurtosis(x, axis=1, nan_policy='omit').reshape((-1, 1))
+        cv = (std / (np.abs(mean_res) + eps))  # coefficient of variation
 
-        percentile_count_under_75 = ((x < np.percentile(x, q=75, axis=1).reshape((-1, 1))).sum(axis=1)
-                                     .astype(int).reshape((-1, 1)))
-        percentile_count_under_25 = ((x < np.percentile(x, q=25, axis=1).reshape((-1, 1))).sum(axis=1)
-                                     .astype(int).reshape((-1, 1)))
-        percentile_count_under_90 = ((x < np.percentile(x, q=90, axis=1).reshape((-1, 1))).sum(axis=1)
-                                     .astype(int).reshape((-1, 1)))
-        percentile_count_over_90 = ((x > np.percentile(x, q=90, axis=1).reshape((-1, 1))).sum(axis=1)
-                                    .astype(int).reshape((-1, 1)))
+        # --- Range / spread features ---
+        iqr = p75 - p25
+        full_range = max_res - min_res
+        range_iqr_ratio = full_range / (iqr + eps)
 
-        peaks_count = np.array([len(signal.find_peaks(row)[0]) for row in x]).reshape((-1, 1))
-        large_distance_peaks_count = np.array([len(signal.find_peaks(row, distance=150)[0]) for row in x]).reshape(
-            (-1, 1))
+        # --- Diff-based features ---
+        diffs = np.diff(x, n=1, axis=1)
+        avg_diff = diffs.mean(axis=1).reshape((-1, 1))
+        avg_abs_diff = np.abs(diffs).mean(axis=1).reshape((-1, 1))
+        median_diff = np.percentile(diffs, q=50, axis=1).reshape((-1, 1))
+        median_abs_diff = np.percentile(np.abs(diffs), q=50, axis=1).reshape((-1, 1))
+        std_diff = np.std(diffs, axis=1).reshape((-1, 1))
+
+        # --- Autocorrelation (scalar, vectorized) ---
+        autocorr_lag1 = self._row_autocorr(x, 1)
+        autocorr_lag2 = self._row_autocorr(x, 2)
+        autocorr_lag3 = self._row_autocorr(x, 3) if n_cols > 3 else np.zeros((x.shape[0], 1))
+
+        # --- Trend features ---
+        t = np.arange(n_cols, dtype=np.float64)
+        t_mean = t.mean()
+        t_centered = t - t_mean
+        t_var = (t_centered ** 2).sum()
+        x_centered = x - x.mean(axis=1, keepdims=True)
+        trend_slope = (x_centered @ t_centered) / (t_var + eps)  # (N,)
+        trend_slope = trend_slope.reshape((-1, 1))
+
+        # --- Ratio features ---
+        last_to_mean = x[:, -1:] / (np.abs(mean_res) + eps)
+        last_to_first = x[:, -1:] / (np.abs(x[:, :1]) + eps)
+        energy = (x ** 2).mean(axis=1).reshape((-1, 1))
+        rms = np.sqrt(energy)
+
+        # --- Sub-window comparison (second-half vs first-half mean) ---
+        half = max(1, n_cols // 2)
+        first_half_mean = x[:, :half].mean(axis=1).reshape((-1, 1))
+        second_half_mean = x[:, half:].mean(axis=1).reshape((-1, 1))
+        half_ratio = second_half_mean / (np.abs(first_half_mean) + eps)
+
+        # --- EMA (exponential moving average with span ~n_cols/2) ---
+        alpha = 2.0 / (max(1, n_cols // 2) + 1)
+        weights = np.power(1 - alpha, np.arange(n_cols - 1, -1, -1, dtype=np.float64))
+        weights /= weights.sum() + eps
+        ema = (x * weights[np.newaxis, :]).sum(axis=1).reshape((-1, 1))
+
+        # --- Position features (argmax / argmin within window, normalized) ---
+        argmax_pos = np.argmax(x, axis=1).reshape(-1, 1).astype(np.float64) / max(1, n_cols - 1)
+        argmin_pos = np.argmin(x, axis=1).reshape(-1, 1).astype(np.float64) / max(1, n_cols - 1)
+
+        # --- Sign-change / crossing features (vectorized, replaces slow peak detection) ---
+        sign_changes = (np.diff(np.sign(diffs), axis=1) != 0).sum(axis=1).reshape((-1, 1)).astype(np.float64)
+        mean_crossing = (np.diff(np.sign(x - mean_res), axis=1) != 0).sum(axis=1).reshape((-1, 1)).astype(np.float64)
+
+        # --- Percentile counts ---
+        percentile_count_under_75 = ((x < p75).sum(axis=1).astype(np.float64).reshape((-1, 1)))
+        percentile_count_under_25 = ((x < p25).sum(axis=1).astype(np.float64).reshape((-1, 1)))
+        percentile_count_under_90 = ((x < p90).sum(axis=1).astype(np.float64).reshape((-1, 1)))
+        percentile_count_over_90 = ((x > p90).sum(axis=1).astype(np.float64).reshape((-1, 1)))
 
         final_matrix = np.concatenate(
-            (mean_res, median_res, max_res, min_res, p25, p75, std, entropy,
-             avg_diff, avg_abs_diff, avg_median_diff, avg_abs_median_diff, autocorrelation, autocorrelation_diff,
-             percentile_count_under_75, percentile_count_under_25, percentile_count_under_90, percentile_count_over_90,
-             peaks_count, large_distance_peaks_count), axis=1)
+            (mean_res, median_res, max_res, min_res, p10, p25, p75, p90, std,
+             skewness, kurt, cv, iqr, full_range, range_iqr_ratio,
+             avg_diff, avg_abs_diff, median_diff, median_abs_diff, std_diff,
+             autocorr_lag1, autocorr_lag2, autocorr_lag3,
+             trend_slope, last_to_mean, last_to_first, energy, rms,
+             half_ratio, ema, argmax_pos, argmin_pos,
+             sign_changes, mean_crossing,
+             percentile_count_under_75, percentile_count_under_25,
+             percentile_count_under_90, percentile_count_over_90), axis=1)
+
+        # Handle NaN/inf from degenerate inputs
+        final_matrix = np.nan_to_num(final_matrix, nan=0.0, posinf=0.0, neginf=0.0)
 
         if self.use_scale:
             if fit:

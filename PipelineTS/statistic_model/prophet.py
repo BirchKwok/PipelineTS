@@ -12,8 +12,9 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
     """
     ProphetModel: Custom Prophet-like decomposable time series model.
 
-    Uses piecewise linear trend + Fourier seasonality, solved via ridge regression.
-    100x+ faster than Facebook Prophet with comparable or better accuracy.
+    Uses piecewise linear trend + Fourier seasonality + optional causal lag features,
+    solved via ridge regression. 100x+ faster than Facebook Prophet with comparable
+    or better accuracy.
 
     Parameters
     ----------
@@ -37,6 +38,14 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         Whether to auto-detect seasonality periods via FFT.
     trend_dampening : float, optional, default: 0.0
         Dampening for trend extrapolation (0=none, 1=flat).
+    use_lag_features : bool, optional, default: True
+        Whether to include causal rolling lag features as additional regressors.
+        These capture recent dynamics (momentum, volatility, trend) without
+        data leakage.
+    lag_window : int or 'auto', optional, default: 'auto'
+        Window size for rolling lag features. 'auto' sets it based on data length.
+    lag_prior_scale : float, optional, default: 5.0
+        Regularization strength for lag feature coefficients.
     quantile : float, optional, default: 0.9
         Quantile for interval prediction. None for point prediction.
     """
@@ -53,6 +62,9 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             weekly_seasonality='auto',
             auto_seasonality=True,
             trend_dampening=0.0,
+            use_lag_features=True,
+            lag_window='auto',
+            lag_prior_scale=5.0,
             quantile=0.9,
     ):
         super().__init__(time_col=time_col, target_col=target_col)
@@ -70,6 +82,9 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             'weekly_seasonality': weekly_seasonality,
             'auto_seasonality': auto_seasonality,
             'trend_dampening': trend_dampening,
+            'use_lag_features': use_lag_features,
+            'lag_window': lag_window,
+            'lag_prior_scale': lag_prior_scale,
         })
 
         self.model = self._define_model()
@@ -84,6 +99,9 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             weekly_seasonality=self.all_configs['weekly_seasonality'],
             auto_seasonality=self.all_configs['auto_seasonality'],
             trend_dampening=self.all_configs['trend_dampening'],
+            use_lag_features=self.all_configs['use_lag_features'],
+            lag_window=self.all_configs['lag_window'],
+            lag_prior_scale=self.all_configs['lag_prior_scale'],
         )
 
     def _cv_split(self, data, cv=5):

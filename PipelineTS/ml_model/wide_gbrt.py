@@ -21,7 +21,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             time_col,
             target_col,
             lags=1,
-            n_estimators=100,
+            n_estimators=500,
             quantile=0.9,
             random_state=None,
             differential_n=1,
@@ -41,7 +41,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             The column containing the target variable in the input data.
         lags : int, optional, default: 1
             The number of lagged values to use as input features for training and prediction.
-        n_estimators : int, optional, default: 100
+        n_estimators : int, optional, default: 500
             The number of boosting rounds (trees) in the GBRT model.
         quantile : float, optional, default: 0.9
             The quantile used for interval prediction. Set to None for point prediction.
@@ -78,9 +78,16 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             **model_init_configs
         )
 
-        if 'LGBMRegressor' in re.split("<|>|class| |\.|\'", str(estimator)):
+        if 'LGBMRegressor' in re.split("<|>|class| |\.\'", str(estimator)):
             self.all_configs['model_configs'] = update_dict_without_conflict(self.all_configs['model_configs'], {
-                'verbose': -1
+                'verbose': -1,
+                'learning_rate': 0.05,
+                'reg_alpha': 0.1,
+                'reg_lambda': 0.1,
+                'min_child_samples': 5,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'subsample_freq': 1,
             })
 
         self._estimator = estimator

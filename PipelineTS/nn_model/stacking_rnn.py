@@ -81,7 +81,7 @@ class StackingRNNModel(SpinesNNModelMixin):
             in_features=lags,
             out_features=lags,
             dropout=dropout,
-            blocks=blocks,
+            n_blocks=blocks,
             loss_fn='mae',
             bias=False,
             learning_rate=learning_rate,

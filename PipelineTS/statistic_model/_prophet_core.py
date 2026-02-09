@@ -210,7 +210,7 @@ def _build_seasonality_features(t, periods, n_fourier=5):
 class SpinesProphet:
     """Fast Prophet-like decomposable time series model.
 
-    Model: y(t) = trend(t) + seasonality(t) + noise
+    Model: y(t) = trend(t) + seasonality(t) + lag_features(t) + noise
 
     Uses ridge regression for parameter estimation (closed-form solution),
     making it 100x+ faster than Facebook Prophet's MCMC approach.
@@ -236,6 +236,14 @@ class SpinesProphet:
         Whether to auto-detect additional seasonality via FFT.
     trend_dampening : float, optional, default: 0.0
         Dampening factor for trend extrapolation (0 = no dampening, 1 = flat).
+    use_lag_features : bool, optional, default: True
+        Whether to include causal rolling lag features as additional regressors.
+        These capture recent dynamics (momentum, volatility, trend) without
+        data leakage — each feature at time t uses only y[..t-1].
+    lag_window : int or 'auto', optional, default: 'auto'
+        Window size for rolling lag features. 'auto' sets it based on data length.
+    lag_prior_scale : float, optional, default: 5.0
+        Regularization strength for lag feature coefficients.
     """
 
     def __init__(
@@ -248,6 +256,9 @@ class SpinesProphet:
         custom_seasonalities=None,
         auto_seasonality=True,
         trend_dampening=0.0,
+        use_lag_features=True,
+        lag_window='auto',
+        lag_prior_scale=5.0,
     ):
         self.n_changepoints = n_changepoints
         self.changepoint_prior_scale = changepoint_prior_scale
@@ -257,6 +268,9 @@ class SpinesProphet:
         self.custom_seasonalities = custom_seasonalities or []
         self.auto_seasonality = auto_seasonality
         self.trend_dampening = trend_dampening
+        self.use_lag_features = use_lag_features
+        self.lag_window = lag_window
+        self.lag_prior_scale = lag_prior_scale
 
         # Fitted attributes
         self._beta = None
@@ -271,6 +285,87 @@ class SpinesProphet:
         self._fourier_orders = None
         self._last_t = None
         self._freq = None
+        self._lag_window_size = None
+        self._lag_feature_mean = None
+        self._lag_feature_std = None
+        self._last_lag_features = None
+        self._n_lag_features = 0
+
+    @staticmethod
+    def _build_rolling_lag_features(y, window):
+        """Build causal rolling features from y — each row uses only past data.
+
+        Features at time t are computed from y[max(0, t-window):t] (exclusive of t).
+        This ensures zero data leakage.
+
+        Parameters
+        ----------
+        y : np.ndarray, shape (n,)
+            Target values.
+        window : int
+            Rolling window size.
+
+        Returns
+        -------
+        np.ndarray, shape (n, n_features)
+            Rolling lag features matrix.
+        """
+        n = len(y)
+        eps = 1e-12
+
+        # Pre-allocate feature arrays (7 features)
+        n_feat = 7
+        feat = np.zeros((n, n_feat), dtype=np.float64)
+
+        for t in range(n):
+            # Causal window: y[start:t] (exclusive of current point)
+            start = max(0, t - window)
+            w = y[start:t]  # past values only, excludes y[t]
+
+            if len(w) < 2:
+                # Not enough history — leave as zeros
+                continue
+
+            w_len = len(w)
+            w_mean = w.mean()
+            w_std = w.std()
+
+            # 0: Rolling mean (normalized by global std later)
+            feat[t, 0] = w_mean
+
+            # 1: Rolling std
+            feat[t, 1] = w_std
+
+            # 2: Trend slope (linear regression coefficient)
+            t_idx = np.arange(w_len, dtype=np.float64)
+            t_c = t_idx - t_idx.mean()
+            t_var = (t_c ** 2).sum()
+            feat[t, 2] = ((w - w_mean) @ t_c) / (t_var + eps)
+
+            # 3: Momentum (last value - first value) / window
+            feat[t, 3] = (w[-1] - w[0]) / (w_len + eps)
+
+            # 4: Recent-vs-past ratio (second-half mean / first-half mean)
+            half = max(1, w_len // 2)
+            fh = w[:half].mean()
+            sh = w[half:].mean()
+            feat[t, 4] = sh / (np.abs(fh) + eps)
+
+            # 5: EMA (exponential moving average)
+            alpha = 2.0 / (max(1, w_len // 2) + 1)
+            weights = np.power(1 - alpha, np.arange(w_len - 1, -1, -1, dtype=np.float64))
+            weights /= weights.sum() + eps
+            feat[t, 5] = (w * weights).sum()
+
+            # 6: Lag-1 autocorrelation
+            if w_len > 2:
+                x1, x2 = w[:-1], w[1:]
+                m1, m2 = x1.mean(), x2.mean()
+                num = ((x1 - m1) * (x2 - m2)).mean()
+                denom = x1.std() * x2.std() + eps
+                feat[t, 6] = num / denom
+
+        return feat
 
     def _resolve_seasonalities(self, n_days):
         """Determine seasonality periods and Fourier orders."""
@@ -390,11 +485,32 @@ class SpinesProphet:
         else:
             X_season = np.zeros((n, 0))
 
+        # Build rolling causal lag features (optional)
+        if self.use_lag_features and n >= 4:
+            if self.lag_window == 'auto':
+                self._lag_window_size = max(3, min(n // 5, 30))
+            else:
+                self._lag_window_size = int(self.lag_window)
+
+            X_lag_raw = self._build_rolling_lag_features(y_norm, self._lag_window_size)
+            self._n_lag_features = X_lag_raw.shape[1]
+
+            # Normalize lag features (z-score) and store stats for predict
+            self._lag_feature_mean = X_lag_raw.mean(axis=0)
+            self._lag_feature_std = np.maximum(X_lag_raw.std(axis=0), 1e-8)
+            X_lag = (X_lag_raw - self._lag_feature_mean) / self._lag_feature_std
+
+            # Store last row for future prediction extrapolation
+            self._last_lag_features = X_lag[-1:, :].copy()
+        else:
+            self._n_lag_features = 0
+            X_lag = np.zeros((n, 0))
+
         # Combine design matrix
-        X = np.hstack([X_trend, X_season])
+        X = np.hstack([X_trend, X_season, X_lag])
         n_features = X.shape[1]
 
-        # Build regularization matrix (different priors for trend vs seasonality)
+        # Build regularization matrix (different priors for trend vs seasonality vs lag)
         reg = np.zeros(n_features)
         # Intercept and global slope: minimal regularization
         reg[0] = 1e-6
@@ -404,8 +520,14 @@ class SpinesProphet:
         if n_cp > 0:
             reg[2:2 + n_cp] = 1.0 / max(self.changepoint_prior_scale, 1e-8)
         # Seasonality: moderate regularization
-        if X_season.shape[1] > 0:
-            reg[self._n_trend_features:] = 1.0 / max(self.seasonality_prior_scale, 1e-8)
+        n_season = X_season.shape[1]
+        if n_season > 0:
+            reg[self._n_trend_features:self._n_trend_features + n_season] = \
+                1.0 / max(self.seasonality_prior_scale, 1e-8)
+        # Lag features: moderate regularization
+        if self._n_lag_features > 0:
+            reg[self._n_trend_features + n_season:] = \
+                1.0 / max(self.lag_prior_scale, 1e-8)
 
         # Ridge regression: β = (X^T X + λI)^{-1} X^T y
         XtX = X.T @ X + np.diag(reg)
@@ -431,6 +553,7 @@ class SpinesProphet:
         import pandas as pd
 
         dates = pd.to_datetime(dates)
+        n_pred = len(dates)
         t_days = (dates - self._t_min).total_seconds().values / 86400.0
         t_norm = t_days / self._t_scale
 
@@ -460,9 +583,15 @@ class SpinesProphet:
         if season_features:
             X_season = np.column_stack(season_features)
         else:
-            X_season = np.zeros((len(dates), 0))
+            X_season = np.zeros((n_pred, 0))
 
-        X = np.hstack([X_trend, X_season])
+        # Lag features: propagate last known values for future dates
+        if self._n_lag_features > 0 and self._last_lag_features is not None:
+            X_lag = np.repeat(self._last_lag_features, n_pred, axis=0)
+        else:
+            X_lag = np.zeros((n_pred, 0))
+
+        X = np.hstack([X_trend, X_season, X_lag])
 
         y_norm = X @ self._beta
         return y_norm * self._y_std + self._y_mean

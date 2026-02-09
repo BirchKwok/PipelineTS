@@ -7,8 +7,6 @@
 [![Downloads](https://pepy.tech/badge/pipelinets/month)](https://pepy.tech/project/pipelinets)
 [![Downloads](https://pepy.tech/badge/pipelinets/week)](https://pepy.tech/project/pipelinets)
 
-[\[中文文档\]](https://github.com/BirchKwok/PipelineTS/blob/main/README_CN.md)
-
 One-stop time series analysis tool, supporting time series data preprocessing, feature engineering, model training, model evaluation, model prediction, etc. Based on spinesTS and darts.
 ## Installation
 

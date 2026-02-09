@@ -492,8 +492,9 @@ class GAUDataPreprocessor:
         - X: 形状为(样本数, 时间步, 特征数)的特征数据
         - y: 目标值
         """
-        # 去除目标列，剩下的都是特征
-        feature_cols = [col for col in df.columns if col != target_col]
+        # 去除目标列和datetime列，剩下的都是特征
+        feature_cols = [col for col in df.columns
+                        if col != target_col and not pd.api.types.is_datetime64_any_dtype(df[col])]
         
         # 获取特征和目标数据
         data = df[feature_cols].values

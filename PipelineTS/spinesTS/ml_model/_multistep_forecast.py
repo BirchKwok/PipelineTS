@@ -126,7 +126,8 @@ class MultiOutputRegressor(ForecastingMixin, _MultiOutputEstimator):
         if not hasattr(self.estimator, "fit"):
             raise ValueError("The base estimator should implement a fit method")
 
-        y = self._validate_data(X="no_validation", y=y, multi_output=True)
+        import numpy as np
+        y = np.asarray(y)
 
         if y.ndim == 1:
             raise ValueError(
