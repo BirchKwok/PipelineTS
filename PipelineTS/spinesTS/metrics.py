@@ -25,7 +25,7 @@ class WMAPELoss(nn.Module):
         super(WMAPELoss, self).__init__()
 
     def forward(self, inputs, targets):
-        return torch.abs(inputs - targets).sum() / torch.abs(inputs).sum()
+        return torch.abs(inputs - targets).sum() / (torch.abs(targets).sum() + 1e-8)
 
 
 class RMSELoss(nn.Module):

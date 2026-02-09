@@ -4,3 +4,4 @@ from ._rnn import StackingRNN
 from ._patch_rnn import PatchRNN
 from ._tcn import TCN
 from ._itransformer import ITransformer
+from ._srs_net import SRSNet

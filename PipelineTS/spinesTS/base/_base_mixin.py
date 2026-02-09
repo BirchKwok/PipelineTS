@@ -11,36 +11,51 @@ class ForecastingMixin:
 
         Parameters
         ----------
-        x: to_predict data, must be 2 dims data
+        x: to_predict data, 2D (batch, seq_len) or 3D (batch, seq_len, n_vars)
         n: predict steps, must be int
 
         Returns
         -------
-        np.ndarray, which has 2 dims
+        np.ndarray, 2D or 3D depending on input
 
         """
         raise_if_not(ValueError, isinstance(n, int), "n must be int")
-        raise_if_not(ValueError, x.ndim == 2, "x must be 2 dims data")
+        raise_if_not(ValueError, x.ndim in (2, 3), "x must be 2 or 3 dims data")
+
+        is_multivariate = x.ndim == 3
+        # seq_len axis is always axis=1
+        seq_axis = 1
 
         current_res = self.predict(x)
 
         if n is None:
             return current_res
-        elif n <= current_res.shape[1]:
-            return current_res[:, :n]
+
+        pred_len = current_res.shape[seq_axis]
+
+        if n <= pred_len:
+            return current_res[:, :n] if not is_multivariate else current_res[:, :n, :]
         else:
             res = [current_res]
-            for i in range((n//res[0].shape[1])+1):
+            for i in range((n // pred_len) + 1):
                 current_res = self.predict(x)
                 res.append(current_res)
-                x = np.concatenate((x[:, current_res.shape[1]:], current_res), axis=-1)
+                # Slide the window: drop oldest pred_len steps, append new prediction
+                if is_multivariate:
+                    x = np.concatenate((x[:, pred_len:, :], current_res), axis=seq_axis)
+                else:
+                    x = np.concatenate((x[:, pred_len:], current_res), axis=seq_axis)
 
-            res = np.concatenate(res, axis=-1)[:, :n]
-
-            return res
+            res = np.concatenate(res, axis=seq_axis)
+            return res[:, :n] if not is_multivariate else res[:, :n, :]
 
     def score(self, x, y, eval2d=True):
+        pred = self.predict(x)
+        if pred.ndim == 3:
+            # Multivariate: flatten to 2D for scoring
+            B, L, N = pred.shape
+            return r2_score(y.reshape(B, -1).T, pred.reshape(B, -1).T)
         if eval2d:
-            return r2_score(y.T, self.predict(x).T)
+            return r2_score(y.T, pred.T)
         else:
-            return r2_score(y, self.predict(x))
+            return r2_score(y, pred)

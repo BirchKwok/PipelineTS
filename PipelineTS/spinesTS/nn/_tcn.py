@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
+from PipelineTS.spinesTS.layers import MultivariateWrapper
 from PipelineTS.spinesTS.nn.utils import get_weight_norm
 
 
@@ -25,79 +26,121 @@ class TemporalBlock(nn.Module):
         self.conv1 = weight_norm(nn.Conv1d(n_inputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation))
         self.chomp1 = Chomp1d(padding)
-        self.relu1 = nn.ReLU()
+        self.act1 = nn.GELU()
         self.dropout1 = nn.Dropout(dropout)
 
         self.conv2 = weight_norm(nn.Conv1d(n_outputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation))
         self.chomp2 = Chomp1d(padding)
-        self.relu2 = nn.ReLU()
+        self.act2 = nn.GELU()
         self.dropout2 = nn.Dropout(dropout)
 
-        self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
-                                 self.conv2, self.chomp2, self.relu2, self.dropout2)
+        self.net = nn.Sequential(self.conv1, self.chomp1, self.act1, self.dropout1,
+                                 self.conv2, self.chomp2, self.act2, self.dropout2)
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
-        self.relu = nn.ReLU()
+        self.norm = nn.LayerNorm(n_outputs)
+        self.act_out = nn.GELU()
         self.init_weights()
 
     def init_weights(self):
-        self.conv1.weight.data.normal_(0, 0.01)
-        self.conv2.weight.data.normal_(0, 0.01)
+        nn.init.kaiming_normal_(self.conv1.weight, nonlinearity='linear')
+        nn.init.kaiming_normal_(self.conv2.weight, nonlinearity='linear')
         if self.downsample is not None:
-            self.downsample.weight.data.normal_(0, 0.01)
+            nn.init.kaiming_normal_(self.downsample.weight, nonlinearity='linear')
 
     def forward(self, x):
         out = self.net(x)
         res = x if self.downsample is None else self.downsample(x)
-        return self.relu(out + res)
+        out = self.act_out(out + res)
+        # Apply LayerNorm on the feature dimension (transpose for Conv1d format)
+        out = self.norm(out.transpose(1, 2)).transpose(1, 2)
+        return out
 
 
 class TemporalConvNet(nn.Module):
-    def __init__(self, in_features, out_features, kernel_size=2, dropout=0.2, device=None):
+    def __init__(self, in_features, out_features, kernel_size=2, dropout=0.2, num_levels=None, hidden_channels=None, device=None):
         super(TemporalConvNet, self).__init__()
-        layers = []
 
-        dilation_size = 2
-        in_channels = in_features
-        out_channels = out_features
-        layers += [TemporalBlock(in_channels, out_channels, kernel_size, stride=1, dilation=dilation_size,
-                                 padding=(kernel_size-1) * dilation_size, dropout=dropout, device=device)]
+        # Auto-determine number of TCN levels based on input length for full receptive field
+        if num_levels is None:
+            import math
+            num_levels = max(2, int(math.ceil(math.log2(max(in_features, 4) / (kernel_size - 1)))) + 1)
+            num_levels = min(num_levels, 6)  # Cap at 6 levels
+
+        if hidden_channels is None:
+            hidden_channels = min(max(in_features, 32), 128)
+
+        layers = []
+        for i in range(num_levels):
+            dilation_size = 2 ** i
+            in_ch = in_features if i == 0 else hidden_channels
+            out_ch = hidden_channels
+            layers.append(
+                TemporalBlock(in_ch, out_ch, kernel_size, stride=1,
+                              dilation=dilation_size,
+                              padding=(kernel_size - 1) * dilation_size,
+                              dropout=dropout, device=device)
+            )
 
         self.network = nn.Sequential(*layers)
+        self.output_proj = nn.Linear(hidden_channels, out_features)
 
     def forward(self, x):
         if x.ndim == 2:
             x = x.unsqueeze(-1)
         x = self.network(x)
-
-        return x.squeeze(-1)
+        # Take the last time step's features and project to output
+        x = x[:, :, -1] if x.ndim == 3 else x
+        return self.output_proj(x)
 
 
 class TCN(TorchModelMixin, ForecastingMixin):
     def __init__(self,
                  in_features: Any,
                  out_features: Any,
-                 kernel_size: int = 2,
-                 dropout: float=0.2,
-                 learning_rate: float = 0.01,
+                 n_vars: int = 1,
+                 kernel_size: int = 3,
+                 dropout: float=0.15,
+                 learning_rate: float = 0.001,
                  random_seed: int = 42,
                  device='auto',
-                 loss_fn='mae'
+                 loss_fn='mae',
+                 num_levels: int = None,
+                 hidden_channels: int = None,
+                 weight_decay: float = 1e-4,
+                 channel_mixing: bool = True
                  ) -> None:
         self.in_features, self.out_features = in_features, out_features
+        self.n_vars = n_vars
         self.learning_rate = learning_rate
         self.loss_fn_name = loss_fn
         self.kernel_size = kernel_size
         self.dropout = dropout
         self.device = device
+        self.num_levels = num_levels
+        self.hidden_channels = hidden_channels
+        self.weight_decay = weight_decay
+        self.channel_mixing = channel_mixing
         # this sentence needs to be the last one
         super(TCN, self).__init__(random_seed, device, loss_fn=loss_fn)
 
     def call(self) -> tuple:
-        model = TemporalConvNet(self.in_features, self.out_features, kernel_size=self.kernel_size,
-                                dropout=self.dropout, device=self.device)
+        backbone = TemporalConvNet(
+            self.in_features, self.out_features, kernel_size=self.kernel_size,
+            dropout=self.dropout, num_levels=self.num_levels,
+            hidden_channels=self.hidden_channels, device=self.device
+        )
+        if self.n_vars > 1:
+            model = MultivariateWrapper(
+                backbone, self.n_vars, self.out_features,
+                channel_mixing=self.channel_mixing
+            )
+        else:
+            model = backbone
         loss_fn = self.loss_fn
-        optimizer = torch.optim.AdamW(model.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
+        )
         return model, loss_fn, optimizer
 
     def fit(self,

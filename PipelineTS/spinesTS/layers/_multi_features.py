@@ -1,5 +1,61 @@
+import torch
 from spinesUtils.asserts import raise_if_not
 from torch import nn
+
+
+class MultivariateWrapper(nn.Module):
+    """Channel-independent wrapper for multivariate time series.
+
+    Processes each variable through a shared backbone independently,
+    then optionally applies cross-variable mixing (like PatchTST approach).
+
+    Parameters
+    ----------
+    backbone : nn.Module
+        The univariate model backbone that takes (batch, seq_len) input
+        and returns (batch, pred_len) output.
+    n_vars : int
+        Number of input/output variables.
+    out_features : int
+        Prediction horizon length.
+    channel_mixing : bool
+        Whether to apply a learnable cross-variable mixing layer.
+    """
+
+    def __init__(self, backbone, n_vars, out_features, channel_mixing=True):
+        super(MultivariateWrapper, self).__init__()
+        self.backbone = backbone
+        self.n_vars = n_vars
+        self.out_features = out_features
+
+        if channel_mixing and n_vars > 1:
+            self.mixer = nn.Sequential(
+                nn.Linear(n_vars, n_vars * 2),
+                nn.GELU(),
+                nn.Linear(n_vars * 2, n_vars)
+            )
+        else:
+            self.mixer = None
+
+    def forward(self, x):
+        # x: (batch, seq_len, n_vars)
+        if x.ndim == 2:
+            # Univariate fallback: (batch, seq_len) -> (batch, pred_len)
+            return self.backbone(x)
+
+        B, L, N = x.shape
+        # Process each variable independently through shared backbone
+        # Reshape: (B, L, N) -> (B*N, L)
+        x = x.permute(0, 2, 1).reshape(B * N, L)
+        out = self.backbone(x)  # (B*N, pred_len)
+        # Reshape back: (B*N, pred_len) -> (B, pred_len, N)
+        out = out.reshape(B, N, -1).permute(0, 2, 1)
+
+        # Optional cross-variable mixing with residual
+        if self.mixer is not None:
+            out = out + self.mixer(out)
+
+        return out
 
 
 class SeriesRecombinationLayer(nn.Module):

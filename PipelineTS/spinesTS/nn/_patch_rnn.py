@@ -6,6 +6,8 @@ from torch import nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
 from PipelineTS.spinesTS.layers._position_encoder import LearnablePositionalEncoding
+from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers._srs import SRSBlock
 from PipelineTS.spinesTS.nn.utils import get_weight_norm
 
 
@@ -38,11 +40,14 @@ class FCBlock(nn.Module):
         super(FCBlock, self).__init__()
         weight_norm = get_weight_norm(device)
 
+        # Adaptive hidden dim instead of hardcoded 512
+        hidden_dim = min(max(in_features, 64), 512)
+
         self.fc_layer = nn.Sequential(
-            weight_norm(nn.Linear(in_features, 512)),
+            weight_norm(nn.Linear(in_features, hidden_dim)),
             nn.GELU(),
             nn.Dropout(dropout),
-            weight_norm(nn.Linear(512, out_features))
+            weight_norm(nn.Linear(hidden_dim, out_features))
         )
 
     def forward(self, x):
@@ -86,24 +91,80 @@ class FCBlock(nn.Module):
 #
 
 class PatchRNNBlock(nn.Module):
-    def __init__(self, in_features, out_features, kernel_size=4, dropout=0.1, device=None, multi_steps=False):
+    def __init__(self, in_features, out_features, kernel_size=4, dropout=0.1, device=None, multi_steps=False,
+                 use_srs=False, srs_d_model=64, srs_n_heads=4, srs_top_k_ratio=0.5, srs_n_vars=1):
         super(PatchRNNBlock, self).__init__()
         self.out_features = out_features
         self.kernel_size = kernel_size
         self.device = device
+        self.use_srs = use_srs
 
-        self.splitter = SegmentationBlock(in_features, kernel_size, device=device)
-        self.encoder_rnn = nn.LSTM(kernel_size, kernel_size // 2, num_layers=2,
-                                   bias=False, bidirectional=True, batch_first=True)
-        seq_len_adjusted = in_features - kernel_size + 1
-        fc_input_features = seq_len_adjusted * kernel_size if not multi_steps else kernel_size
-        self.decoder = FCBlock(fc_input_features, 1 if multi_steps else out_features,
-                               dropout=dropout, device=device) # Assuming each step predicts one value
-        self.layer_norm = nn.LayerNorm(kernel_size)
+        if use_srs:
+            # SRS path: multi-scale patching + selective representation
+            self.srs_block = SRSBlock(
+                n_vars=srs_n_vars, d_model=srs_d_model, seq_len=in_features,
+                n_heads=srs_n_heads, top_k_ratio=srs_top_k_ratio, dropout=dropout
+            )
+            rnn_input_size = srs_d_model
+        else:
+            # Original path: SegmentationBlock
+            self.splitter = SegmentationBlock(in_features, kernel_size, device=device)
+            rnn_input_size = kernel_size
+
+        # Use adaptive hidden size and add dropout to LSTM
+        hidden_size = max(rnn_input_size // 2, 4)
+        self.encoder_rnn = nn.LSTM(
+            rnn_input_size, hidden_size, num_layers=2,
+            bias=False, bidirectional=True, batch_first=True,
+            dropout=dropout
+        )
+        rnn_out_size = hidden_size * 2  # bidirectional
+
+        if use_srs:
+            # SRS path: weighted aggregation -> decoder
+            fc_input_features = rnn_out_size
+        else:
+            seq_len_adjusted = in_features - kernel_size + 1
+            fc_input_features = seq_len_adjusted * rnn_out_size if not multi_steps else rnn_out_size
+
+        self.decoder = FCBlock(fc_input_features, 1 if multi_steps and not use_srs else out_features,
+                               dropout=dropout, device=device)
+        self.layer_norm = nn.LayerNorm(rnn_out_size)
+        # Residual projection: rnn_input_size -> rnn_out_size
+        self.residual_proj = nn.Linear(rnn_input_size, rnn_out_size)
+
+        # For multi_steps (only in non-SRS path): project rnn output back to LSTM input size
+        if multi_steps and not use_srs:
+            self.feedback_proj = nn.Linear(rnn_out_size, rnn_input_size)
 
         self.multi_steps = multi_steps
 
-    def forward(self, x):
+    def _forward_srs(self, x):
+        """SRS-enhanced forward path."""
+        if x.ndim == 2:
+            x = x.unsqueeze(-1)  # (B, L) -> (B, L, 1)
+
+        # SRS: multi-scale patching + selective representation
+        selected, weights = self.srs_block(x)  # (B, K, d_model)
+
+        # LSTM on selected patches
+        output, _ = self.encoder_rnn(selected)  # (B, K, rnn_out_size)
+
+        batch_size, seq_len, features = output.shape
+        output_2d = output.reshape(batch_size * seq_len, features)
+        output_norm = self.layer_norm(output_2d)
+        output = output_norm.view(batch_size, seq_len, features)
+
+        # Residual connection
+        output = output + self.residual_proj(selected)
+
+        # Weighted aggregation using SRS importance weights
+        aggregated = (output * weights.unsqueeze(-1)).sum(dim=1)  # (B, rnn_out_size)
+
+        return self.decoder(aggregated)
+
+    def _forward_original(self, x):
+        """Original PatchRNN forward path."""
         x = self.splitter(x)
         output, (h, c) = self.encoder_rnn(x)  # Preserve the last state of RNN for next step generation
 
@@ -112,7 +173,8 @@ class PatchRNNBlock(nn.Module):
         output_norm = self.layer_norm(output_2d)
         output = output_norm.view(batch_size, seq_len, features)
 
-        output += x  # Assuming x is already in the correct shape for residual connection
+        # Residual connection with projection to match dimensions
+        output = output + self.residual_proj(x)
 
         if not self.multi_steps:
             res = self.decoder(output.reshape(output.size(0), -1))
@@ -120,8 +182,8 @@ class PatchRNNBlock(nn.Module):
 
         # Initialize hidden and cell state for generation
         h_gen, c_gen = h, c
-        # Initialize feedback input as the last output step
-        feedback_input = output[:, -1, :].unsqueeze(1)
+        # Initialize feedback input: project back to LSTM input size
+        feedback_input = self.feedback_proj(output[:, -1, :]).unsqueeze(1)
 
         outputs = []
         for _ in range(self.out_features):
@@ -130,13 +192,19 @@ class PatchRNNBlock(nn.Module):
             output_gen_2d = output_gen.reshape(output_gen.size(0), -1)
             output_gen_norm = self.layer_norm(output_gen_2d)
             res = self.decoder(output_gen_norm)
-            outputs.append(res.squeeze(-1))  # Remove the last dimension to ensure 2D output
-            feedback_input = output_gen
+            outputs.append(res.squeeze(-1))
+            # Project back to LSTM input size for next step
+            feedback_input = self.feedback_proj(output_gen.squeeze(1)).unsqueeze(1)
 
         # Concatenate along the sequence length dimension to form a 2D output
         outputs = torch.stack(outputs, dim=1)
 
         return outputs
+
+    def forward(self, x):
+        if self.use_srs:
+            return self._forward_srs(x)
+        return self._forward_original(x)
 
 
 class PatchRNN(TorchModelMixin, ForecastingMixin):
@@ -145,35 +213,61 @@ class PatchRNN(TorchModelMixin, ForecastingMixin):
     def __init__(self,
                  in_features: int,
                  out_features: int,
+                 n_vars: int = 1,
                  kernel_size=4,
                  dropout=0.1,
                  loss_fn='mae',
                  learning_rate: float = 0.001,
                  random_seed: int = 42,
                  device='auto',
-                 multi_steps=True
+                 multi_steps=True,
+                 weight_decay: float = 1e-4,
+                 channel_mixing: bool = True,
+                 use_srs: bool = False,
+                 srs_d_model: int = 64,
+                 srs_n_heads: int = 4,
+                 srs_top_k_ratio: float = 0.5
                  ) -> None:
         self.in_features, self.out_features = in_features, out_features
+        self.n_vars = n_vars
         self.learning_rate = learning_rate
         self.kernel_size = kernel_size
         self.dropout = dropout
         self.loss_fn_name = loss_fn
         self.multi_steps = multi_steps
+        self.weight_decay = weight_decay
+        self.channel_mixing = channel_mixing
+        self.use_srs = use_srs
+        self.srs_d_model = srs_d_model
+        self.srs_n_heads = srs_n_heads
+        self.srs_top_k_ratio = srs_top_k_ratio
 
         # this sentence needs to be the last one
         super(PatchRNN, self).__init__(random_seed, device, loss_fn=loss_fn)
 
     def call(self) -> tuple:
-        model = PatchRNNBlock(
+        backbone = PatchRNNBlock(
             in_features=self.in_features,
             out_features=self.out_features,
             device=self.device,
             kernel_size=self.kernel_size,
             dropout=self.dropout,
-            multi_steps=self.multi_steps
+            multi_steps=self.multi_steps,
+            use_srs=self.use_srs,
+            srs_d_model=self.srs_d_model,
+            srs_n_heads=self.srs_n_heads,
+            srs_top_k_ratio=self.srs_top_k_ratio,
+            srs_n_vars=self.n_vars if self.use_srs else 1
         )
+        if self.n_vars > 1 and not self.use_srs:
+            model = MultivariateWrapper(
+                backbone, self.n_vars, self.out_features,
+                channel_mixing=self.channel_mixing
+            )
+        else:
+            model = backbone
         loss_fn = self.loss_fn
-        optimizer = torch.optim.AdamW(model.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         return model, loss_fn, optimizer
 
     def fit(self,

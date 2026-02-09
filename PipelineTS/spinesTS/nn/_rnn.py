@@ -1,121 +1,120 @@
 from typing import Any, Union
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.spinesTS.layers import LearnablePositionalEncoding
+from PipelineTS.spinesTS.layers import MultivariateWrapper
 
 
-class EncoderDecoderBlock(nn.Module):
-    def __init__(
-            self,
-            in_features,
-            out_features,
-            bias=False,
-            dropout=0.1
-    ):
-        super(EncoderDecoderBlock, self).__init__()
+class GatedResBlock(nn.Module):
+    """Gated residual block with SiLU activation.
 
-        self.encoder = nn.LSTM(in_features, in_features, num_layers=1,
-                               bias=bias,
-                               bidirectional=False, batch_first=True)
+    x → LayerNorm → [sigmoid(gate) * SiLU(up)] → dropout → + residual
+    """
 
-        self.decoder = nn.Sequential(
-            nn.BatchNorm1d(in_features),
-            nn.Linear(in_features, out_features),
-            nn.GELU(),
-            nn.Dropout(dropout)
-        )
-
-        self.position_encoder = LearnablePositionalEncoding(in_features)
+    def __init__(self, d_model, dropout=0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(d_model)
+        self.gate = nn.Linear(d_model, d_model)
+        self.up = nn.Linear(d_model, d_model)
+        self.drop = nn.Dropout(dropout)
 
     def forward(self, x):
-        if x.ndim == 2:
-            x = x.view(x.size(0), 1, x.size(1))
-        elif x.ndim == 1:
-            x = x.view(1, 1, x.size(0))
-
-        _, (h, _) = self.encoder(x)
-        x = self.position_encoder(x)
-
-        x = x.squeeze() + h.squeeze()
-
-        if x.ndim == 1:
-            x = x.view(1, -1)
-
-        return self.decoder(x.view(x.size(0), -1))
+        h = self.norm(x)
+        return x + self.drop(torch.sigmoid(self.gate(h)) * F.silu(self.up(h)))
 
 
 class Seq2SeqBlock(nn.Module):
-    def __init__(self, in_features, out_features, bias=False, dropout=0.1, blocks=2):
-        super(Seq2SeqBlock, self).__init__()
+    """Gated residual MLP backbone for time series forecasting.
 
-        self.in_features, self.out_features = in_features, out_features
+    Processes the full sequence as a single flattened vector through
+    stacked GatedResBlocks with SiLU gating and residual connections.
 
-        self.enc_dnc = nn.Sequential(
-            *nn.ModuleList([
-                EncoderDecoderBlock(
-                    in_features=in_features,
-                    out_features=in_features,
-                    bias=bias,
-                    dropout=dropout
-                ) for _ in range(blocks)]
-            )
+    Args:
+        in_features: Input sequence length.
+        out_features: Prediction horizon.
+        d_model: Hidden dimension.
+        n_blocks: Number of gated residual blocks.
+        dropout: Dropout rate.
+    """
+
+    def __init__(self, in_features, out_features, d_model=48, n_blocks=3, dropout=0.1):
+        super().__init__()
+
+        self.input_proj = nn.Sequential(
+            nn.Linear(in_features, d_model),
+            nn.LayerNorm(d_model)
         )
 
-        self.position_encoder = LearnablePositionalEncoding(in_features)
+        self.blocks = nn.ModuleList([
+            GatedResBlock(d_model, dropout)
+            for _ in range(n_blocks)
+        ])
 
-        self.output_layer = nn.Sequential(
-            nn.Linear(in_features, 256),
-            nn.GELU(),
-            nn.Linear(256, out_features)
-        )
+        self.output_norm = nn.LayerNorm(d_model)
+        self.output_proj = nn.Linear(d_model, out_features)
 
     def forward(self, x):
-        if x.ndim == 2:
-            x = x.view(x.size(0), 1, x.size(1))
+        # x: (B, L)
+        if x.ndim == 3:
+            x = x.squeeze(-1)
 
-        output = self.enc_dnc(x)
-
-        # 残差连接
-        output = self.position_encoder(output.unsqueeze(1)).squeeze() + x.squeeze()
-
-        return self.output_layer(output.squeeze())
+        x = self.input_proj(x)
+        for block in self.blocks:
+            x = block(x)
+        x = self.output_norm(x)
+        return self.output_proj(x)
 
 
 class StackingRNN(TorchModelMixin, ForecastingMixin):
     def __init__(self,
                  in_features: int,
                  out_features: int,
+                 n_vars: int = 1,
+                 d_model: int = 48,
+                 n_blocks: int = 3,
                  dropout=0.1,
-                 blocks=2,
                  loss_fn='mae',
-                 bias=False,
                  learning_rate: float = 0.001,
                  random_seed: int = 42,
-                 device='auto'
+                 device='auto',
+                 weight_decay: float = 1e-4,
+                 channel_mixing: bool = True
                  ) -> None:
         self.in_features, self.out_features = in_features, out_features
+        self.n_vars = n_vars
+        self.d_model = d_model
+        self.n_blocks = n_blocks
         self.learning_rate = learning_rate
         self.dropout = dropout
-        self.blocks = blocks
-        self.bias = bias
         self.loss_fn_name = loss_fn
+        self.weight_decay = weight_decay
+        self.channel_mixing = channel_mixing
 
         # this sentence needs to be the last one
         super(StackingRNN, self).__init__(random_seed, device, loss_fn=loss_fn)
 
     def call(self) -> tuple:
-        model = Seq2SeqBlock(
+        backbone = Seq2SeqBlock(
             in_features=self.in_features,
             out_features=self.out_features,
-            bias=self.bias,
-            dropout=self.dropout,
-            blocks=self.blocks
+            d_model=self.d_model,
+            n_blocks=self.n_blocks,
+            dropout=self.dropout
         )
+        if self.n_vars > 1:
+            model = MultivariateWrapper(
+                backbone, self.n_vars, self.out_features,
+                channel_mixing=self.channel_mixing
+            )
+        else:
+            model = backbone
         loss_fn = self.loss_fn
-        optimizer = torch.optim.AdamW(model.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
+        )
         return model, loss_fn, optimizer
 
     def fit(self,

@@ -11,5 +11,7 @@ from ._enhance_layers import (
     GAU,
     FFTTopKBlock
 )
-from ._multi_features import SeriesRecombinationLayer
+from ._multi_features import SeriesRecombinationLayer, MultivariateWrapper
 from ._position_encoder import PositionalEncoding, LearnablePositionalEncoding
+from ._srs import RevIN, MultiScalePatchEmbedding, SelectiveRepresentationSpace, SRSBlock
+from ._rwkv import RWKVBlock, RWKVEncoder, GatedTimeMixing, LightChannelMixing

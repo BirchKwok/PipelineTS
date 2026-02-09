@@ -252,7 +252,8 @@ class ITransformer(TorchModelMixin, ForecastingMixin):
                  loss_fn='mae',
                  learning_rate: float = 0.001,
                  random_seed: int = 42,
-                 device='auto'
+                 device='auto',
+                 weight_decay: float = 1e-4
                  ):
         self.in_features = in_features
         self.out_features = out_features
@@ -269,6 +270,7 @@ class ITransformer(TorchModelMixin, ForecastingMixin):
         self.use_norm = use_norm
         self.class_strategy = class_strategy
         self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
 
         super(ITransformer, self).__init__(random_seed, device, loss_fn=loss_fn)
 
@@ -290,7 +292,9 @@ class ITransformer(TorchModelMixin, ForecastingMixin):
             class_strategy=self.class_strategy
         )
         loss_fn = self.loss_fn
-        optimizer = torch.optim.AdamW(model.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
+        )
         return model, loss_fn, optimizer
 
     def fit(self,

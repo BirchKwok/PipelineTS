@@ -264,7 +264,9 @@ class TorchModelMixin:
 
     def predict(self, X):
         """
-        X : torch.Tensor, tensor which to predict
+        X : torch.Tensor or np.ndarray, data to predict.
+            Supports both 2D (batch, seq_len) for univariate
+            and 3D (batch, seq_len, n_vars) for multivariate.
         """
         check_is_fitted(self)
         self.model.eval()
@@ -284,8 +286,11 @@ class TorchModelMixin:
 
     def _get_batch_size(self, x, batch_size='auto'):
         if batch_size == 'auto':
-            self._batch_size = 2 ** np.log2(len(x)) * 16
-            self._batch_size = 5096 if self._batch_size > 5096 else self._batch_size
+            n = len(x)
+            # Use power-of-2 batch size, capped between 16 and 512
+            log_n = max(4, min(9, int(np.log2(max(n, 16)))))
+            self._batch_size = int(2 ** log_n)
+            self._batch_size = min(self._batch_size, n)
         else:
             raise_if_not(ValueError, isinstance(batch_size, int) and batch_size > 0, "batch_size must be int and > 0")
             self._batch_size = batch_size
@@ -303,9 +308,12 @@ class TorchModelMixin:
 
         return X.float(), y.float()
 
-    def data_loader(self, X, y):
+    def data_loader(self, X, y, shuffle=False):
         train_data = TensorDataset(X, y)
-        train_loader = DataLoader(train_data, batch_size=self._batch_size, shuffle=False)
+        train_loader = DataLoader(
+            train_data, batch_size=self._batch_size, shuffle=shuffle,
+            pin_memory=True if str(self.device).startswith('cuda') else False
+        )
 
         return train_loader
 
@@ -324,22 +332,35 @@ class TorchModelMixin:
         train_batch = len(dataloader)
         train_loss_current, train_metric = 0, 0
 
+        use_amp = hasattr(self, '_use_amp') and self._use_amp
+
         for x, y in dataloader:
             x, y = x.to(self.device), y.to(self.device)
 
-            # compute error
-            train_pred = model(x)
-            train_loss = loss_fn(train_pred, y)
             optimizer.zero_grad(set_to_none=True)  # clear optimizer gradient
 
-            # backward
-            train_loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.)
+            if use_amp:
+                with torch.amp.autocast('cuda'):
+                    train_pred = model(x)
+                    train_loss = loss_fn(train_pred, y)
+                self._grad_scaler.scale(train_loss).backward()
+                self._grad_scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.)
+                self._grad_scaler.step(optimizer)
+                self._grad_scaler.update()
+            else:
+                # compute error
+                train_pred = model(x)
+                train_loss = loss_fn(train_pred, y)
 
-            optimizer.step()
+                # backward
+                train_loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.)
+
+                optimizer.step()
 
             train_metric += self.metric(train_pred, y)
-            train_loss_current += train_loss.item()  # 释放图形指针
+            train_loss_current += train_loss.item()
 
         return train_loss_current / train_batch, train_metric / train_batch
 
@@ -414,8 +435,13 @@ class TorchModelMixin:
             lr_scheduler='CosineAnnealingLR',
             lr_scheduler_patience=10,
             lr_factor=0.1,
+            epochs=100,
+            steps_per_epoch=1,
             **lr_scheduler_kwargs
     ):
+        # Remove non-scheduler kwargs that may leak in
+        lr_scheduler_kwargs.pop('scheduler_config', None)
+
         if lr_scheduler == 'ReduceLROnPlateau':
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
@@ -423,11 +449,28 @@ class TorchModelMixin:
                 patience=lr_scheduler_patience, factor=lr_factor, **lr_scheduler_kwargs
             )
         elif lr_scheduler == 'CosineAnnealingLR':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=5, eta_min=0,
-                                                                   **lr_scheduler_kwargs)
+            # T_max should adapt to training duration
+            t_max = max(5, epochs // 10)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, T_max=t_max, eta_min=1e-7,
+                **lr_scheduler_kwargs
+            )
         elif lr_scheduler == 'CosineAnnealingWarmRestarts':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=5, T_mult=2,
-                                                                             **lr_scheduler_kwargs)
+            t_0 = max(5, epochs // 20)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                self.optimizer, T_0=t_0, T_mult=2,
+                **lr_scheduler_kwargs
+            )
+        elif lr_scheduler == 'OneCycleLR':
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                self.optimizer,
+                max_lr=self.learning_rate * 10,
+                epochs=epochs,
+                steps_per_epoch=steps_per_epoch,
+                pct_start=0.3,
+                anneal_strategy='cos',
+                **lr_scheduler_kwargs
+            )
         elif lr_scheduler is None:
             return None
         else:
@@ -519,7 +562,7 @@ class TorchModelMixin:
         raise_if_not(ValueError, isinstance(metrics_name, str), "metrics_name must be str")
         raise_if_not(ValueError, isinstance(min_delta, int), "min_delta must be int")
         raise_if_not(ValueError, isinstance(patience, int), "patience must be int")
-        raise_if_not(ValueError, isinstance(lr_scheduler, str), "lr_scheduler must be str")
+        raise_if_not(ValueError, isinstance(lr_scheduler, (str, type(None))), "lr_scheduler must be str or None")
         raise_if_not(ValueError, isinstance(lr_scheduler_patience, int), "lr_scheduler_patience must be int")
         raise_if_not(ValueError, isinstance(lr_factor, float), "lr_factor must be float")
         raise_if_not(ValueError, isinstance(restore_best_weights, bool), "restore_best_weights must be bool")
@@ -537,8 +580,13 @@ class TorchModelMixin:
         eval_set = self._check_eval_set_params(eval_set)
 
         self._get_batch_size(X, batch_size=batch_size)
-        train_dataloader = self.data_loader(X, y)
+        train_dataloader = self.data_loader(X, y, shuffle=True)
         test_dataloader = None
+
+        # Enable AMP for CUDA devices
+        self._use_amp = str(self.device).startswith('cuda')
+        if self._use_amp:
+            self._grad_scaler = torch.amp.GradScaler('cuda')
 
         if eval_set is not None:
             test_dataloader = self.data_loader(*self._check_x_y_type(eval_set[0], eval_set[1]))
@@ -554,6 +602,8 @@ class TorchModelMixin:
             mode=mode, lr_scheduler=lr_scheduler,
             lr_scheduler_patience=lr_scheduler_patience,
             lr_factor=lr_factor,
+            epochs=epochs,
+            steps_per_epoch=batches,
             **lr_scheduler_kwargs)
 
         for epoch in range(epochs):
@@ -610,7 +660,7 @@ class TorchModelMixin:
         self.model.eval()
         with torch.no_grad():
             X, y = torch.Tensor(X), torch.Tensor(y)
-            X_gpu, _ = self._move_to_device(X), self._move_to_device(y)
-            pred = self.model(X_gpu).cpu().numpy()
+            X_gpu = self._move_to_device(X)
+            pred = self.model(X_gpu).cpu()
 
         return self.metric(y, pred)

@@ -60,24 +60,26 @@ class GAU(nn.Module):
         super(GAU, self).__init__()
         hidden_dim = int(expansion_factor) * in_features
         self.query_key_dim = query_key_dim
+        self.scale = query_key_dim ** -0.5
 
         self.norm = nn.LayerNorm(in_features)
         self.dropout = nn.Dropout(dropout)
 
-        # Memory unit
+        # Memory unit with gating
         self.memory = nn.Linear(in_features, in_features)
+        self.memory_gate = nn.Parameter(torch.zeros(1))
 
         # Bilinear attention mechanism
-        self.W_bilinear = nn.Parameter(torch.randn(query_key_dim, query_key_dim))
+        self.W_bilinear = nn.Parameter(torch.randn(query_key_dim, query_key_dim) * 0.02)
 
         self.to_hidden = nn.Sequential(
             nn.Linear(in_features, hidden_dim * 2),
-            nn.ReLU()
+            nn.SiLU()
         )
 
         self.to_qk = nn.Sequential(
             nn.Linear(in_features, query_key_dim),
-            nn.ReLU()
+            nn.SiLU()
         )
 
         self.to_out = nn.Sequential(
@@ -87,23 +89,24 @@ class GAU(nn.Module):
         )
 
         self.add_residual = skip_connect
+        if self.add_residual:
+            self.residual_scale = nn.Parameter(torch.ones(1))
 
     def forward(self, x):
-        seq_len = x.shape[-2]
-
-        # Update memory
+        # Update memory with learnable gating
         memory = self.memory(x)
+        gate_val = torch.sigmoid(self.memory_gate)
+        normed_x = self.norm(x + gate_val * memory)
 
-        normed_x = self.norm(x + memory)
         v, gate = self.to_hidden(normed_x).chunk(2, dim=-1)
 
         Z = self.to_qk(normed_x)
 
-        # Bilinear attention
+        # Bilinear attention with proper sqrt(d) scaling
         QK = torch.einsum('b i d, d e, b j e -> b i j', Z, self.W_bilinear, Z)
-        QK /= seq_len
+        QK = QK * self.scale
 
-        A = F.relu(QK) ** 2
+        A = F.silu(QK) ** 2
         A = self.dropout(A)
 
         V = torch.einsum('b i j, b j d -> b i d', A, v)
@@ -112,7 +115,7 @@ class GAU(nn.Module):
         out = self.to_out(V)
 
         if self.add_residual:
-            out = out + x
+            out = out + self.residual_scale * x
 
         return out
 
