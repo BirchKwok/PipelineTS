@@ -7,328 +7,358 @@
 [![Downloads](https://pepy.tech/badge/pipelinets/month)](https://pepy.tech/project/pipelinets)
 [![Downloads](https://pepy.tech/badge/pipelinets/week)](https://pepy.tech/project/pipelinets)
 
-One-stop time series analysis tool, supporting time series data preprocessing, feature engineering, model training, model evaluation, model prediction, etc. Based on spinesTS and darts.
-## Installation
+One-stop time series analysis tool, supporting data preprocessing, feature engineering, model training, model evaluation, and forecasting.
+一站式时间序列分析工具，支持数据预处理、特征工程、模型训练、模型评估与预测。
+
+Built on top of spinesTS, it provides a unified interface for 24 time series models with automatic model selection, conformal prediction intervals, and multivariate forecasting.
+基于 spinesTS 构建，提供 24 种时间序列模型的统一接口，支持自动模型选择、保形预测区间和多变量预测。
+
+---
+
+## Table of Contents / 目录
+
+- [Features / 特性](#features--特性)
+- [Installation / 安装](#installation--安装)
+- [Quick Start / 快速开始](#quick-start--快速开始)
+- [Available Models / 可用模型](#available-models--可用模型)
+- [ModelPipeline / 模型管道](#modelpipeline--模型管道)
+- [Interval Prediction / 区间预测](#interval-prediction--区间预测)
+- [Multivariate Prediction / 多变量预测](#multivariate-prediction--多变量预测)
+- [Save and Load / 保存与加载](#save-and-load--保存与加载)
+- [Documentation / 文档](#documentation--文档)
+- [Tutorials / 教程](#tutorials--教程)
+- [License / 许可证](#license--许可证)
+
+---
+
+## Features / 特性
+
+- **24 built-in models**: 14 neural network, 7 machine learning, 2 statistical, and 1 ensemble pipeline model.
+- **24 个内置模型**：14 个神经网络、7 个机器学习、2 个统计模型和 1 个集成管道模型。
+
+- **Automatic model selection**: `ModelPipeline` trains and compares all models, automatically selecting the best one.
+- **自动模型选择**：`ModelPipeline` 训练并比较所有模型，自动选出最佳模型。
+
+- **Conformal prediction intervals**: Industry-standard distribution-free prediction intervals with coverage guarantees.
+- **保形预测区间**：行业标准的无分布预测区间，具有覆盖率保证。
+
+- **CQR for neural networks**: Conformalized Quantile Regression provides adaptive, input-dependent intervals for NN models.
+- **神经网络 CQR**：保形分位数回归为神经网络模型提供自适应的、依赖输入的预测区间。
+
+- **Multivariate forecasting**: ITransformer and SRSNet support multi-input/multi-output prediction modes.
+- **多变量预测**：ITransformer 和 SRSNet 支持多输入/多输出预测模式。
+
+- **Rich feature engineering**: Automatic lag feature extraction (26+ features per window) for GBDT/ML models and Prophet.
+- **丰富的特征工程**：为 GBDT/ML 模型和 Prophet 自动提取滞后特征（每个窗口 26+ 个特征）。
+
+- **Unified API**: All models share the same `fit()` / `predict()` interface.
+- **统一 API**：所有模型共享相同的 `fit()` / `predict()` 接口。
+
+- **Built-in datasets**: Multiple time series datasets for quick experimentation.
+- **内置数据集**：多个时间序列数据集，方便快速实验。
+
+---
+
+## Installation / 安装
+
+Install via pip:
+通过 pip 安装：
 
 ```bash
-# if you don't want to use the prophet model
-# run this
-python -m pip install PipelineTS[core]
-
-# if you want to use all models
-# run this
-python -m pip install PipelineTS[all]
+pip install PipelineTS
 ```
 
-## Quick Start [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/QuickStart.ipynb)
+Python >= 3.9 is required.
+需要 Python >= 3.9。
 
-### list all available models
-```python
-from PipelineTS.dataset import LoadWebSales
+---
 
-init_data = LoadWebSales()[['date', 'type_a']]
+## Quick Start / 快速开始
 
-valid_data = init_data.iloc[-30:, :]
-data = init_data.iloc[:-30, :]
-accelerator = 'auto'  # Specify Computing Device
-
-from PipelineTS.pipeline import ModelPipeline
-
-# list all models
-ModelPipeline.list_all_available_models()
-```
-
-```
-[output]:
-['prophet',
- 'auto_arima',
- 'catboost',
- 'lightgbm',
- 'xgboost',
- 'wide_gbrt',
- 'd_linear',
- 'n_linear',
- 'n_beats',
- 'n_hits',
- 'tcn',
- 'tft',
- 'gau',
- 'stacking_rnn',
- 'time2vec',
- 'multi_output_model',
- 'multi_step_model',
- 'transformer',
- 'random_forest',
- 'tide']
-```
-
-### Training
-```python
-from sklearn.metrics import mean_absolute_error
-
-pipeline = ModelPipeline(
-    time_col='date',
-    target_col='type_a',
-    lags=30,
-    random_state=42,
-    metric=mean_absolute_error,
-    metric_less_is_better=True,
-    accelerator=accelerator,  # Supported values for accelerator: `auto`, `cpu`, `tpu`, `cuda`, `mps`.
-)
-
-# training all models
-pipeline.fit(data, valid_data=valid_data)
-
-# use best model to predict next 30 steps data point
-res = pipeline.predict(30)
-
-```
-
-## Training and prediction of a single model
-###  Without predict specify series [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling.ipynb)
-<details>
-<summary>Code</summary>
+### Load Data / 加载数据
 
 ```python
-
-from PipelineTS.dataset import LoadMessagesSentDataSets
+from PipelineTS.dataset import LoadElectricDataSets
 import pandas as pd
 
-# ------------------- Data Preprocessing -------------------
-# convert time col, the date column is assumed to be date_col
+# Load a built-in dataset
+# 加载内置数据集
+data = LoadElectricDataSets()
 time_col = 'date'
-target_col = 'ta'
-lags = 60  # Ahead of the window size, the data will be split into multiple sequences of lags for training
-n = 40 # How many steps to predict, in this case how many days to predict
-
-# you can also load data with pandas
-# init_data = pd.read_csv('/path/to/your/data.csv')
-init_data = LoadMessagesSentDataSets()[[time_col, target_col]]
-
-init_data[time_col] = pd.to_datetime(init_data[time_col], format='%Y-%m-%d')
-
-# split trainning set and test set
-valid_data = init_data.iloc[-n:, :]
-data = init_data.iloc[:-n, :]
-print("data shape: ", data.shape, ", valid data shape: ", valid_data.shape)
-data.tail(5)
-
-# data visualization
-from PipelineTS.plot import plot_data_period
-plot_data_period(
-    data.iloc[-300:, :], 
-    valid_data, 
-    time_col=time_col, 
-    target_col=target_col, 
-    labels=['Train data', 'Valid_data']
-)
-
-# training and predict
-from PipelineTS.nn_model import TiDEModel
-tide = TiDEModel(
-    time_col=time_col, target_col=target_col, lags=lags, random_state=42, 
-    quantile=0.9, enable_progress_bar=False, enable_model_summary=False
-)
-tide.fit(data)
-tide.predict(n)
-
-```
-</details>
-
-### With predict specify series [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/modeling-with-predict-specify-series.ipynb)
-
-<details>
-<summary>Code</summary>
-
-```python
-
-from PipelineTS.dataset import LoadMessagesSentDataSets
-import pandas as pd
-
-# ------------------- Data Preprocessing -------------------
-# convert time col, the date column is assumed to be date_col
-time_col = 'date'
-target_col = 'ta'
-lags = 60  # Ahead of the window size, the data will be split into multiple sequences of lags for training
-n = 40 # How many steps to predict, in this case how many days to predict
-
-# you can also load data with pandas
-# init_data = pd.read_csv('/path/to/your/data.csv')
-init_data = LoadMessagesSentDataSets()[[time_col, target_col]]
-
-init_data[time_col] = pd.to_datetime(init_data[time_col], format='%Y-%m-%d')
-
-# split trainning set and test set
-valid_data = init_data.iloc[-n:, :]
-data = init_data.iloc[:-n, :]
-print("data shape: ", data.shape, ", valid data shape: ", valid_data.shape)
-data.tail(5)
-
-# data visualization
-from PipelineTS.plot import plot_data_period
-plot_data_period(
-    data.iloc[-300:, :], 
-    valid_data, 
-    time_col=time_col, 
-    target_col=target_col, 
-    labels=['Train data', 'Valid_data']
-)
-
-# training and predict
-from PipelineTS.nn_model import TiDEModel
-tide = TiDEModel(
-    time_col=time_col, target_col=target_col, lags=lags, random_state=42, 
-    quantile=0.9, enable_progress_bar=False, enable_model_summary=False
-)
-tide.fit(data)
-tide.predict(n, data=valid_data)
+target_col = 'value'
+data[time_col] = pd.to_datetime(data[time_col])
 ```
 
-</details>
-
-
-## ModelPipeline Module
+### Train a Single Model / 训练单个模型
 
 ```python
-# If you need to configure the model
-from xgboost import XGBRegressor
-from catboost import CatBoostRegressor
-from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+from PipelineTS.ml_model import LightGBMModel
 
-# If you want to try multiple configurations of a model at once for comparison or tuning purposes, you can use `PipelineConfigs`.
-# This feature allows for customizing the models returned by each `ModelPipeline.list_all_available_models()` call.
-# The first one is the name of the model, which needs to be in the list of available models provided by ModelPipeline.list_all_available_models(). 
-# If you want to customize the name of the model, then the second argument can be a string of the model name, 
-# otherwise, the second one is of type dict. The dict can have three keys: 'init_configs', 'fit_configs', 'predict_configs', or any combination of them. 
-# The remaining keys will be automatically filled with default parameters.
-# Among them, 'init_configs' represents the initialization parameters of the model, 'fit_configs' represents the parameters during model training, 
-# and 'predict_configs' represents the parameters during model prediction.
+# Initialize and train a LightGBM model
+# 初始化并训练 LightGBM 模型
+model = LightGBMModel(
+    time_col=time_col,
+    target_col=target_col,
+    lags=12,
+    quantile=0.9,
+    verbose=-1
+)
+model.fit(data)
 
-pipeline_configs = PipelineConfigs([
-    ('lightgbm', 'lightgbm_linear_tree', {'init_configs': {'verbose': -1, 'linear_tree': True}}),
-    ('multi_output_model', {'init_configs': {'verbose': -1}}),
-    ('multi_step_model', {'init_configs': {'verbose': -1}}),
-    ('multi_output_model', {
-        'init_configs': {'estimator': XGBRegressor, 'random_state': 42, 'kwargs': {'verbosity': 0}}
-    }
-     ),
-    ('multi_output_model', {
-        'init_configs': {'estimator': CatBoostRegressor, 'random_state': 42, 'verbose': False}
-    }
-     ),
-])
+# Predict the next 10 steps
+# 预测未来 10 个时间步
+result = model.predict(10)
 ```
-<table>
-<thead>
-<tr><th style="text-align: right;">  </th><th>model_name        </th><th>model_name_after_rename  </th><th>model_configs                                                                                                                                                    </th></tr>
-</thead>
-<tbody>
-<tr><td style="text-align: right;"> 0</td><td>lightgbm          </td><td>lightgbm_linear_tree     </td><td>{&#x27;init_configs&#x27;: {&#x27;verbose&#x27;: -1, &#x27;linear_tree&#x27;: True}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}                                                                 </td></tr>
-<tr><td style="text-align: right;"> 1</td><td>multi_output_model</td><td>multi_output_model_1     </td><td>{&#x27;init_configs&#x27;: {&#x27;verbose&#x27;: -1}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}                                                                                      </td></tr>
-<tr><td style="text-align: right;"> 2</td><td>multi_output_model</td><td>multi_output_model_2     </td><td>{&#x27;init_configs&#x27;: {&#x27;estimator&#x27;: &lt;class &#x27;xgboost.sklearn.XGBRegressor&#x27;&gt;, &#x27;random_state&#x27;: 42, &#x27;kwargs&#x27;: {&#x27;verbosity&#x27;: 0}}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}</td></tr>
-<tr><td style="text-align: right;"> 3</td><td>multi_output_model</td><td>multi_output_model_3     </td><td>{&#x27;init_configs&#x27;: {&#x27;estimator&#x27;: &lt;class &#x27;catboost.core.CatBoostRegressor&#x27;&gt;, &#x27;random_state&#x27;: 42, &#x27;verbose&#x27;: False}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}       </td></tr>
-<tr><td style="text-align: right;"> 4</td><td>multi_step_model  </td><td>multi_step_model_1       </td><td>{&#x27;init_configs&#x27;: {&#x27;verbose&#x27;: -1}, &#x27;fit_configs&#x27;: {}, &#x27;predict_configs&#x27;: {}}                                                                                      </td></tr>
-</tbody>
-</table>
 
-### Non-Interval Forecasting [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline.ipynb)
+### Use ModelPipeline for Auto Model Selection / 使用 ModelPipeline 自动选择模型
 
 ```python
-from sklearn.metrics import mean_absolute_error
-
 from PipelineTS.pipeline import ModelPipeline
 
-pipeline = ModelPipeline(
-    time_col=time_col, 
-    target_col=target_col, 
-    lags=lags, 
-    random_state=42, 
-    metric=mean_absolute_error, 
-    metric_less_is_better=True,
-    configs=pipeline_configs,
-    include_init_config_model=False,
-    scaler=False,  # False for MinMaxScaler, True for StandardScaler, None means no data be scaled
-    # include_models=['d_linear', 'random_forest', 'n_linear', 'n_beats'],  # specifying the model used
-    # exclude_models=['catboost', 'tcn', 'transformer'],  # exclude specified models
-    # Note that `include_models` and `exclude_models` cannot be specified simultaneously.
-    accelerator=accelerator,
-    # Now we can directly input the "modelname__'init_params'" parameter to instantiate the models in ModelPipeline.
-    # Note that it is double underline. 
-    # When it is duplicated with the ModelPipeline class keyword parameter, the ModelPipeline clas keyword parameter is ignored
-    d_linear__lags=50,
-    n_linear__random_state=1024,
-    n_beats__num_blocks=3,
-    random_forest__n_estimators=200,
-    n_hits__accelerator='cpu', # Since using mps backend for n_hits model on mac gives an error, cpu backend is used as an alternative
-    tft__accelerator='cpu', # tft, same question, but if you use cuda backend, you can just ignore this two configurations.
-)
-
-pipeline.fit(data, valid_data)
-```
-
-#### Get the model parameters in ModelPipeline
-```python
-# Gets all configurations for the specified model， default to best model
-pipeline.get_model_all_configs(model_name='wide_gbrt')
-```
-
-#### Plotting the forecast results
-```python
-# use best model to predict next 30 steps data point
-prediction = pipeline.predict(n, model_name=None)  # You can use `model_name` to specify the pre-trained model in the pipeline when using Python.
-
-plot_data_period(init_data.iloc[-100:, :], prediction, 
-                 time_col=time_col, target_col=target_col)
-```
-
-![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic2.png)
-
-### Interval prediction [\[notebook\]](https://github.com/BirchKwok/PipelineTS/blob/main/examples/pipeline-with-quantile-prediction.ipynb)
-
-```python
-from sklearn.metrics import mean_absolute_error
-
-from PipelineTS.pipeline import ModelPipeline
-
+# Create pipeline and train all models
+# 创建管道并训练所有模型
 pipeline = ModelPipeline(
     time_col=time_col,
     target_col=target_col,
-    lags=lags,
-    random_state=42,
-    metric=mean_absolute_error,
-    metric_less_is_better=True,
-    configs=pipeline_configs,
-    include_init_config_model=False,
-    scaler=False,
-    with_quantile_prediction=True,  # turn on the quantile prediction switch, if you like
-    accelerator=accelerator,
-    # models=['wide_gbrt']  # Specify the model
-    n_hits__accelerator='cpu',
-    tft__accelerator='cpu',
+    lags=12,
+    quantile=0.9,
+    include_models='ml',  # Options: 'light', 'all', 'nn', 'ml', or a list of model names
+                          # 选项：'light', 'all', 'nn', 'ml', 或模型名称列表
 )
 
-pipeline.fit(data, valid_data)
+# Train and get leaderboard
+# 训练并获取排行榜
+leaderboard = pipeline.fit(data)
+
+# Predict using the best model
+# 使用最佳模型进行预测
+result = pipeline.predict(10)
 ```
 
-#### Plotting the forecast results
+### Visualize Results / 可视化结果
+
 ```python
-# use best model to predict next 30 steps data point
-prediction = pipeline.predict(n, model_name=None)  # You can use `model_name` to specify the pre-trained model in the pipeline when using Python.
+from PipelineTS.plot import plot_data_period
 
-plot_data_period(init_data.iloc[-100:, :], prediction, 
-                 time_col=time_col, target_col=target_col)
+plot_data_period(
+    data, result,
+    time_col=time_col,
+    target_col=target_col
+)
 ```
-![image1](https://github.com/BirchKwok/PipelineTS/blob/main/pics/pic3.png)
 
+---
 
-## Model and ModelPipeline saving and loading
+## Available Models / 可用模型
+
+### Neural Network Models / 神经网络模型 (14)
+
+| Model / 模型 | Key / 键名 | Description / 描述 |
+|---|---|---|
+| NLinearModel | `n_linear` | Simple linear mapping / 简单线性映射 |
+| DLinearModel | `d_linear` | Decomposition linear / 分解线性模型 |
+| NBeatsModel | `n_beats` | N-BEATS architecture / N-BEATS 架构 |
+| NHitsModel | `n_hits` | Hierarchical interpolation / 分层插值 |
+| TFTModel | `tft` | Temporal Fusion Transformer / 时序融合 Transformer |
+| TransformerModel | `transformer` | Transformer encoder / Transformer 编码器 |
+| TiDEModel | `tide` | Time-series Dense Encoder / 时序密集编码器 |
+| GAUModel | `gau` | Gated Attention Unit / 门控注意力单元 |
+| StackingRNNModel | `stacking_rnn` | RWKV linear RNN + gated residual blocks / RWKV 线性 RNN + 门控残差块 |
+| Time2VecModel | `time2vec` | Trend-seasonal decomposition + Time2Vec + RWKV / 趋势-季节分解 + Time2Vec + RWKV |
+| PatchRNNModel | `patch_rnn` | Patch-based RNN / 基于 Patch 的 RNN |
+| TCNModel | `tcn` | Temporal Convolutional Network / 时序卷积网络 |
+| ITransformerModel | `itransformer` | Inverted Transformer (multivariate) / 反转 Transformer（多变量） |
+| SRSNetModel | `srs_net` | Selective Representation Space Network (multivariate) / 选择性表征空间网络（多变量） |
+
+### Machine Learning Models / 机器学习模型 (7)
+
+| Model / 模型 | Key / 键名 | Description / 描述 |
+|---|---|---|
+| LightGBMModel | `lightgbm` | LightGBM gradient boosting / LightGBM 梯度提升 |
+| XGBoostModel | `xgboost` | XGBoost gradient boosting / XGBoost 梯度提升 |
+| CatBoostModel | `catboost` | CatBoost gradient boosting / CatBoost 梯度提升 |
+| RandomForestModel | `random_forest` | Random Forest regressor / 随机森林回归 |
+| WideGBRTModel | `wide_gbrt` | Wide-table GBRT with rich features / 宽表 GBRT + 丰富特征 |
+| MultiOutputRegressorModel | `multi_output_model` | Multi-output regressor / 多输出回归 |
+| MultiStepRegressorModel | `multi_step_model` | Multi-step regressor / 多步回归 |
+| RegressorChainModel | `regressor_chain` | Regressor chain / 回归链 |
+
+### Statistical Models / 统计模型 (2)
+
+| Model / 模型 | Key / 键名 | Description / 描述 |
+|---|---|---|
+| ProphetModel | `prophet` | Custom Prophet-like model with ridge regression / 自定义类 Prophet 岭回归模型 |
+| AutoARIMAModel | `auto_arima` | Auto ARIMA parameter search / 自动 ARIMA 参数搜索 |
+
+---
+
+## ModelPipeline / 模型管道
+
+`ModelPipeline` is the core class for automatic model comparison and selection.
+`ModelPipeline` 是自动模型比较和选择的核心类。
+
+### Model Filtering / 模型筛选
+
 ```python
-from PipelineTS.io import load_model, save_model
+from PipelineTS.pipeline import ModelPipeline
 
-# save
-save_model(path='/path/to/save/your/fitted_model_or_pipeline.zip', model=pipeline)
-# load
-pipeline = load_model('/path/to/save/your/fitted_model_or_pipeline.zip')
+# List all available models
+# 列出所有可用模型
+ModelPipeline.list_all_available_models()
 
+# Use predefined model sets / 使用预定义模型集合
+pipeline = ModelPipeline(..., include_models='light')  # 'light', 'all', 'nn', 'ml'
 
+# Or specify a list of model names / 或指定模型名称列表
+pipeline = ModelPipeline(..., include_models=['lightgbm', 'xgboost', 'd_linear'])
 ```
+
+### PipelineConfigs / 管道配置
+
+Use `PipelineConfigs` to create multiple model variants with different hyperparameters.
+使用 `PipelineConfigs` 创建具有不同超参数的多个模型变体。
+
+```python
+from PipelineTS.pipeline import PipelineConfigs
+
+configs = PipelineConfigs([
+    ('lightgbm', 'lgbm_v1', {'init_configs': {'n_estimators': 100}}),
+    ('lightgbm', 'lgbm_v2', {'init_configs': {'n_estimators': 300}}),
+])
+
+pipeline = ModelPipeline(..., configs=configs)
+```
+
+### Double-underscore Syntax / 双下划线语法
+
+Pass model-specific parameters directly via double-underscore syntax.
+通过双下划线语法直接传递模型特定参数。
+
+```python
+pipeline = ModelPipeline(
+    ...,
+    lightgbm__n_estimators=200,
+    xgboost__verbose=0,
+    d_linear__lags=50,
+)
+```
+
+---
+
+## Interval Prediction / 区间预测
+
+PipelineTS uses Conformal Prediction for distribution-free prediction intervals with coverage guarantees.
+PipelineTS 使用保形预测（Conformal Prediction）生成无分布假设的预测区间，具有覆盖率保证。
+
+For neural network models, Conformalized Quantile Regression (CQR) provides adaptive, input-dependent intervals.
+对于神经网络模型，保形分位数回归（CQR）提供自适应的、依赖输入的预测区间。
+
+```python
+# Single model with interval prediction
+# 单模型区间预测
+from PipelineTS.ml_model import LightGBMModel
+
+model = LightGBMModel(
+    time_col='date', target_col='value', lags=12,
+    quantile=0.9,  # 90% prediction interval / 90% 预测区间
+    verbose=-1
+)
+model.fit(data)
+result = model.predict(10)
+# result contains: value, value_lower, value_upper
+# result 包含：value, value_lower, value_upper
+```
+
+```python
+# Pipeline with interval prediction
+# 管道区间预测
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    quantile=0.9,
+    include_models='ml',
+)
+pipeline.fit(data)
+result = pipeline.predict(10)
+```
+
+---
+
+## Multivariate Prediction / 多变量预测
+
+ITransformerModel and SRSNetModel support three prediction modes:
+ITransformerModel 和 SRSNetModel 支持三种预测模式：
+
+| Mode / 模式 | target_col | feature_cols | Description / 描述 |
+|---|---|---|---|
+| Univariate / 单变量 | `'y'` | `None` | Classic single-variable / 经典单变量预测 |
+| Multi-input Single-output / 多输入单输出 | `'y'` | `['a','b','y']` | Multiple features → one target / 多特征 → 单目标 |
+| Multi-input Multi-output / 多输入多输出 | `['a','b']` | `['a','b','c']` | Multiple features → multiple targets / 多特征 → 多目标 |
+
+```python
+from PipelineTS.nn_model import ITransformerModel
+
+model = ITransformerModel(
+    time_col='date',
+    target_col='value',
+    feature_cols=['value', 'feature_a', 'feature_b'],
+    lags=12,
+    quantile=None,
+    epochs=50
+)
+model.fit(data)
+result = model.predict(10)
+```
+
+---
+
+## Save and Load / 保存与加载
+
+```python
+from PipelineTS.io import save_model, load_model
+
+# Save a model or pipeline / 保存模型或管道
+save_model('model.zip', model)
+
+# Load a model or pipeline / 加载模型或管道
+model = load_model('model.zip')
+```
+
+---
+
+## Documentation / 文档
+
+For detailed documentation, see the [docs/](docs/) directory:
+详细文档请参阅 [docs/](docs/) 目录：
+
+- [Installation Guide / 安装指南](docs/installation.md)
+- [Quick Start Guide / 快速入门指南](docs/quickstart.md)
+- [Model Reference / 模型参考](docs/models.md)
+- [Pipeline Usage / 管道使用](docs/pipeline.md)
+- [Preprocessing & Data / 数据预处理](docs/preprocessing.md)
+- [Multivariate Prediction / 多变量预测](docs/multivariate.md)
+- [Advanced Features / 高级功能](docs/advanced.md)
+- [API Reference / API 参考](docs/api_reference.md)
+
+---
+
+## Tutorials / 教程
+
+Interactive Jupyter notebook tutorials are available in the [tutorials/](tutorials/) directory:
+交互式 Jupyter Notebook 教程位于 [tutorials/](tutorials/) 目录：
+
+| # | Tutorial / 教程 | Description / 描述 |
+|---|---|---|
+| 01 | [Quick Start Guide](tutorials/01_QuickStart_Guide.ipynb) | Basic usage and core workflow / 基本用法和核心工作流 |
+| 02 | [All Models Guide](tutorials/02_All_Models_Guide.ipynb) | Usage of all 24 models / 所有 24 个模型的用法 |
+| 03 | [Multivariate Prediction](tutorials/03_Multivariate_Prediction.ipynb) | Multi-input/multi-output forecasting / 多输入/多输出预测 |
+| 04 | [Advanced Pipeline](tutorials/04_Advanced_Pipeline.ipynb) | PipelineConfigs, scalers, metrics / 管道配置、缩放器、指标 |
+| 05 | [Preprocessing & Data](tutorials/05_Preprocessing_and_Data.ipynb) | Datasets, scalers, sequence splitting / 数据集、缩放器、序列分割 |
+| 06 | [Hyperparameter Tuning](tutorials/06_Hyperparameter_Tuning.ipynb) | Optuna integration for tuning / 使用 Optuna 进行超参数调优 |
+| 07 | [Benchmarks](tutorials/07_Benchmarks.ipynb) | Model benchmarking across datasets / 跨数据集的模型基准测试 |
+
+---
+
+## License / 许可证
+
+This project is licensed under the Apache 2.0 License. See [LICENSE](LICENSE) for details.
+本项目采用 Apache 2.0 许可证。详见 [LICENSE](LICENSE) 文件。
