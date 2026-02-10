@@ -174,12 +174,204 @@ print(f"X.shape={X.shape}, y.shape={y.shape}")
 
 ---
 
+## Missing Value Handling / 缺失值处理
+
+`TimeSeriesMissingHandler` detects and fills missing values in time series data.
+`TimeSeriesMissingHandler` 检测并填充时间序列数据中的缺失值。
+
+It handles two types of missing data:
+它处理两种类型的缺失数据：
+
+- **Explicit NaN**: Actual NaN values in value columns. / 值列中的实际 NaN 值。
+- **Implicit gaps**: Missing timestamps in the time column. / 时间列中缺失的时间戳。
+
+```python
+from PipelineTS.preprocessing import TimeSeriesMissingHandler
+
+handler = TimeSeriesMissingHandler(time_col='date')
+
+# Detect missing values / 检测缺失值
+report = handler.fit(data, value_cols=['value'])
+print(f"Implicit gaps: {report['n_implicit_gaps']}")
+print(f"Explicit NaN:  {report['n_explicit_nan']}")
+print(f"Completeness:  {report['completeness_ratio']:.2%}")
+print(f"Gap locations:  {report['gap_timestamps'][:5]}")
+
+# Fill missing values / 填充缺失值
+filled = handler.transform(data, method='linear', fill_implicit_gaps=True)
+```
+
+**Available fill methods / 可用填充方法：**
+
+| Method / 方法 | Description / 描述 |
+|---|---|
+| `'linear'` | Linear interpolation (default) / 线性插值（默认） |
+| `'ffill'` | Forward fill (last observation carried forward) / 前向填充（用上一个观测值） |
+| `'bfill'` | Backward fill (next observation carried backward) / 后向填充（用下一个观测值） |
+| `'spline'` | Cubic spline interpolation / 三次样条插值 |
+| `'zero'` | Fill with zeros / 零填充 |
+
+---
+
+## Outlier Detection & Handling / 异常值检测与处理
+
+`TimeSeriesOutlierDetector` detects and handles anomalous values in time series data.
+`TimeSeriesOutlierDetector` 检测并处理时间序列数据中的异常值。
+
+```python
+from PipelineTS.preprocessing import TimeSeriesOutlierDetector
+
+# Choose a detection method / 选择检测方法
+detector = TimeSeriesOutlierDetector(time_col='date', method='iqr', threshold=1.5)
+
+# Detect outliers (returns boolean mask) / 检测异常值（返回布尔掩码）
+mask = detector.fit(data, target_col='value')
+print(f"Outliers found: {mask['value'].sum()}")
+
+# Handle outliers with a strategy / 使用策略处理异常值
+cleaned = detector.transform(data, target_col='value', strategy='clip')
+```
+
+**Detection methods / 检测方法：**
+
+| Method / 方法 | Description / 描述 |
+|---|---|
+| `'iqr'` | Interquartile range: values outside Q1 - threshold×IQR to Q3 + threshold×IQR / 四分位距法 |
+| `'zscore'` | Global z-score: \|z\| > threshold / 全局 Z 分数 |
+| `'rolling_zscore'` | Rolling window z-score (detects local anomalies) / 滚动窗口 Z 分数（检测局部异常） |
+| `'grubbs'` | Grubbs' test for statistical outlier detection / Grubbs 检验 |
+
+**Handling strategies / 处理策略：**
+
+| Strategy / 策略 | Description / 描述 |
+|---|---|
+| `'clip'` | Clip outliers to the boundary values / 将异常值截断到边界值 |
+| `'nan'` | Replace outliers with NaN / 将异常值替换为 NaN |
+| `'median'` | Replace with rolling median / 用滚动中位数替换 |
+| `'linear'` | Replace with linear interpolation / 用线性插值替换 |
+
+---
+
+## Data Quality Report / 数据质量报告
+
+`TimeSeriesDataQualityReport` generates a comprehensive health check of time series data.
+`TimeSeriesDataQualityReport` 生成时间序列数据的全面健康检查报告。
+
+```python
+from PipelineTS.preprocessing import TimeSeriesDataQualityReport
+
+reporter = TimeSeriesDataQualityReport(time_col='date', target_col='value')
+
+# Generate report dict / 生成报告字典
+report = reporter.fit(data)
+# Keys: 'overview', 'time_analysis', 'value_analysis', 'missing_analysis', 'issues'
+
+# Print formatted report / 打印格式化报告
+reporter.report(data)
+```
+
+The report includes:
+报告包含：
+
+- **Overview / 概览**: row count, column count, time range, duration.
+- **Time analysis / 时间分析**: frequency, regularity, gap detection.
+- **Value analysis / 值分析**: statistics, distribution, outlier count.
+- **Missing analysis / 缺失分析**: NaN count per column, completeness ratio.
+- **Issues / 问题**: automatically detected data quality issues with severity levels.
+
+---
+
+## Stationarity Tests / 平稳性检验
+
+`StationarityTest` wraps ADF and KPSS tests with a unified interface and actionable output.
+`StationarityTest` 封装了 ADF 和 KPSS 检验，提供统一接口和可操作的输出。
+
+```python
+from PipelineTS.preprocessing import StationarityTest
+
+tester = StationarityTest(significance_level=0.05)
+
+# Individual tests / 单独检验
+adf_result = tester.adf_test(data['value'].values)
+kpss_result = tester.kpss_test(data['value'].values)
+
+# Combined test with conclusion / 联合检验并给出结论
+result = tester.fit(data['value'].values)
+print(result['conclusion'])        # 'stationary' / 'trend_stationary' / 'difference_stationary' / 'non_stationary'
+print(result['suggested_action'])  # e.g. 'No differencing needed.' / 例如 '不需要差分。'
+
+# Auto-suggest differencing order / 自动建议差分阶数
+d = tester.suggest_differencing(data['value'].values, max_d=2)
+print(f"Suggested d={d}")
+```
+
+**Combined test interpretation / 联合检验解读：**
+
+| ADF | KPSS | Conclusion / 结论 |
+|---|---|---|
+| Stationary / 平稳 | Stationary / 平稳 | `'stationary'` — No action needed / 无需操作 |
+| Stationary / 平稳 | Non-stationary / 非平稳 | `'trend_stationary'` — Consider detrending / 考虑去趋势 |
+| Non-stationary / 非平稳 | Stationary / 平稳 | `'difference_stationary'` — Apply d=1 / 应用一阶差分 |
+| Non-stationary / 非平稳 | Non-stationary / 非平稳 | `'non_stationary'` — Apply d=1 or d=2 / 应用一阶或二阶差分 |
+
+---
+
+## Frequency Detection / 频率检测
+
+`FrequencyDetector` auto-detects sampling frequency and dominant seasonal periods.
+`FrequencyDetector` 自动检测采样频率和主要季节性周期。
+
+```python
+from PipelineTS.preprocessing.time_series_analysis import FrequencyDetector
+
+detector = FrequencyDetector(time_col='date')
+info = detector.fit(data, target_col='value')
+
+print(f"Frequency: {info['freq']}")                   # e.g. 'D', 'h' / 例如 'D', 'h'
+print(f"Timedelta: {info['freq_timedelta']}")          # e.g. Timedelta('1 days')
+print(f"Regular:   {info['is_regular']}")              # True / False
+print(f"Dominant periods: {info['dominant_periods']}")  # e.g. [30, 7, 365] (via FFT)
+```
+
+---
+
+## Time Series Split / 时间序列分割
+
+`TimeSeriesSplit` provides time-aware train/test splitting that preserves temporal ordering (unlike sklearn's random split).
+`TimeSeriesSplit` 提供保持时间顺序的训练/测试分割（不同于 sklearn 的随机分割）。
+
+```python
+from PipelineTS.preprocessing import TimeSeriesSplit
+
+# Simple split (last 20% as test) / 简单分割（最后 20% 为测试集）
+train, test = TimeSeriesSplit.split(data, time_col='date', test_size=0.2)
+
+# Expanding window cross-validation / 扩展窗口交叉验证
+# Training set grows from the start / 训练集从开头持续增长
+for train_df, test_df in TimeSeriesSplit.expanding_window(
+    data, time_col='date', min_train_size=100, test_size=20, step=10
+):
+    model.fit(train_df)
+    pred = model.predict(len(test_df))
+
+# Sliding window cross-validation / 滑动窗口交叉验证
+# Fixed-size training window that slides forward / 固定大小的训练窗口向前滑动
+for train_df, test_df in TimeSeriesSplit.sliding_window(
+    data, time_col='date', train_size=100, test_size=20, step=10
+):
+    model.fit(train_df)
+    pred = model.predict(len(test_df))
+```
+
+---
+
 ## Evaluation Metrics / 评估指标
 
 ### Point Prediction Metrics / 点预测指标
 
 ```python
 from PipelineTS.spinesTS.metrics import mae, mse, rmse, wmape
+from PipelineTS.metrics import mape, smape, mase, r2_score, medae
 import numpy as np
 
 y_true = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -188,22 +380,50 @@ y_pred = np.array([1.1, 2.2, 2.8, 4.1, 5.3])
 print(f"MAE:   {mae(y_true, y_pred):.4f}")    # Mean Absolute Error / 平均绝对误差
 print(f"MSE:   {mse(y_true, y_pred):.4f}")    # Mean Squared Error / 均方误差
 print(f"RMSE:  {rmse(y_true, y_pred):.4f}")   # Root Mean Squared Error / 均方根误差
-print(f"WMAPE: {wmape(y_true, y_pred):.4f}")  # Weighted Mean Absolute Percentage Error / 加权平均绝对百分比误差
+print(f"WMAPE: {wmape(y_true, y_pred):.4f}")  # Weighted MAPE / 加权 MAPE
+print(f"MAPE:  {mape(y_true, y_pred):.4f}")   # Mean Absolute Percentage Error / 平均绝对百分比误差
+print(f"sMAPE: {smape(y_true, y_pred):.4f}")  # Symmetric MAPE / 对称 MAPE
+print(f"R²:    {r2_score(y_true, y_pred):.4f}") # Coefficient of determination / 决定系数
+print(f"MedAE: {medae(y_true, y_pred):.4f}")  # Median Absolute Error / 中位绝对误差
+
+# MASE requires training data / MASE 需要训练数据
+y_train = np.arange(10, dtype=np.float64)
+print(f"MASE:  {mase(y_true, y_pred, y_train, seasonality=1):.4f}")
 ```
+
+| Metric / 指标 | Import / 导入 | Description / 描述 |
+|---|---|---|
+| MAE | `spinesTS.metrics` | Mean Absolute Error / 平均绝对误差 |
+| MSE | `spinesTS.metrics` | Mean Squared Error / 均方误差 |
+| RMSE | `spinesTS.metrics` | Root Mean Squared Error / 均方根误差 |
+| WMAPE | `spinesTS.metrics` | Weighted Mean Absolute Percentage Error / 加权平均绝对百分比误差 |
+| MAPE | `PipelineTS.metrics` | Mean Absolute Percentage Error / 平均绝对百分比误差 |
+| sMAPE | `PipelineTS.metrics` | Symmetric MAPE / 对称 MAPE |
+| MASE | `PipelineTS.metrics` | Mean Absolute Scaled Error / 平均绝对缩放误差 |
+| R² | `PipelineTS.metrics` | Coefficient of Determination / 决定系数 |
+| MedAE | `PipelineTS.metrics` | Median Absolute Error / 中位绝对误差 |
 
 ### Interval Prediction Metrics / 区间预测指标
 
 ```python
-from PipelineTS.metrics import quantile_acc
+from PipelineTS.metrics import quantile_acc, picp, pinaw, winkler_score
 
 y_true = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
 lower  = np.array([0.5, 1.5, 2.5, 3.5, 4.5])
 upper  = np.array([1.5, 2.5, 3.5, 4.5, 5.5])
 
-# Compute interval coverage rate / 计算区间覆盖率
-acc = quantile_acc(y_true, lower, upper)
-print(f"Coverage: {acc:.2%}")  # 100.00%
+# Coverage rate / 覆盖率
+print(f"Coverage:    {quantile_acc(y_true, lower, upper):.2%}")
+print(f"PICP:        {picp(y_true, lower, upper):.4f}")       # Prediction Interval Coverage Probability
+print(f"PINAW:       {pinaw(y_true, lower, upper):.4f}")      # Normalized Average Width / 归一化平均宽度
+print(f"Winkler:     {winkler_score(y_true, lower, upper, alpha=0.1):.4f}")  # Lower is better / 越低越好
 ```
+
+| Metric / 指标 | Description / 描述 |
+|---|---|
+| `quantile_acc` / `picp` | Prediction interval coverage rate (higher = better) / 预测区间覆盖率（越高越好） |
+| `pinaw` | Normalized average width (lower = better, tighter intervals) / 归一化平均宽度（越低越好，区间越紧） |
+| `winkler_score` | Rewards narrow intervals, penalizes missed coverage (lower = better) / 奖励窄区间，惩罚遗漏覆盖（越低越好） |
 
 ---
 

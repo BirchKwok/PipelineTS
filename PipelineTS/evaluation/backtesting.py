@@ -1,0 +1,208 @@
+"""Walk-forward backtesting framework for time series models.
+
+Provides expanding and sliding window backtesting with per-fold metrics,
+compatible with any PipelineTS model.
+"""
+
+import numpy as np
+import pandas as pd
+from typing import Optional, Union, Literal, Callable
+from copy import deepcopy
+
+
+class Backtester:
+    """Walk-forward backtesting for time series models.
+
+    Evaluates model performance by simulating sequential real-world forecasts:
+    train on past data, predict forward, slide the window, repeat.
+
+    Parameters
+    ----------
+    model : PipelineTS model instance
+        Any model with fit() and predict() methods.
+        The model is deep-copied per fold to avoid state leakage.
+    time_col : str
+        Datetime column name.
+    target_col : str
+        Target variable column name.
+    metric : callable
+        Scoring function with signature metric(y_true, y_pred) -> float.
+    metric_name : str, default='metric'
+        Display name of the metric.
+    metric_less_is_better : bool, default=True
+        Whether lower metric values are better.
+
+    Examples
+    --------
+    >>> from PipelineTS.ml_model import LightGBMModel
+    >>> from PipelineTS.spinesTS.metrics import mae
+    >>> model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+    >>> bt = Backtester(model, time_col='date', target_col='value', metric=mae)
+    >>> results = bt.fit(data, n_splits=5, test_size=12, mode='expanding')
+    >>> bt.summary()
+    """
+
+    def __init__(
+        self,
+        model,
+        time_col: str,
+        target_col: str,
+        metric: Callable,
+        metric_name: str = 'metric',
+        metric_less_is_better: bool = True,
+    ):
+        self.model = model
+        self.time_col = time_col
+        self.target_col = target_col
+        self.metric = metric
+        self.metric_name = metric_name
+        self.metric_less_is_better = metric_less_is_better
+        self._results = None
+
+    def fit(
+        self,
+        data: pd.DataFrame,
+        n_splits: int = 5,
+        test_size: int = 10,
+        mode: Literal['expanding', 'sliding'] = 'expanding',
+        train_size: Optional[int] = None,
+        verbose: bool = True,
+    ) -> pd.DataFrame:
+        """Run backtesting.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Full dataset.
+        n_splits : int, default=5
+            Number of train/test folds.
+        test_size : int, default=10
+            Number of time steps to forecast in each fold.
+        mode : {'expanding', 'sliding'}
+            'expanding': training window grows from the start.
+            'sliding': training window has fixed size.
+        train_size : int or None
+            Fixed training size for 'sliding' mode. If None, auto-computed.
+        verbose : bool, default=True
+            Print per-fold progress.
+
+        Returns
+        -------
+        pd.DataFrame
+            Per-fold results with columns: fold, train_size, test_size, metric.
+        """
+        df = data.sort_values(self.time_col).reset_index(drop=True)
+        n = len(df)
+
+        # Compute fold boundaries
+        folds = self._compute_folds(n, n_splits, test_size, mode, train_size)
+
+        records = []
+        all_preds = []
+        all_actuals = []
+
+        for i, (train_start, train_end, test_end) in enumerate(folds):
+            train_df = df.iloc[train_start:train_end].copy()
+            test_df = df.iloc[train_end:test_end].copy()
+            actual_test_size = len(test_df)
+
+            if verbose:
+                print(f"  Fold {i + 1}/{len(folds)}: "
+                      f"train[{train_start}:{train_end}] ({train_end - train_start}) → "
+                      f"test[{train_end}:{test_end}] ({actual_test_size})")
+
+            fold_model = deepcopy(self.model)
+
+            try:
+                fold_model.fit(train_df)
+                pred_df = fold_model.predict(actual_test_size)
+
+                y_true = test_df[self.target_col].values
+                y_pred = pred_df[self.target_col].values[:actual_test_size]
+
+                score = self.metric(y_true, y_pred)
+
+                all_preds.extend(y_pred.tolist())
+                all_actuals.extend(y_true.tolist())
+
+                records.append({
+                    'fold': i + 1,
+                    'train_size': train_end - train_start,
+                    'test_size': actual_test_size,
+                    self.metric_name: score,
+                })
+            except Exception as e:
+                if verbose:
+                    print(f"    ⚠ Fold {i + 1} failed: {e}")
+                records.append({
+                    'fold': i + 1,
+                    'train_size': train_end - train_start,
+                    'test_size': actual_test_size,
+                    self.metric_name: np.nan,
+                })
+
+            del fold_model
+
+        result_df = pd.DataFrame(records)
+        self._results = result_df
+        self._all_preds = np.array(all_preds) if all_preds else np.array([])
+        self._all_actuals = np.array(all_actuals) if all_actuals else np.array([])
+
+        return result_df
+
+    def summary(self) -> dict:
+        """Get summary statistics of backtesting results.
+
+        Returns
+        -------
+        dict
+            Keys: 'mean', 'std', 'min', 'max', 'median', 'n_folds', 'n_failed'.
+        """
+        if self._results is None:
+            raise RuntimeError("Call fit() before summary().")
+
+        scores = self._results[self.metric_name].dropna()
+        return {
+            'mean': float(scores.mean()),
+            'std': float(scores.std()),
+            'min': float(scores.min()),
+            'max': float(scores.max()),
+            'median': float(scores.median()),
+            'n_folds': len(self._results),
+            'n_failed': int(self._results[self.metric_name].isna().sum()),
+        }
+
+    def _compute_folds(self, n, n_splits, test_size, mode, train_size):
+        """Compute (train_start, train_end, test_end) tuples."""
+        folds = []
+
+        if mode == 'expanding':
+            # Work backwards from the end
+            total_test = n_splits * test_size
+            min_train = max(test_size * 2, n - total_test)
+            if min_train + total_test > n:
+                min_train = n - total_test
+
+            for i in range(n_splits):
+                test_end = n - (n_splits - 1 - i) * test_size
+                train_end = test_end - test_size
+                train_start = 0
+                if train_end <= 0 or test_end > n:
+                    continue
+                folds.append((train_start, train_end, test_end))
+
+        elif mode == 'sliding':
+            if train_size is None:
+                train_size = max(test_size * 3, (n - n_splits * test_size))
+            for i in range(n_splits):
+                test_end = n - (n_splits - 1 - i) * test_size
+                train_end = test_end - test_size
+                train_start = max(0, train_end - train_size)
+                if train_end <= train_start or test_end > n:
+                    continue
+                folds.append((train_start, train_end, test_end))
+
+        return folds
+
+    # Backward-compatible alias
+    run = fit
