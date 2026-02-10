@@ -106,7 +106,7 @@ class DLinearModel(SpinesNNModelMixin):
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'quantile_error': 0,
+                'quantile_error': (0, 0),
                 'verbose': verbose,
                 'epochs': epochs,
                 'batch_size': batch_size,

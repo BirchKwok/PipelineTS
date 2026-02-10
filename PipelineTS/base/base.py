@@ -4,7 +4,6 @@ from copy import deepcopy
 import numpy as np
 from spinesUtils.preprocessing import gc_collector
 
-from PipelineTS.spinesTS.metrics import wmape
 from spinesUtils.asserts import check_has_param
 
 
@@ -131,7 +130,7 @@ class IntervalEstimationMixin:
         if valid_data_process_kwargs is None:
             valid_data_process_kwargs = {}
 
-        residuals = []
+        signed_residuals = []
         for train_data, valid_data in self._split_train_valid_data(data, cv=cv, is_gbrt=is_gbrt):
             data_x, data_y = self._data_preprocess(train_data, **train_data_process_kwargs)
 
@@ -144,17 +143,62 @@ class IntervalEstimationMixin:
             else:
                 model.fit(data_x, data_y, **fit_kwargs)
 
-            res = model.predict(valid_data_x).flatten()
+            preds = model.predict(valid_data_x).flatten()
+            actuals = valid_data_y.flatten()
 
-            y_cal_error = wmape(valid_data_y.flatten(), res.flatten())
+            per_point_residuals = actuals - preds
+            signed_residuals.extend(per_point_residuals.tolist())
 
-            residuals.append(y_cal_error)
+            del train_data, valid_data, data_x, data_y, valid_data_x, valid_data_y, model, preds, actuals
 
-            del train_data, valid_data, data_x, data_y, valid_data_x, valid_data_y, model, res, y_cal_error
+        return self._compute_conformal_quantiles(
+            signed_residuals, coverage=self.all_configs['quantile']
+        )
 
-        quantile = np.percentile(residuals, q=self.all_configs['quantile'])
+    @staticmethod
+    def _compute_conformal_quantiles(signed_residuals, coverage=0.9):
+        """Compute asymmetric conformal quantiles from signed residuals.
 
-        return quantile
+        Uses the split conformal prediction framework with finite-sample
+        correction to produce asymmetric (lower, upper) interval widths.
+
+        Parameters
+        ----------
+        signed_residuals : list of float
+            Per-point signed residuals (y_true - y_pred) collected from
+            cross-validation folds.
+        coverage : float, default 0.9
+            Desired coverage level (e.g. 0.9 for 90% prediction interval).
+            Corresponds to the ``quantile`` parameter in model configs.
+
+        Returns
+        -------
+        tuple of (float, float)
+            (q_lower, q_upper) where q_lower <= 0 and q_upper >= 0.
+            Prediction intervals: [pred + q_lower, pred + q_upper].
+        """
+        if len(signed_residuals) == 0:
+            return (0.0, 0.0)
+
+        residuals = np.array(signed_residuals)
+        n_cal = len(residuals)
+
+        alpha = 1.0 - coverage
+        # Conformal finite-sample correction: adjust quantile levels
+        # so that coverage guarantee holds for n_cal calibration points
+        q_lo_level = max(alpha / 2.0, 0.5 / n_cal)
+        q_hi_level = min(1.0 - alpha / 2.0, 1.0 - 0.5 / n_cal)
+        # Additional conformal correction: (1 + 1/n_cal) factor
+        q_hi_level = min(1.0, q_hi_level * (1.0 + 1.0 / n_cal))
+
+        q_lower = np.quantile(residuals, q=q_lo_level)
+        q_upper = np.quantile(residuals, q=q_hi_level)
+
+        # Ensure q_lower <= 0 <= q_upper for valid intervals
+        q_lower = min(q_lower, 0.0)
+        q_upper = max(q_upper, 0.0)
+
+        return (float(q_lower), float(q_upper))
 
     def calculate_confidence_interval_mor(self, data, cv=5, fit_kwargs=None):
         return self._calculate_confidence_interval_sps(data, fit_kwargs=fit_kwargs, cv=cv)
@@ -179,9 +223,26 @@ class IntervalEstimationMixin:
             valid_data_process_kwargs={'mode': 'train'}, cv=cv)
 
     def interval_predict(self, res):
+        """Apply conformal prediction intervals.
+
+        Uses additive asymmetric intervals based on per-point signed residual
+        quantiles from cross-validation calibration.
+
+        Parameters
+        ----------
+        res : pd.DataFrame
+            DataFrame with point predictions in target_col.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with added _lower and _upper columns.
+        """
+        q_lower, q_upper = self.all_configs['quantile_error']
+
         res[f"{self.all_configs['target_col']}_lower"] = \
-            res[self.all_configs['target_col']].values * (1 - self.all_configs['quantile_error'])
+            res[self.all_configs['target_col']].values + q_lower
         res[f"{self.all_configs['target_col']}_upper"] = \
-            res[self.all_configs['target_col']].values * (1 + self.all_configs['quantile_error'])
+            res[self.all_configs['target_col']].values + q_upper
 
         return self.chosen_cols(res)

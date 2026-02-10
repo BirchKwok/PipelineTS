@@ -8,7 +8,6 @@ from statsmodels.tsa.stattools import adfuller
 from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
-from PipelineTS.spinesTS.metrics import wmape
 from PipelineTS.utils import check_time_col_is_timestamp
 
 
@@ -153,7 +152,7 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'quantile_error': 0,
+                'quantile_error': (0, 0),
                 'start_p': start_p,
                 'max_p': max_p,
                 'start_q': start_q,
@@ -186,8 +185,14 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
 
     @gc_collector()
     def _calculate_confidence_interval(self, data, cv=5):
-        """Calculate quantile error via expanding-window cross-validation."""
-        residuals = []
+        """Calculate conformal prediction intervals via expanding-window CV.
+
+        Collects per-point signed residuals (y_true - y_pred) across CV folds,
+        then computes asymmetric conformal quantiles with finite-sample correction.
+        """
+        from PipelineTS.base.base import IntervalEstimationMixin
+
+        signed_residuals = []
         target_col = self.all_configs['target_col']
 
         for train_data, valid_data in self._cv_split(data, cv=cv):
@@ -207,14 +212,14 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
                 )
                 if result is not None:
                     preds = result.forecast(steps=len(valid_y))
-                    y_cal_error = wmape(valid_y.flatten(), preds.flatten())
-                    residuals.append(y_cal_error)
+                    per_point = valid_y.flatten() - preds.flatten()
+                    signed_residuals.extend(per_point.tolist())
             except Exception:
                 continue
 
-        if len(residuals) == 0:
-            return 0.0
-        return np.percentile(residuals, q=self.all_configs['quantile'])
+        return IntervalEstimationMixin._compute_conformal_quantiles(
+            signed_residuals, coverage=self.all_configs['quantile']
+        )
 
     def fit(self, data, cv=5, **kwargs):
         """

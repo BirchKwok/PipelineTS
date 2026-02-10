@@ -101,7 +101,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'quantile_error': 0,
+                'quantile_error': (0, 0),
                 'differential_n': differential_n,
                 'moving_avg_n': moving_avg_n,
                 'extend_daily_target_features': extend_daily_target_features,

@@ -16,6 +16,45 @@ from PipelineTS.spinesTS.utils import seed_everything, check_is_fitted
 logger = Logger(with_time=False, name='')
 
 
+class CQRWrapper(nn.Module):
+    """Wraps any base nn.Module to produce 3 quantile predictions for CQR.
+
+    Output shape: (B, 3 * out_features) laid out as [q_lower | q_median | q_upper].
+    Uses softplus on learned offsets to guarantee q_lower <= median <= q_upper.
+    """
+
+    def __init__(self, base_model, out_features, alpha=0.1):
+        super().__init__()
+        self.base_model = base_model
+        self.out_features = out_features
+        self.alpha = alpha
+
+        hidden = max(out_features * 2, 32)
+        self.lower_head = nn.Sequential(
+            nn.Linear(out_features, hidden), nn.GELU(),
+            nn.Linear(hidden, out_features),
+        )
+        self.upper_head = nn.Sequential(
+            nn.Linear(out_features, hidden), nn.GELU(),
+            nn.Linear(hidden, out_features),
+        )
+        # Small init so initial intervals are tight around median
+        with torch.no_grad():
+            self.lower_head[-1].weight.mul_(0.1)
+            self.lower_head[-1].bias.zero_()
+            self.upper_head[-1].weight.mul_(0.1)
+            self.upper_head[-1].bias.zero_()
+
+    def forward(self, x):
+        center = self.base_model(x)                        # (B, out_features)
+        lower_offset = torch.nn.functional.softplus(self.lower_head(center))
+        upper_offset = torch.nn.functional.softplus(self.upper_head(center))
+        q_lower = center - lower_offset
+        q_upper = center + upper_offset
+        # (B, 3 * out_features): [lower | median | upper]
+        return torch.cat([q_lower, center, q_upper], dim=-1)
+
+
 @ParameterTypeAssert({
     'device': (str, None)
 })
@@ -262,6 +301,25 @@ class TorchModelMixin:
             **lr_scheduler_kwargs
         )
 
+    def _enable_cqr(self, alpha=0.1):
+        """Enable Conformalized Quantile Regression mode.
+
+        Wraps ``self.model`` with :class:`CQRWrapper`, switches the loss to
+        :class:`CombinedQuantileLoss`, and rebuilds the optimizer to include
+        the new quantile-head parameters.
+        """
+        from PipelineTS.spinesTS.metrics import CombinedQuantileLoss
+
+        self.model = CQRWrapper(self.model, self.out_features, alpha=alpha)
+        self.loss_fn = CombinedQuantileLoss(alpha=alpha)
+        weight_decay = getattr(self, 'weight_decay', 1e-4)
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(), lr=self.learning_rate,
+            weight_decay=weight_decay,
+        )
+        self._cqr_enabled = True
+        self._cqr_alpha = alpha
+
     def predict(self, X):
         """
         X : torch.Tensor or np.ndarray, data to predict.
@@ -282,6 +340,14 @@ class TorchModelMixin:
 
     def metric(self, y_true, y_pred):
         """model metric"""
+        if getattr(self, '_cqr_enabled', False) and y_pred.shape[-1] != y_true.shape[-1]:
+            # Detect which argument is the CQR output (3x features)
+            if y_pred.shape[-1] > y_true.shape[-1]:
+                f = y_true.shape[-1]
+                y_pred = y_pred[..., f:2 * f]
+            else:
+                f = y_pred.shape[-1]
+                y_true = y_true[..., f:2 * f]
         return nn.functional.l1_loss(y_true, y_pred).item()
 
     def _get_batch_size(self, x, batch_size='auto'):

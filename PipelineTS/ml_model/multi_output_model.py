@@ -82,7 +82,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
                 'quantile': quantile,
                 'time_col': time_col,
                 'target_col': target_col,
-                'quantile_error': 0,
+                'quantile_error': (0, 0),
                 'differential_n': differential_n
             }
         )

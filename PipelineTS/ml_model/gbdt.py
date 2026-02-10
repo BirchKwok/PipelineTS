@@ -378,7 +378,7 @@ class CatBoostModel(_DirectGBDTMixin):
             'quantile': quantile,
             'time_col': time_col,
             'target_col': target_col,
-            'quantile_error': 0
+            'quantile_error': (0, 0)
         })
         self.x = None
         self.model = self._define_model()
@@ -470,7 +470,7 @@ class LightGBMModel(_DirectGBDTMixin):
             'quantile': quantile,
             'time_col': time_col,
             'target_col': target_col,
-            'quantile_error': 0
+            'quantile_error': (0, 0)
         })
         self.x = None
         self.model = self._define_model()
@@ -553,7 +553,7 @@ class XGBoostModel(_DirectGBDTMixin):
             'quantile': quantile,
             'time_col': time_col,
             'target_col': target_col,
-            'quantile_error': 0
+            'quantile_error': (0, 0)
         })
         self.x = None
         self.model = self._define_model()
@@ -616,7 +616,7 @@ class RandomForestModel(_DirectGBDTMixin):
             'quantile': quantile,
             'time_col': time_col,
             'target_col': target_col,
-            'quantile_error': 0
+            'quantile_error': (0, 0)
         })
         self.x = None
         self.model = self._define_model()

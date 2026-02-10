@@ -211,13 +211,17 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
             eval_set = [(valid_x, valid_y)]
 
+        if self.all_configs['quantile'] is not None:
+            alpha = 1.0 - self.all_configs['quantile']
+            self.model._enable_cqr(alpha=alpha)
+
         self.model.fit(x, y, eval_set=eval_set, **fit_kwargs)
 
         del x, y
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
-                self.calculate_confidence_interval_nn(data, fit_kwargs=fit_kwargs, cv=cv)
+                self._cqr_calibrate(data, fit_kwargs=fit_kwargs, cv=cv)
 
         return self
 
@@ -273,6 +277,110 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
             return res
 
+    def _extend_predict_cqr(self, x, n, predict_kwargs):
+        """CQR-aware extrapolation returning lower/median/upper predictions.
+
+        Returns
+        -------
+        dict with keys 'lower', 'median', 'upper', each a list of length n.
+        """
+        raise_if_not(ValueError, n > 0, 'n must be greater than 0.')
+        raise_if_not(TypeError, isinstance(n, int), 'n must be an integer.')
+        raise_if_not(AssertionError, x.ndim == 2, 'x must be a 2D array.')
+
+        lags = self.all_configs['lags']
+        raw = self.model.predict(x, **predict_kwargs)  # (1, 3*lags)
+        if raw.ndim == 1:
+            raw = raw.reshape((1, -1))
+
+        q_lo = raw[:, :lags]
+        q_med = raw[:, lags:2 * lags]
+        q_hi = raw[:, 2 * lags:]
+
+        if n <= lags:
+            return {
+                'lower': q_lo[0, :n].tolist(),
+                'median': q_med[0, :n].tolist(),
+                'upper': q_hi[0, :n].tolist(),
+            }
+
+        lo_res = q_lo.squeeze().tolist()
+        med_res = q_med.squeeze().tolist()
+        hi_res = q_hi.squeeze().tolist()
+
+        for _ in range(n - lags):
+            # Feed median back as input for autoregressive steps
+            x = np.concatenate((x[:, 1:], q_med[:, 0:1]), axis=1)
+            raw = self.model.predict(x, **predict_kwargs)
+            if raw.ndim == 1:
+                raw = raw.reshape((1, -1))
+            q_lo = raw[:, :lags]
+            q_med = raw[:, lags:2 * lags]
+            q_hi = raw[:, 2 * lags:]
+            lo_res.append(q_lo.squeeze().tolist()[-1])
+            med_res.append(q_med.squeeze().tolist()[-1])
+            hi_res.append(q_hi.squeeze().tolist()[-1])
+
+        return {'lower': lo_res, 'median': med_res, 'upper': hi_res}
+
+    def _cqr_calibrate(self, data, fit_kwargs=None, cv=5):
+        """CQR calibration: compute conformal correction Q_hat.
+
+        Trains CQR models on CV folds and collects nonconformity scores
+        E_i = max(q_lower_i - y_i, y_i - q_upper_i). Then computes the
+        conformal quantile of the scores.
+
+        Returns
+        -------
+        float
+            Q_hat >= 0, the conformal correction to apply at prediction time.
+        """
+        from copy import deepcopy
+
+        if fit_kwargs is None:
+            kwargs = {}
+        else:
+            kwargs = deepcopy(fit_kwargs)
+        kwargs.update({'verbose': False})
+
+        alpha = 1.0 - self.all_configs['quantile']
+        lags = self.all_configs['lags']
+        scores = []
+
+        for train_data, valid_data in self._split_train_valid_data(data, cv=cv):
+            try:
+                data_x, data_y = self._data_preprocess(train_data, mode='train')
+                valid_data_x, valid_data_y = self._data_preprocess(valid_data, mode='train')
+            except (ValueError, IndexError):
+                continue
+
+            model = self._define_model()
+            model._enable_cqr(alpha=alpha)
+            model.fit(data_x, data_y, eval_set=[(data_x, data_y)], **kwargs)
+
+            raw = model.predict(valid_data_x)  # (N, 3*lags)
+            if raw.ndim == 1:
+                raw = raw.reshape((1, -1))
+
+            q_lo = raw[:, :lags].flatten()
+            q_hi = raw[:, 2 * lags:].flatten()
+            y_flat = valid_data_y.flatten()
+
+            # Nonconformity scores: how much the interval misses
+            e = np.maximum(q_lo - y_flat, y_flat - q_hi)
+            scores.extend(e.tolist())
+
+            del train_data, valid_data, data_x, data_y, valid_data_x, valid_data_y, model
+
+        if len(scores) == 0:
+            return 0.0
+
+        scores = np.array(scores)
+        n_cal = len(scores)
+        level = min(1.0, (1.0 - alpha) * (1.0 + 1.0 / n_cal))
+        q_hat = float(np.quantile(scores, level))
+        return max(q_hat, 0.0)
+
     def predict(self, n, data=None, predict_kwargs=None):
         """
         Makes predictions using the fitted neural network model.
@@ -317,13 +425,30 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                 x = x_vals.reshape((1, -1))
             last_dt = self.last_dt
 
+        target_col = self.all_configs['target_col']
+        time_col = self.all_configs['time_col']
+
+        if getattr(self.model, '_cqr_enabled', False) and self.all_configs['quantile'] is not None:
+            cqr = self._extend_predict_cqr(x, n, predict_kwargs=predict_kwargs)
+
+            raise_if_not(ValueError, len(cqr['median']) == n,
+                         "The length of the predictions must equal to n.")
+
+            res = pd.DataFrame(cqr['median'], columns=[target_col])
+            res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+
+            q_hat = self.all_configs['quantile_error']
+            res[f"{target_col}_lower"] = np.array(cqr['lower']) - q_hat
+            res[f"{target_col}_upper"] = np.array(cqr['upper']) + q_hat
+
+            return self.chosen_cols(res)
+
         res = self._extend_predict(x, n, predict_kwargs=predict_kwargs)  # list
 
         raise_if_not(ValueError, len(res) == n, "The length of the predictions must equal to n.")
 
-        res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
-        res[self.all_configs['time_col']] = \
-            last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
+        res = pd.DataFrame(res, columns=[target_col])
+        res[time_col] = last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
@@ -515,19 +640,30 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             valid_x, valid_y = self._data_preprocess(valid_data, mode='train')
             eval_set = [(valid_x, valid_y)]
 
+        if self.all_configs.get('quantile') is not None and self._is_univariate:
+            alpha = 1.0 - self.all_configs['quantile']
+            self.model._enable_cqr(alpha=alpha)
+
         self.model.fit(x, y, eval_set=eval_set, **fit_kwargs)
         del x, y
 
         if self.all_configs.get('quantile') is not None:
-            self.all_configs['quantile_error'] = \
-                self._calculate_quantile_error(data, fit_kwargs=fit_kwargs, cv=cv)
+            if self._is_univariate:
+                self.all_configs['quantile_error'] = \
+                    self._cqr_calibrate_univariate(data, fit_kwargs=fit_kwargs, cv=cv)
+            else:
+                self.all_configs['quantile_error'] = \
+                    self._calculate_quantile_error(data, fit_kwargs=fit_kwargs, cv=cv)
 
         return self
 
-    def _calculate_quantile_error(self, data, fit_kwargs=None, cv=5):
-        """Calculate quantile error for confidence intervals."""
+    def _cqr_calibrate_univariate(self, data, fit_kwargs=None, cv=5):
+        """CQR calibration for univariate mode.
+
+        Trains CQR models on CV folds and collects nonconformity scores
+        E_i = max(q_lower_i - y_i, y_i - q_upper_i). Returns Q_hat >= 0.
+        """
         from copy import deepcopy
-        from PipelineTS.spinesTS.metrics import wmape
 
         if fit_kwargs is None:
             kwargs = {}
@@ -535,7 +671,79 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             kwargs = deepcopy(fit_kwargs)
         kwargs.update({'verbose': False})
 
-        residuals = []
+        alpha = 1.0 - self.all_configs['quantile']
+        lags = self.all_configs['lags']
+        scores = []
+        n = len(data)
+        block_len = lags
+        rng = np.random.RandomState(0)
+
+        for _ in range(cv):
+            n_blocks = max(1, n // block_len)
+            all_block_starts = np.arange(0, n - block_len + 1)
+            if len(all_block_starts) == 0:
+                continue
+
+            chosen = rng.choice(len(all_block_starts), size=n_blocks, replace=True)
+            train_indices = set()
+            for c in chosen:
+                start = all_block_starts[c]
+                for j in range(start, min(start + block_len, n)):
+                    train_indices.add(j)
+
+            test_indices = sorted(set(range(n)) - train_indices)
+            train_indices = sorted(train_indices)
+
+            if len(test_indices) > 0 and len(train_indices) >= block_len:
+                train_data = data.iloc[train_indices, :].reset_index(drop=True)
+                test_data = data.iloc[test_indices, :].reset_index(drop=True)
+
+                try:
+                    train_x, train_y = self._data_preprocess(train_data, mode='train')
+                    test_x, test_y = self._data_preprocess(test_data, mode='train')
+                except (ValueError, IndexError):
+                    continue
+
+                model = self._define_model()
+                model._enable_cqr(alpha=alpha)
+                model.fit(train_x, train_y, eval_set=[(train_x, train_y)], **kwargs)
+
+                raw = model.predict(test_x)
+                if raw.ndim == 1:
+                    raw = raw.reshape((1, -1))
+
+                q_lo = raw[:, :lags].flatten()
+                q_hi = raw[:, 2 * lags:].flatten()
+                y_flat = test_y.flatten()
+
+                e = np.maximum(q_lo - y_flat, y_flat - q_hi)
+                scores.extend(e.tolist())
+
+        if len(scores) == 0:
+            return 0.0
+
+        scores = np.array(scores)
+        n_cal = len(scores)
+        level = min(1.0, (1.0 - alpha) * (1.0 + 1.0 / n_cal))
+        q_hat = float(np.quantile(scores, level))
+        return max(q_hat, 0.0)
+
+    def _calculate_quantile_error(self, data, fit_kwargs=None, cv=5):
+        """Conformal prediction for multivariate modes (non-CQR fallback).
+
+        Collects per-point signed residuals (y_true - y_pred) across CV folds,
+        then computes asymmetric conformal quantiles with finite-sample correction.
+        """
+        from copy import deepcopy
+        from PipelineTS.base.base import IntervalEstimationMixin
+
+        if fit_kwargs is None:
+            kwargs = {}
+        else:
+            kwargs = deepcopy(fit_kwargs)
+        kwargs.update({'verbose': False})
+
+        signed_residuals = []
         n = len(data)
         lags = self.all_configs['lags']
         block_len = lags
@@ -569,13 +777,15 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
                 model = self._define_model()
                 model.fit(train_x, train_y, eval_set=[(train_x, train_y)], **kwargs)
-                res = model.predict(test_x).flatten()
-                y_error = wmape(test_y.flatten(), res.flatten())
-                residuals.append(y_error)
+                preds = model.predict(test_x).flatten()
+                actuals = test_y.flatten()
 
-        if len(residuals) == 0:
-            return 0.0
-        return np.percentile(residuals, q=self.all_configs['quantile'])
+                per_point = actuals - preds
+                signed_residuals.extend(per_point.tolist())
+
+        return IntervalEstimationMixin._compute_conformal_quantiles(
+            signed_residuals, coverage=self.all_configs['quantile']
+        )
 
     def _extend_predict(self, x, n, predict_kwargs):
         """Extend predictions, supporting both 2D (univariate) and 3D (multivariate) inputs."""
@@ -730,6 +940,53 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             else:
                 x = self._last_features.values.reshape((1, self.all_configs['lags'], self._n_vars))
 
+        target_col = self.all_configs['target_col']
+        time_col = self.all_configs['time_col']
+
+        # CQR path for univariate mode
+        if (self._is_univariate and getattr(self.model, '_cqr_enabled', False)
+                and self.all_configs.get('quantile') is not None):
+            lags = self.all_configs['lags']
+            raise_if_not(AssertionError, x.ndim == 2, 'x must be a 2D array for univariate CQR.')
+
+            raw = self.model.predict(x, **predict_kwargs)
+            if raw.ndim == 1:
+                raw = raw.reshape((1, -1))
+
+            q_lo = raw[:, :lags]
+            q_med = raw[:, lags:2 * lags]
+            q_hi = raw[:, 2 * lags:]
+
+            if n <= lags:
+                lo_res = q_lo[0, :n].tolist()
+                med_res = q_med[0, :n].tolist()
+                hi_res = q_hi[0, :n].tolist()
+            else:
+                lo_res = q_lo.squeeze().tolist()
+                med_res = q_med.squeeze().tolist()
+                hi_res = q_hi.squeeze().tolist()
+                for _ in range(n - lags):
+                    x = np.concatenate((x[:, 1:], q_med[:, 0:1]), axis=1)
+                    raw = self.model.predict(x, **predict_kwargs)
+                    if raw.ndim == 1:
+                        raw = raw.reshape((1, -1))
+                    q_lo = raw[:, :lags]
+                    q_med = raw[:, lags:2 * lags]
+                    q_hi = raw[:, 2 * lags:]
+                    lo_res.append(q_lo.squeeze().tolist()[-1])
+                    med_res.append(q_med.squeeze().tolist()[-1])
+                    hi_res.append(q_hi.squeeze().tolist()[-1])
+
+            res = pd.DataFrame(med_res, columns=[self._primary_target])
+            res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+
+            q_hat = self.all_configs['quantile_error']
+            res[f"{target_col}_lower"] = np.array(lo_res) - q_hat
+            res[f"{target_col}_upper"] = np.array(hi_res) + q_hat
+
+            return self.chosen_cols(res)
+
+        # Standard path
         res_data = self._extend_predict(x, n, predict_kwargs=predict_kwargs)
 
         if self._multi_target:
@@ -737,8 +994,7 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         else:
             res = pd.DataFrame(res_data, columns=[self._primary_target])
 
-        res[self.all_configs['time_col']] = \
-            last_dt + pd.to_timedelta(range(len(res) + 1), unit='D')[1:]
+        res[time_col] = last_dt + pd.to_timedelta(range(len(res) + 1), unit='D')[1:]
 
         if self.all_configs.get('quantile') is not None and not self._multi_target:
             res = self.interval_predict(res)

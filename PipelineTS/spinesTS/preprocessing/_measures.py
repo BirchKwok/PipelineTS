@@ -65,7 +65,7 @@ class GaussRankScaler(BaseEstimator, TransformerMixin):
         self, object
 
         """
-        X = check_array(X, copy=self.copy, estimator=self, dtype=FLOAT_DTYPES, force_all_finite=True)
+        X = check_array(X, copy=self.copy, estimator=self, dtype=FLOAT_DTYPES, ensure_all_finite=True)
 
         self.interp_func_ = Parallel(n_jobs=self.n_jobs)(delayed(self._fit)(x) for x in X.T)
         return self
@@ -96,7 +96,7 @@ class GaussRankScaler(BaseEstimator, TransformerMixin):
         check_is_fitted(self, 'interp_func_')
 
         copy = copy if copy is not None else self.copy
-        X = check_array(X, copy=copy, estimator=self, dtype=FLOAT_DTYPES, force_all_finite=True)
+        X = check_array(X, copy=copy, estimator=self, dtype=FLOAT_DTYPES, ensure_all_finite=True)
 
         X = np.array(Parallel(n_jobs=self.n_jobs)(delayed(self._transform)(i, x) for i, x in enumerate(X.T))).T
         return X
@@ -122,7 +122,7 @@ class GaussRankScaler(BaseEstimator, TransformerMixin):
         check_is_fitted(self, 'interp_func_')
 
         copy = copy if copy is not None else self.copy
-        X = check_array(X, copy=copy, estimator=self, dtype=FLOAT_DTYPES, force_all_finite=True)
+        X = check_array(X, copy=copy, estimator=self, dtype=FLOAT_DTYPES, ensure_all_finite=True)
 
         X = np.array(Parallel(n_jobs=self.n_jobs)(delayed(self._inverse_transform)(i, x) for i, x in enumerate(X.T))).T
         return X

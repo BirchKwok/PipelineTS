@@ -3,7 +3,6 @@ import pandas as pd
 from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
-from PipelineTS.spinesTS.metrics import wmape
 from PipelineTS.statistic_model._prophet_core import SpinesProphet
 from PipelineTS.utils import check_time_col_is_timestamp
 
@@ -71,7 +70,7 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
 
         self.all_configs.update({
             'quantile': quantile,
-            'quantile_error': 0,
+            'quantile_error': (0, 0),
             'time_col': time_col,
             'target_col': target_col,
             'lags': lags,
@@ -117,8 +116,14 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
 
     @gc_collector()
     def _calculate_confidence_interval(self, dates, y, cv=5):
-        """Calculate quantile error via expanding-window CV."""
-        residuals = []
+        """Calculate conformal prediction intervals via expanding-window CV.
+
+        Collects per-point signed residuals (y_true - y_pred) across CV folds,
+        then computes asymmetric conformal quantiles with finite-sample correction.
+        """
+        from PipelineTS.base.base import IntervalEstimationMixin
+
+        signed_residuals = []
         n = len(dates)
         fold_size = max(1, n // (cv + 1))
 
@@ -137,14 +142,14 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
                 m = self._define_model()
                 m.fit(train_dates, train_y)
                 preds = m.predict(valid_dates)
-                err = wmape(valid_y.flatten(), preds.flatten())
-                residuals.append(err)
+                per_point = valid_y.flatten() - preds.flatten()
+                signed_residuals.extend(per_point.tolist())
             except Exception:
                 continue
 
-        if len(residuals) == 0:
-            return 0.0
-        return np.percentile(residuals, q=self.all_configs['quantile'])
+        return IntervalEstimationMixin._compute_conformal_quantiles(
+            signed_residuals, coverage=self.all_configs['quantile']
+        )
 
     def fit(self, data, freq='D', cv=5, fit_kwargs=None):
         """
