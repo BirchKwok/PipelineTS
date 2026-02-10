@@ -151,7 +151,7 @@ class ModelPipeline:
         elif include_models == 'all':
             include_models = None
         elif include_models == 'nn':
-            include_models = ['d_linear', 'gau', 'n_beats', 'n_hits', 'n_linear', 'tcn', 'tft',
+            include_models = ['d_linear', 'deepar', 'gau', 'n_beats', 'n_hits', 'n_linear', 'tcn', 'tft',
                               'patch_rnn', 'stacking_rnn', 'tide', 'time2vec', 'transformer',
                               'itransformer', 'srs_net']
         elif include_models == 'ml':

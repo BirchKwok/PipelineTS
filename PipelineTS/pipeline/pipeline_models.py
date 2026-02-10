@@ -45,7 +45,8 @@ def get_all_available_models():
         'patch_rnn': PatchRNNModel,
         'regressor_chain': RegressorChainModel,
         'itransformer': ITransformerModel,
-        'srs_net': SRSNetModel
+        'srs_net': SRSNetModel,
+        'deepar': DeepARModel
     })
 
     return MODELS

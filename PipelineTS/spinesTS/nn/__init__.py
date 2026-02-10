@@ -12,3 +12,4 @@ from ._n_hits import NHiTS
 from ._transformer import TSTransformer
 from ._tft import TFT
 from ._tide import TiDE
+from ._deepar import DeepAR
