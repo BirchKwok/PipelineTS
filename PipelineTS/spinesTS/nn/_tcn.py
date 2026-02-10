@@ -60,6 +60,8 @@ class TemporalBlock(nn.Module):
 class TemporalConvNet(nn.Module):
     def __init__(self, in_features, out_features, kernel_size=2, dropout=0.2, num_levels=None, hidden_channels=None, device=None):
         super(TemporalConvNet, self).__init__()
+        self.in_features = in_features
+        self.eps = 1e-5
 
         # Auto-determine number of TCN levels based on input length for full receptive field
         if num_levels is None:
@@ -70,10 +72,11 @@ class TemporalConvNet(nn.Module):
         if hidden_channels is None:
             hidden_channels = min(max(in_features, 32), 128)
 
+        # First layer: 1 input channel (univariate), rest: hidden_channels
         layers = []
         for i in range(num_levels):
             dilation_size = 2 ** i
-            in_ch = in_features if i == 0 else hidden_channels
+            in_ch = 1 if i == 0 else hidden_channels
             out_ch = hidden_channels
             layers.append(
                 TemporalBlock(in_ch, out_ch, kernel_size, stride=1,
@@ -83,15 +86,32 @@ class TemporalConvNet(nn.Module):
             )
 
         self.network = nn.Sequential(*layers)
+        # Adaptive pooling to collapse temporal dim, then project
+        self.pool = nn.AdaptiveAvgPool1d(1)
         self.output_proj = nn.Linear(hidden_channels, out_features)
 
+        # Direct residual shortcut
+        self.residual_proj = nn.Linear(in_features, out_features)
+
     def forward(self, x):
-        if x.ndim == 2:
-            x = x.unsqueeze(-1)
-        x = self.network(x)
-        # Take the last time step's features and project to output
-        x = x[:, :, -1] if x.ndim == 3 else x
-        return self.output_proj(x)
+        # x: (B, L) for univariate
+        if x.ndim == 3:
+            x = x.squeeze(-1)
+
+        # RevIN
+        mean = x.mean(dim=1, keepdim=True).detach()
+        std = (x.std(dim=1, keepdim=True) + self.eps).detach()
+        x_norm = (x - mean) / std
+
+        # Conv1d expects (B, C, L): treat as 1 channel with L timesteps
+        h = x_norm.unsqueeze(1)  # (B, 1, L)
+        h = self.network(h)      # (B, hidden_channels, L)
+        h = self.pool(h).squeeze(-1)  # (B, hidden_channels)
+        out = self.output_proj(h) + self.residual_proj(x_norm)
+
+        # RevIN denormalize
+        out = out * std + mean
+        return out
 
 
 class TCN(TorchModelMixin, ForecastingMixin):

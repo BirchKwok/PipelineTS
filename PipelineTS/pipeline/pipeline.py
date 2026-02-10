@@ -399,7 +399,7 @@ class ModelPipeline:
         gc.collect()
         gc.garbage.clear()
 
-        self._timer.sleep(3)
+        self._timer.sleep(0.1)
         # -------------------- predicting -------------------------
         if self.configs is not None:
             if self.configs.get_configs(model_name_after_rename):
@@ -442,7 +442,7 @@ class ModelPipeline:
         del eval_res
 
         gc.collect()
-        self._timer.sleep(3)
+        self._timer.sleep(0.1)
 
         self._timer.clear()  # 重置计时器
 
@@ -505,7 +505,6 @@ class ModelPipeline:
         - The resulting leaderboard provides a ranked list of models based on the specified evaluation metric.
         """
         self.logger.info('Information about the device used for computation:\n'+self._compute_device_msg)
-        time.sleep(0.5)
 
         check_time_col_is_timestamp(data, self.time_col)
 

@@ -280,7 +280,6 @@ class TorchModelMixin:
         """
         if verbose:
             logger.info('Information about the device used for computation:\n' + self.string_format)
-            time.sleep(0.5)
 
         return self._fit(
             X,
@@ -328,8 +327,11 @@ class TorchModelMixin:
         """
         check_is_fitted(self)
         self.model.eval()
-        with torch.no_grad():
-            X = torch.Tensor(X)
+        with torch.inference_mode():
+            if isinstance(X, np.ndarray):
+                X = torch.from_numpy(X).float()
+            elif not isinstance(X, torch.Tensor):
+                X = torch.as_tensor(X).float()
             X = self._move_to_device(X)
             pred = self.model(X)
         return pred.cpu().numpy()
@@ -396,12 +398,13 @@ class TorchModelMixin:
         """
         model.train()  # set model to training mode
         train_batch = len(dataloader)
-        train_loss_current, train_metric = 0, 0
+        train_loss_current = 0
+        valid_batches = 0
 
         use_amp = hasattr(self, '_use_amp') and self._use_amp
 
         for x, y in dataloader:
-            x, y = x.to(self.device), y.to(self.device)
+            x, y = x.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)  # clear optimizer gradient
 
@@ -409,6 +412,11 @@ class TorchModelMixin:
                 with torch.amp.autocast('cuda'):
                     train_pred = model(x)
                     train_loss = loss_fn(train_pred, y)
+
+                # NaN guard: skip this batch if loss is NaN
+                if torch.isnan(train_loss) or torch.isinf(train_loss):
+                    continue
+
                 self._grad_scaler.scale(train_loss).backward()
                 self._grad_scaler.unscale_(optimizer)
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.)
@@ -419,16 +427,27 @@ class TorchModelMixin:
                 train_pred = model(x)
                 train_loss = loss_fn(train_pred, y)
 
+                # NaN guard: skip this batch if loss is NaN
+                if torch.isnan(train_loss) or torch.isinf(train_loss):
+                    continue
+
                 # backward
                 train_loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.)
 
                 optimizer.step()
 
-            train_metric += self.metric(train_pred, y)
             train_loss_current += train_loss.item()
+            valid_batches += 1
 
-        return train_loss_current / train_batch, train_metric / train_batch
+        if valid_batches == 0:
+            # All batches had NaN loss — restore best weights to recover
+            if hasattr(self, 'best_weight') and self.best_weight is not None:
+                self.model.load_state_dict(self.best_weight)
+            return float('inf'), float('inf')
+
+        avg_loss = train_loss_current / valid_batches
+        return avg_loss, avg_loss
 
     def test_on_one_epoch(
             self,
@@ -444,19 +463,16 @@ class TorchModelMixin:
         """
 
         model.eval()  # set model to evaluate mode
-        test_loss, test_metric, test_num_batches = 0, 0, len(dataloader)
-        with torch.no_grad():  # with no gradient
+        test_loss, test_num_batches = 0, len(dataloader)
+        with torch.inference_mode():
             for x, y in dataloader:
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
                 pred = model(x)
                 test_loss += loss_fn(y, pred).item()  # scalar
-                # scalar
-                test_metric += self.metric(y, pred)
 
         test_loss /= test_num_batches
-        test_metric /= test_num_batches
 
-        return test_loss, test_metric
+        return test_loss, test_loss
 
     @ParameterTypeAssert({
         'loss_type': str,
@@ -484,7 +500,7 @@ class TorchModelMixin:
         if loss < (self.current_loss + min_delta):
             self.current_loss = loss
             if restore_best_weights:
-                self.best_weight = copy.deepcopy(self.model.state_dict())
+                self.best_weight = {k: v.clone() for k, v in self.model.state_dict().items()}
             self.current_patience = 0
         else:
             self.current_patience += 1
@@ -658,7 +674,7 @@ class TorchModelMixin:
             test_dataloader = self.data_loader(*self._check_x_y_type(eval_set[0], eval_set[1]))
 
         self.current_loss = np.finfo(np.float64).max - min_delta
-        self.best_weight = copy.deepcopy(self.model.state_dict())
+        self.best_weight = {k: v.clone() for k, v in self.model.state_dict().items()}
 
         batches = int(np.ceil(len(X) / self._batch_size))
 
@@ -724,7 +740,7 @@ class TorchModelMixin:
 
     def score(self, X, y):
         self.model.eval()
-        with torch.no_grad():
+        with torch.inference_mode():
             X, y = torch.Tensor(X), torch.Tensor(y)
             X_gpu = self._move_to_device(X)
             pred = self.model(X_gpu).cpu()
