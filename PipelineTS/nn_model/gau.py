@@ -27,7 +27,10 @@ class GAUModel(SpinesNNModelMixin):
             dropout=0.2,
             weight_decay=1e-4,
             query_key_dim=512,
-            expansion_factor=4.0
+            expansion_factor=4.0,
+            use_gtb=False,
+            gtb_d_model=64,
+            routing_mode='static'
     ):
         """
         GAUModel: A wrapper for the GAUNet neural network model.
@@ -102,7 +105,10 @@ class GAUModel(SpinesNNModelMixin):
             dropout=dropout,
             weight_decay=weight_decay,
             query_key_dim=query_key_dim,
-            expansion_factor=expansion_factor
+            expansion_factor=expansion_factor,
+            use_gtb=use_gtb,
+            gtb_d_model=gtb_d_model,
+            routing_mode=routing_mode
         )
 
         self.last_dt = None

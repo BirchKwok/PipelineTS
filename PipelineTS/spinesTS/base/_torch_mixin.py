@@ -385,6 +385,17 @@ class TorchModelMixin:
 
         return train_loader
 
+    @staticmethod
+    def _collect_gtb_aux_loss(model):
+        """Collect auxiliary load-balancing losses from all GTB modules (MoE routing)."""
+        aux = torch.tensor(0.0)
+        for m in model.modules():
+            if m.__class__.__name__ == 'GlobalTemporalBlock' and hasattr(m, '_aux_loss'):
+                loss = m._aux_loss
+                if loss is not None and loss.requires_grad:
+                    aux = aux.to(loss.device) + loss
+        return aux
+
     def train_on_one_epoch(
             self,
             dataloader,
@@ -412,6 +423,7 @@ class TorchModelMixin:
                 with torch.amp.autocast('cuda'):
                     train_pred = model(x)
                     train_loss = loss_fn(train_pred, y)
+                    train_loss = train_loss + self._collect_gtb_aux_loss(model)
 
                 # NaN guard: skip this batch if loss is NaN
                 if torch.isnan(train_loss) or torch.isinf(train_loss):
@@ -426,6 +438,7 @@ class TorchModelMixin:
                 # compute error
                 train_pred = model(x)
                 train_loss = loss_fn(train_pred, y)
+                train_loss = train_loss + self._collect_gtb_aux_loss(model)
 
                 # NaN guard: skip this batch if loss is NaN
                 if torch.isnan(train_loss) or torch.isinf(train_loss):

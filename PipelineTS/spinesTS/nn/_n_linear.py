@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
 
 
 class NLinearBackbone(nn.Module):
@@ -35,7 +35,7 @@ class NLinearBackbone(nn.Module):
         dropout: Dropout rate applied after the linear layer.
     """
 
-    def __init__(self, in_features, out_features, use_revin=True, dropout=0.1):
+    def __init__(self, in_features, out_features, use_revin=True, dropout=0.1, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -48,6 +48,11 @@ class NLinearBackbone(nn.Module):
             self.revin_mean = None
             self.revin_std = None
             self.eps = 1e-5
+
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
 
         self._init_weights()
 
@@ -66,6 +71,9 @@ class NLinearBackbone(nn.Module):
             mean = x.mean(dim=1, keepdim=True).detach()
             std = (x.std(dim=1, keepdim=True) + self.eps).detach()
             x = (x - mean) / std
+
+        if self.use_gtb:
+            x = self.gtb(x)
 
         # NLinear: subtract last value
         last_val = x[:, -1:]  # (B, 1)
@@ -113,7 +121,10 @@ class NLinear(TorchModelMixin, ForecastingMixin):
                  random_seed: int = 42,
                  device='auto',
                  weight_decay: float = 1e-4,
-                 channel_mixing: bool = True
+                 channel_mixing: bool = True,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
                  ) -> None:
         self.in_features = in_features
         self.out_features = out_features
@@ -124,6 +135,9 @@ class NLinear(TorchModelMixin, ForecastingMixin):
         self.loss_fn_name = loss_fn
         self.weight_decay = weight_decay
         self.channel_mixing = channel_mixing
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
 
         super(NLinear, self).__init__(random_seed, device, loss_fn=loss_fn)
 
@@ -132,7 +146,9 @@ class NLinear(TorchModelMixin, ForecastingMixin):
             in_features=self.in_features,
             out_features=self.out_features,
             use_revin=self.use_revin,
-            dropout=self.dropout
+            dropout=self.dropout,
+            use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1:
             model = MultivariateWrapper(

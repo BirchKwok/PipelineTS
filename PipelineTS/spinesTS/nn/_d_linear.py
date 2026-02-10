@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
 
 
 class MovingAvgBlock(nn.Module):
@@ -58,7 +58,7 @@ class DLinearBackbone(nn.Module):
     """
 
     def __init__(self, in_features, out_features, kernel_size=None,
-                 use_revin=True, dropout=0.1):
+                 use_revin=True, dropout=0.1, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -78,6 +78,11 @@ class DLinearBackbone(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         self.eps = 1e-5
+
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
 
         self._init_weights()
 
@@ -99,6 +104,9 @@ class DLinearBackbone(nn.Module):
             mean = x.mean(dim=1, keepdim=True).detach()
             std = (x.std(dim=1, keepdim=True) + self.eps).detach()
             x = (x - mean) / std
+
+        if self.use_gtb:
+            x = self.gtb(x)
 
         # Decomposition
         trend = self.decomposition(x)     # (B, L)
@@ -147,7 +155,10 @@ class DLinear(TorchModelMixin, ForecastingMixin):
                  random_seed: int = 42,
                  device='auto',
                  weight_decay: float = 1e-4,
-                 channel_mixing: bool = True
+                 channel_mixing: bool = True,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
                  ) -> None:
         self.in_features = in_features
         self.out_features = out_features
@@ -159,6 +170,9 @@ class DLinear(TorchModelMixin, ForecastingMixin):
         self.loss_fn_name = loss_fn
         self.weight_decay = weight_decay
         self.channel_mixing = channel_mixing
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
 
         super(DLinear, self).__init__(random_seed, device, loss_fn=loss_fn)
 
@@ -168,7 +182,9 @@ class DLinear(TorchModelMixin, ForecastingMixin):
             out_features=self.out_features,
             kernel_size=self.kernel_size,
             use_revin=self.use_revin,
-            dropout=self.dropout
+            dropout=self.dropout,
+            use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1:
             model = MultivariateWrapper(

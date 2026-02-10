@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
 
 
 class ResidualBlock(nn.Module):
@@ -65,7 +65,7 @@ class TiDEBackbone(nn.Module):
     def __init__(self, in_features, out_features, num_encoder_layers=2,
                  num_decoder_layers=2, hidden_size=128,
                  decoder_output_dim=16, temporal_decoder_hidden=32,
-                 dropout=0.1, use_revin=True):
+                 dropout=0.1, use_revin=True, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -105,6 +105,11 @@ class TiDEBackbone(nn.Module):
         # Global residual: direct linear from lookback to forecast
         self.global_residual = nn.Linear(in_features, out_features)
 
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
+
     def forward(self, x):
         # x: (B, L)
         if x.ndim == 3:
@@ -115,6 +120,9 @@ class TiDEBackbone(nn.Module):
             mean = x.mean(dim=1, keepdim=True).detach()
             std = (x.std(dim=1, keepdim=True) + self.eps).detach()
             x = (x - mean) / std
+
+        if self.use_gtb:
+            x = self.gtb(x)
 
         B = x.shape[0]
 
@@ -176,7 +184,10 @@ class TiDE(TorchModelMixin, ForecastingMixin):
                  random_seed: int = 42,
                  device='auto',
                  weight_decay: float = 1e-4,
-                 channel_mixing: bool = True
+                 channel_mixing: bool = True,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
                  ) -> None:
         self.in_features = in_features
         self.out_features = out_features
@@ -192,6 +203,9 @@ class TiDE(TorchModelMixin, ForecastingMixin):
         self.loss_fn_name = loss_fn
         self.weight_decay = weight_decay
         self.channel_mixing = channel_mixing
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
 
         super(TiDE, self).__init__(random_seed, device, loss_fn=loss_fn)
 
@@ -205,7 +219,9 @@ class TiDE(TorchModelMixin, ForecastingMixin):
             decoder_output_dim=self.decoder_output_dim,
             temporal_decoder_hidden=self.temporal_decoder_hidden,
             dropout=self.dropout,
-            use_revin=self.use_revin
+            use_revin=self.use_revin,
+            use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1:
             model = MultivariateWrapper(

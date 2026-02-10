@@ -54,6 +54,12 @@ Built on top of spinesTS, it provides a unified interface for 24 time series mod
 - **Multivariate forecasting**: ITransformer and SRSNet support multi-input/multi-output prediction modes.
 - **多变量预测**：ITransformer 和 SRSNet 支持多输入/多输出预测模式。
 
+- **GlobalTemporalBlock (GTB)**: Optional plug-in module for all 12 NN models combining frequency mixing, gated linear attention, and SwiGLU FFN with residual connections and RevIN normalization. Supports both static (manual) and adaptive MoE (Mixture-of-Experts) routing modes.
+- **GlobalTemporalBlock (GTB)**：所有 12 个 NN 模型的可选插件模块，组合频率混合、门控线性注意力和 SwiGLU FFN，带残差连接和 RevIN 归一化。支持静态（手动）和自适应 MoE（混合专家）路由模式。
+
+- **MoE Adaptive Routing**: Learned sparse top-K expert selection (inspired by DeepSeek-V2 / Switch Transformer) with load-balancing auxiliary loss. The router dynamically activates 2 of 3 GTB experts per sample for compute-efficient inference.
+- **MoE 自适应路由**：学习型稀疏 top-K 专家选择（灵感来自 DeepSeek-V2 / Switch Transformer），带负载均衡辅助损失。路由器动态激活每个样本 3 个 GTB 专家中的 2 个，实现高效推理。
+
 - **Rich feature engineering**: Automatic lag feature extraction (26+ features per window) for GBDT/ML models and Prophet.
 - **丰富的特征工程**：为 GBDT/ML 模型和 Prophet 自动提取滞后特征（每个窗口 26+ 个特征）。
 
@@ -718,6 +724,7 @@ For detailed documentation, see the [docs/](docs/) directory:
 - [Multivariate Prediction / 多变量预测](docs/multivariate.md)
 - [Advanced Features / 高级功能](docs/advanced.md)
 - [API Reference / API 参考](docs/api_reference.md)
+- [Changelog / 更新日志](CHANGELOG.md)
 
 ---
 

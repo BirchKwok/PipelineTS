@@ -35,6 +35,9 @@ All NN models additionally support:
 | `patience` | 100 | Early stopping patience / 早停耐心值 |
 | `verbose` | False | Whether to show training progress / 是否显示训练进度 |
 | `learning_rate` | 0.001 | Learning rate / 学习率 |
+| `use_gtb` | False | Enable GlobalTemporalBlock (FreqMix + Attention + SwiGLU) / 启用全局时序块 |
+| `gtb_d_model` | 64 | GTB hidden dimension / GTB 隐藏维度 |
+| `routing_mode` | `'static'` | GTB routing: `'static'` (all experts) or `'adaptive'` (MoE top-K) / GTB 路由：`'static'`（全部专家）或 `'adaptive'`（MoE top-K） |
 
 ### NLinearModel
 

@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from PipelineTS.spinesTS.layers import Time2Vec, MultivariateWrapper, RWKVEncoder
+from PipelineTS.spinesTS.layers import Time2Vec, MultivariateWrapper, RWKVEncoder, GlobalTemporalBlock
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
 from PipelineTS.spinesTS.nn.utils import get_weight_norm
 
@@ -66,7 +66,7 @@ class StableTime2Vec(nn.Module):
 
 
 class T2V(nn.Module):
-    def __init__(self, in_features, out_features, dropout=0.1, num_layers=2, device=None):
+    def __init__(self, in_features, out_features, dropout=0.1, num_layers=2, device=None, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super(T2V, self).__init__()
 
         self.in_features, self.out_features = in_features, out_features
@@ -114,6 +114,11 @@ class T2V(nn.Module):
         # Direct residual shortcut
         self.residual_proj = nn.Linear(in_features, out_features)
 
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
+
     def forward(self, x):
         # x: (B, L)
         if x.ndim == 3:
@@ -123,6 +128,9 @@ class T2V(nn.Module):
         mean = x.mean(dim=1, keepdim=True).detach()
         std = (x.std(dim=1, keepdim=True) + self.eps).detach()
         x_norm = (x - mean) / std
+
+        if self.use_gtb:
+            x_norm = self.gtb(x_norm)
 
         B, L = x_norm.shape
 
@@ -159,7 +167,7 @@ class Time2VecNet(TorchModelMixin, ForecastingMixin):
     def __init__(self, in_features, out_features, n_vars=1, learning_rate=0.001,
                  random_seed=42, device='auto', loss_fn='mae',
                  dropout=0.1, num_layers=2, weight_decay=1e-4,
-                 channel_mixing=True):
+                 channel_mixing=True, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         self.in_features, self.out_features = in_features, out_features
         self.n_vars = n_vars
         self.learning_rate = learning_rate
@@ -169,6 +177,9 @@ class Time2VecNet(TorchModelMixin, ForecastingMixin):
         self.num_layers = num_layers
         self.weight_decay = weight_decay
         self.channel_mixing = channel_mixing
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
         # this sentence needs to be the last one
         super(Time2VecNet, self).__init__(random_seed, device=device, loss_fn=loss_fn)
 
@@ -176,7 +187,9 @@ class Time2VecNet(TorchModelMixin, ForecastingMixin):
         backbone = T2V(
             self.in_features, self.out_features,
             dropout=self.dropout, num_layers=self.num_layers,
-            device=self.device
+            device=self.device,
+            use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1:
             model = MultivariateWrapper(

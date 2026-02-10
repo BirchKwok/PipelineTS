@@ -6,7 +6,7 @@ from torch import nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
 from PipelineTS.spinesTS.layers._position_encoder import LearnablePositionalEncoding
-from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
 from PipelineTS.spinesTS.layers._srs import SRSBlock
 from PipelineTS.spinesTS.nn.utils import get_weight_norm
 
@@ -92,7 +92,8 @@ class FCBlock(nn.Module):
 
 class PatchRNNBlock(nn.Module):
     def __init__(self, in_features, out_features, kernel_size=4, dropout=0.1, device=None, multi_steps=False,
-                 use_srs=False, srs_d_model=64, srs_n_heads=4, srs_top_k_ratio=0.5, srs_n_vars=1):
+                 use_srs=False, srs_d_model=64, srs_n_heads=4, srs_top_k_ratio=0.5, srs_n_vars=1,
+                 use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super(PatchRNNBlock, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -139,6 +140,11 @@ class PatchRNNBlock(nn.Module):
 
         self.multi_steps = multi_steps
 
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
+
     def _forward_srs(self, x):
         """SRS-enhanced forward path."""
         if x.ndim == 2:
@@ -169,6 +175,9 @@ class PatchRNNBlock(nn.Module):
         mean = x.mean(dim=1, keepdim=True).detach()
         std = (x.std(dim=1, keepdim=True) + self.eps).detach()
         x_norm = (x - mean) / std
+
+        if self.use_gtb:
+            x_norm = self.gtb(x_norm)
 
         patches = self.splitter(x_norm)
         output, _ = self.encoder_rnn(patches)
@@ -216,7 +225,10 @@ class PatchRNN(TorchModelMixin, ForecastingMixin):
                  use_srs: bool = False,
                  srs_d_model: int = 64,
                  srs_n_heads: int = 4,
-                 srs_top_k_ratio: float = 0.5
+                 srs_top_k_ratio: float = 0.5,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
                  ) -> None:
         self.in_features, self.out_features = in_features, out_features
         self.n_vars = n_vars
@@ -231,6 +243,9 @@ class PatchRNN(TorchModelMixin, ForecastingMixin):
         self.srs_d_model = srs_d_model
         self.srs_n_heads = srs_n_heads
         self.srs_top_k_ratio = srs_top_k_ratio
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
 
         # this sentence needs to be the last one
         super(PatchRNN, self).__init__(random_seed, device, loss_fn=loss_fn)
@@ -247,7 +262,9 @@ class PatchRNN(TorchModelMixin, ForecastingMixin):
             srs_d_model=self.srs_d_model,
             srs_n_heads=self.srs_n_heads,
             srs_top_k_ratio=self.srs_top_k_ratio,
-            srs_n_vars=self.n_vars if self.use_srs else 1
+            srs_n_vars=self.n_vars if self.use_srs else 1,
+            use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1 and not self.use_srs:
             model = MultivariateWrapper(

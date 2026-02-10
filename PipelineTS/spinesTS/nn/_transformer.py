@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
 
 
 class TransformerEncoderBlock(nn.Module):
@@ -65,7 +65,7 @@ class TransformerBackbone(nn.Module):
 
     def __init__(self, in_features, out_features, d_model=64, nhead=4,
                  num_encoder_layers=3, dim_feedforward=256, dropout=0.1,
-                 use_revin=True):
+                 use_revin=True, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -94,6 +94,11 @@ class TransformerBackbone(nn.Module):
         ])
         self.final_norm = nn.LayerNorm(d_model)
 
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
+
         # Output head: flatten and project
         self.output_head = nn.Sequential(
             nn.Linear(in_features * d_model, d_model * 2),
@@ -112,6 +117,9 @@ class TransformerBackbone(nn.Module):
             mean = x.mean(dim=1, keepdim=True).detach()
             std = (x.std(dim=1, keepdim=True) + self.eps).detach()
             x = (x - mean) / std
+
+        if self.use_gtb:
+            x = self.gtb(x)
 
         B, L = x.shape
 
@@ -171,7 +179,10 @@ class TSTransformer(TorchModelMixin, ForecastingMixin):
                  random_seed: int = 42,
                  device='auto',
                  weight_decay: float = 1e-4,
-                 channel_mixing: bool = True
+                 channel_mixing: bool = True,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
                  ) -> None:
         self.in_features = in_features
         self.out_features = out_features
@@ -186,6 +197,9 @@ class TSTransformer(TorchModelMixin, ForecastingMixin):
         self.loss_fn_name = loss_fn
         self.weight_decay = weight_decay
         self.channel_mixing = channel_mixing
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
 
         super(TSTransformer, self).__init__(random_seed, device, loss_fn=loss_fn)
 
@@ -198,7 +212,9 @@ class TSTransformer(TorchModelMixin, ForecastingMixin):
             num_encoder_layers=self.num_encoder_layers,
             dim_feedforward=self.dim_feedforward,
             dropout=self.dropout,
-            use_revin=self.use_revin
+            use_revin=self.use_revin,
+            use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1:
             model = MultivariateWrapper(

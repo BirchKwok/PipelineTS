@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
 from PipelineTS.spinesTS.nn.utils import get_weight_norm
 
 
@@ -58,7 +58,7 @@ class TemporalBlock(nn.Module):
 
 
 class TemporalConvNet(nn.Module):
-    def __init__(self, in_features, out_features, kernel_size=2, dropout=0.2, num_levels=None, hidden_channels=None, device=None):
+    def __init__(self, in_features, out_features, kernel_size=2, dropout=0.2, num_levels=None, hidden_channels=None, device=None, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super(TemporalConvNet, self).__init__()
         self.in_features = in_features
         self.eps = 1e-5
@@ -93,6 +93,11 @@ class TemporalConvNet(nn.Module):
         # Direct residual shortcut
         self.residual_proj = nn.Linear(in_features, out_features)
 
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
+
     def forward(self, x):
         # x: (B, L) for univariate
         if x.ndim == 3:
@@ -102,6 +107,9 @@ class TemporalConvNet(nn.Module):
         mean = x.mean(dim=1, keepdim=True).detach()
         std = (x.std(dim=1, keepdim=True) + self.eps).detach()
         x_norm = (x - mean) / std
+
+        if self.use_gtb:
+            x_norm = self.gtb(x_norm)
 
         # Conv1d expects (B, C, L): treat as 1 channel with L timesteps
         h = x_norm.unsqueeze(1)  # (B, 1, L)
@@ -128,7 +136,10 @@ class TCN(TorchModelMixin, ForecastingMixin):
                  num_levels: int = None,
                  hidden_channels: int = None,
                  weight_decay: float = 1e-4,
-                 channel_mixing: bool = True
+                 channel_mixing: bool = True,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
                  ) -> None:
         self.in_features, self.out_features = in_features, out_features
         self.n_vars = n_vars
@@ -141,6 +152,9 @@ class TCN(TorchModelMixin, ForecastingMixin):
         self.hidden_channels = hidden_channels
         self.weight_decay = weight_decay
         self.channel_mixing = channel_mixing
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
         # this sentence needs to be the last one
         super(TCN, self).__init__(random_seed, device, loss_fn=loss_fn)
 
@@ -148,7 +162,9 @@ class TCN(TorchModelMixin, ForecastingMixin):
         backbone = TemporalConvNet(
             self.in_features, self.out_features, kernel_size=self.kernel_size,
             dropout=self.dropout, num_levels=self.num_levels,
-            hidden_channels=self.hidden_channels, device=self.device
+            hidden_channels=self.hidden_channels, device=self.device,
+            use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1:
             model = MultivariateWrapper(

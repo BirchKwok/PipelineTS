@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
 from PipelineTS.spinesTS.layers import RWKVEncoder
 
 
@@ -44,7 +44,7 @@ class Seq2SeqBlock(nn.Module):
     """
 
     def __init__(self, in_features, out_features, d_model=48, n_blocks=3,
-                 n_rwkv_blocks=3, dropout=0.1):
+                 n_rwkv_blocks=3, dropout=0.1, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super().__init__()
         self.in_features = in_features
         self.eps = 1e-5
@@ -73,6 +73,11 @@ class Seq2SeqBlock(nn.Module):
         # Direct residual shortcut
         self.residual_proj = nn.Linear(in_features, out_features)
 
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
+
     def forward(self, x):
         # x: (B, L)
         if x.ndim == 3:
@@ -82,6 +87,9 @@ class Seq2SeqBlock(nn.Module):
         mean = x.mean(dim=1, keepdim=True).detach()
         std = (x.std(dim=1, keepdim=True) + self.eps).detach()
         x_norm = (x - mean) / std
+
+        if self.use_gtb:
+            x_norm = self.gtb(x_norm)
 
         B, L = x_norm.shape
 
@@ -119,7 +127,10 @@ class StackingRNN(TorchModelMixin, ForecastingMixin):
                  random_seed: int = 42,
                  device='auto',
                  weight_decay: float = 1e-4,
-                 channel_mixing: bool = True
+                 channel_mixing: bool = True,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
                  ) -> None:
         self.in_features, self.out_features = in_features, out_features
         self.n_vars = n_vars
@@ -130,6 +141,9 @@ class StackingRNN(TorchModelMixin, ForecastingMixin):
         self.loss_fn_name = loss_fn
         self.weight_decay = weight_decay
         self.channel_mixing = channel_mixing
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
 
         # this sentence needs to be the last one
         super(StackingRNN, self).__init__(random_seed, device, loss_fn=loss_fn)
@@ -140,7 +154,9 @@ class StackingRNN(TorchModelMixin, ForecastingMixin):
             out_features=self.out_features,
             d_model=self.d_model,
             n_blocks=self.n_blocks,
-            dropout=self.dropout
+            dropout=self.dropout,
+            use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1:
             model = MultivariateWrapper(

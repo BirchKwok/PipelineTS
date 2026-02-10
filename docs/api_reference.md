@@ -104,6 +104,9 @@ model = SomeModel(
     verbose: bool = False,   # Show progress / 显示进度
     learning_rate: float = 0.001,  # Learning rate / 学习率
     feature_cols: list | None = None,  # For multivariate models / 多变量模型用
+    use_gtb: bool = False,   # Enable GlobalTemporalBlock / 启用全局时序块
+    gtb_d_model: int = 64,   # GTB hidden dimension / GTB 隐藏维度
+    routing_mode: str = 'static',  # 'static' or 'adaptive' (MoE) / 静态或自适应（MoE）
 )
 
 model.fit(data, valid_data=None)  # Train / 训练

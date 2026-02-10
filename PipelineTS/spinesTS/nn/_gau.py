@@ -3,7 +3,7 @@ from typing import Any, Union
 import torch
 from torch import nn
 
-from PipelineTS.spinesTS.layers import GAU, PositionalEncoding, MultivariateWrapper
+from PipelineTS.spinesTS.layers import GAU, PositionalEncoding, MultivariateWrapper, GlobalTemporalBlock
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
 
 
@@ -28,7 +28,8 @@ class GAUBlock(nn.Module):
 
 
 class GAUBase(nn.Module):
-    def __init__(self, in_features, out_features, level=2, dropout=0.2, d_model=64):
+    def __init__(self, in_features, out_features, d_model=32, num_heads=4,
+                 level=2, dropout=0.1, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super(GAUBase, self).__init__()
         self.in_features = in_features   # lags (sequence length)
         self.out_features = out_features
@@ -59,6 +60,11 @@ class GAUBase(nn.Module):
         # Direct residual shortcut
         self.residual_proj = nn.Linear(in_features, out_features)
 
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
+
     def forward(self, x):
         # x: (B, lags) 2D — standard univariate input
         if x.ndim == 3:
@@ -69,9 +75,13 @@ class GAUBase(nn.Module):
         std = (x.std(dim=1, keepdim=True) + self.eps).detach()
         x_norm = (x - mean) / std
 
-        h = x_norm.unsqueeze(-1)  # (B, lags, 1)
+        if self.use_gtb:
+            x_norm = self.gtb(x_norm)
+
+        B, L = x_norm.shape
 
         # Learned feature projection: (B, lags, 1) -> (B, lags, d_model)
+        h = x_norm.unsqueeze(-1)  # (B, lags, 1)
         h = self.feature_head(h)
 
         # GAU temporal processing: attention across lag time steps
@@ -95,6 +105,8 @@ class GAUNet(TorchModelMixin, ForecastingMixin):
                  in_features: Any,
                  out_features: Any,
                  n_vars: int = 1,
+                 d_model: int = 32,
+                 num_heads: int = 4,
                  level: int = 3,
                  learning_rate: float = 0.001,
                  random_seed: int = 42,
@@ -104,18 +116,24 @@ class GAUNet(TorchModelMixin, ForecastingMixin):
                  weight_decay: float = 1e-4,
                  query_key_dim: int = 512,
                  expansion_factor: float = 4.0,
-                 channel_mixing: bool = True
+                 channel_mixing: bool = True,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
                  ) -> None:
         self.in_features, self.out_features = in_features, out_features
         self.n_vars = n_vars
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.level = level
         self.learning_rate = learning_rate
         self.loss_fn_name = loss_fn
-        self.level = level
         self.dropout = dropout
         self.weight_decay = weight_decay
-        self.query_key_dim = query_key_dim
-        self.expansion_factor = expansion_factor
         self.channel_mixing = channel_mixing
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
 
         # this sentence needs to be the last one
         super(GAUNet, self).__init__(random_seed, device, loss_fn=loss_fn)
@@ -124,8 +142,13 @@ class GAUNet(TorchModelMixin, ForecastingMixin):
         backbone = GAUBase(
             self.in_features, 
             self.out_features,
+            d_model=self.d_model,
+            num_heads=self.num_heads,
             level=self.level,
-            dropout=self.dropout
+            dropout=self.dropout,
+            use_gtb=self.use_gtb, 
+            gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1:
             model = MultivariateWrapper(

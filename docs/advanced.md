@@ -194,6 +194,91 @@ CQR 提供自适应区间，在模型不确定的区域区间更宽。
 
 ---
 
+## GlobalTemporalBlock (GTB) / 全局时序块
+
+GlobalTemporalBlock is an optional plug-in module available for all 12 univariate NN models. It combines three expert components with residual connections and RevIN normalization.
+GlobalTemporalBlock 是所有 12 个单变量 NN 模型的可选插件模块。它组合三个专家组件，带残差连接和 RevIN 归一化。
+
+### Three Expert Components / 三个专家组件
+
+| Expert / 专家 | Description / 描述 |
+|---|---|
+| **FreqMixingBlock** | Frequency-domain mixing via FFT → learnable complex weights → iFFT / 通过 FFT → 可学习复数权重 → iFFT 的频域混合 |
+| **GatedLinearAttention** | Efficient gated linear attention (no softmax) / 高效门控线性注意力（无 softmax） |
+| **SwiGLU** | SwiGLU feed-forward network / SwiGLU 前馈网络 |
+
+### Static Routing Mode / 静态路由模式
+
+In static mode (default), all three experts are always active:
+在静态模式（默认）下，三个专家始终全部激活：
+
+```python
+from PipelineTS.nn_model import DLinearModel
+
+model = DLinearModel(
+    time_col='date', target_col='value', lags=12,
+    use_gtb=True,              # Enable GTB / 启用 GTB
+    gtb_d_model=64,            # GTB hidden dimension / GTB 隐藏维度
+    routing_mode='static',     # Default: all experts active / 默认：所有专家激活
+    quantile=0.9, epochs=50,
+)
+model.fit(data)
+```
+
+### Adaptive MoE Routing Mode / 自适应 MoE 路由模式
+
+In adaptive mode, a lightweight router network dynamically selects top-K experts per sample (inspired by DeepSeek-V2 / Switch Transformer):
+在自适应模式下，轻量级路由网络动态选择每个样本的 top-K 专家（灵感来自 DeepSeek-V2 / Switch Transformer）：
+
+```python
+model = DLinearModel(
+    time_col='date', target_col='value', lags=12,
+    use_gtb=True,
+    gtb_d_model=64,
+    routing_mode='adaptive',   # MoE routing: top-2 of 3 experts per sample
+                               # MoE 路由：每个样本从 3 个专家中选 2 个
+    quantile=0.9, epochs=50,
+)
+model.fit(data)
+```
+
+Key features of adaptive routing:
+自适应路由的关键特性：
+
+- **Sparse top-K gating**: Only K experts (default 2 of 3) are activated per sample, reducing computation.
+- **稀疏 top-K 门控**：每个样本仅激活 K 个专家（默认 3 选 2），减少计算量。
+
+- **Load-balancing loss**: An auxiliary loss `L_balance = n · Σ(f_i · P_i)` prevents routing collapse and encourages balanced expert usage. It is automatically added to the training loss.
+- **负载均衡损失**：辅助损失 `L_balance = n · Σ(f_i · P_i)` 防止路由崩塌，鼓励均衡使用专家。自动加入训练损失。
+
+- **Exploration noise**: Gaussian noise on router logits during training for better exploration.
+- **探索噪声**：训练时在路由 logits 上注入高斯噪声，促进更好的探索。
+
+### GTB via ModelPipeline / 通过 ModelPipeline 使用 GTB
+
+```python
+from PipelineTS.pipeline import ModelPipeline
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models='nn',
+    # Enable GTB with adaptive routing for all NN models
+    # 为所有 NN 模型启用 GTB 自适应路由
+    d_linear__use_gtb=True,
+    d_linear__routing_mode='adaptive',
+    tcn__use_gtb=True,
+    tcn__routing_mode='adaptive',
+)
+pipeline.fit(data)
+```
+
+### Supported Models / 支持的模型
+
+GTB is available for all 12 univariate NN models: DLinear, NLinear, NBeats, NHiTS, TFT, Transformer, TiDE, GAU, StackingRNN, Time2Vec, PatchRNN, TCN.
+GTB 可用于所有 12 个单变量 NN 模型：DLinear、NLinear、NBeats、NHiTS、TFT、Transformer、TiDE、GAU、StackingRNN、Time2Vec、PatchRNN、TCN。
+
+---
+
 ## Computing Backends / 计算后端
 
 Neural network models support multiple computing backends:

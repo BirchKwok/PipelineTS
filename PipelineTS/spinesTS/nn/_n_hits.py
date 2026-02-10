@@ -24,7 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.spinesTS.layers import MultivariateWrapper
+from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
 
 
 class NHiTSBlock(nn.Module):
@@ -143,7 +143,7 @@ class NHiTSBackbone(nn.Module):
     def __init__(self, in_features, out_features, num_stacks=3,
                  num_blocks=1, num_layers=2, layer_widths=512,
                  pooling_kernel_sizes=None, n_freq_downsample=None,
-                 dropout=0.1, use_revin=True):
+                 dropout=0.1, use_revin=True, use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -185,6 +185,11 @@ class NHiTSBackbone(nn.Module):
                 ))
         self.blocks = nn.ModuleList(blocks)
 
+        # Global Temporal Block (pluggable enhancement)
+        self.use_gtb = use_gtb
+        if use_gtb:
+            self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
+
     def forward(self, x):
         # x: (B, L)
         if x.ndim == 3:
@@ -195,6 +200,9 @@ class NHiTSBackbone(nn.Module):
             mean = x.mean(dim=1, keepdim=True).detach()
             std = (x.std(dim=1, keepdim=True) + self.eps).detach()
             x = (x - mean) / std
+
+        if self.use_gtb:
+            x = self.gtb(x)
 
         residual = x
         forecast = torch.zeros(x.shape[0], self.out_features, device=x.device)
@@ -251,7 +259,10 @@ class NHiTS(TorchModelMixin, ForecastingMixin):
                  random_seed: int = 42,
                  device='auto',
                  weight_decay: float = 1e-4,
-                 channel_mixing: bool = True
+                 channel_mixing: bool = True,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
                  ) -> None:
         self.in_features = in_features
         self.out_features = out_features
@@ -268,6 +279,9 @@ class NHiTS(TorchModelMixin, ForecastingMixin):
         self.loss_fn_name = loss_fn
         self.weight_decay = weight_decay
         self.channel_mixing = channel_mixing
+        self.use_gtb = use_gtb
+        self.gtb_d_model = gtb_d_model
+        self.routing_mode = routing_mode
 
         super(NHiTS, self).__init__(random_seed, device, loss_fn=loss_fn)
 
@@ -282,7 +296,9 @@ class NHiTS(TorchModelMixin, ForecastingMixin):
             pooling_kernel_sizes=self.pooling_kernel_sizes,
             n_freq_downsample=self.n_freq_downsample,
             dropout=self.dropout,
-            use_revin=self.use_revin
+            use_revin=self.use_revin,
+            use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
+            routing_mode=self.routing_mode
         )
         if self.n_vars > 1:
             model = MultivariateWrapper(

@@ -23,7 +23,10 @@ class Time2VecModel(SpinesNNModelMixin):
             lr_scheduler_patience=10,
             lr_factor=0.7,
             restore_best_weights=True,
-            loss_type='min'
+            loss_type='min',
+            use_gtb=False,
+            gtb_d_model=64,
+            routing_mode='static'
     ):
         """
         Time2VecModel: A wrapper for the Time2VecNet model with additional features.
@@ -81,7 +84,10 @@ class Time2VecModel(SpinesNNModelMixin):
             learning_rate=learning_rate,
             random_seed=random_state,
             device=self.accelerator,
-            loss_fn='mae'
+            loss_fn='mae',
+            use_gtb=use_gtb,
+            gtb_d_model=gtb_d_model,
+            routing_mode=routing_mode
         )
 
         self.last_dt = None

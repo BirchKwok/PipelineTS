@@ -31,7 +31,10 @@ class TiDEModel(SpinesNNModelMixin):
             lr_factor=0.7,
             restore_best_weights=True,
             loss_type='min',
-            weight_decay=1e-4
+            weight_decay=1e-4,
+            use_gtb=False,
+            gtb_d_model=64,
+            routing_mode='static'
     ):
         """
         TiDEModel: A wrapper for the TiDE model from spinesTS with additional features.
@@ -111,7 +114,10 @@ class TiDEModel(SpinesNNModelMixin):
             learning_rate=learning_rate,
             random_seed=random_state,
             device=self.accelerator,
-            weight_decay=weight_decay
+            weight_decay=weight_decay,
+            use_gtb=use_gtb,
+            gtb_d_model=gtb_d_model,
+            routing_mode=routing_mode
         )
 
         self.last_dt = None
