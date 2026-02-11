@@ -108,11 +108,18 @@ def detect_available_device(device='auto'):
         device = 'cpu'
         cpu_use = True
 
-    blank_length = lambda s: ' ' * 3 if s is True else ' ' * 2
-    string_format = f"MPS  available: {mps_available}{blank_length(mps_available)}| MPS  use: {mps_use}\n" \
-                    f"CUDA available: {cuda_available}{blank_length(cuda_available)}| CUDA use: {cuda_use}\n" \
-                    f"TPU  available: {tpu_available}{blank_length(tpu_available)}| TPU  use: {tpu_use}\n" \
-                    f"CPU  available: {cpu_available}{blank_length(cpu_available)}| CPU  use: {cpu_use}"
+    # Only show available platforms
+    lines = []
+    if mps_available:
+        lines.append(f"MPS  available: {mps_available}   | MPS  use: {mps_use}")
+    if cuda_available:
+        lines.append(f"CUDA available: {cuda_available}   | CUDA use: {cuda_use}")
+    if tpu_available:
+        lines.append(f"TPU  available: {tpu_available}   | TPU  use: {tpu_use}")
+    if cpu_available:
+        lines.append(f"CPU  available: {cpu_available}   | CPU  use: {cpu_use}")
+    
+    string_format = '\n'.join(lines)
 
     return device, string_format
 
