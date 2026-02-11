@@ -10,8 +10,8 @@
 One-stop time series analysis tool, supporting data preprocessing, feature engineering, model training, model evaluation, and forecasting.
 一站式时间序列分析工具，支持数据预处理、特征工程、模型训练、模型评估与预测。
 
-Built on top of spinesTS, it provides a unified interface for 24 time series models with automatic model selection, conformal prediction intervals, and multivariate forecasting.
-基于 spinesTS 构建，提供 24 种时间序列模型的统一接口，支持自动模型选择、保形预测区间和多变量预测。
+Built on top of spinesTS, it provides a unified interface for 25 time series models with automatic model selection, conformal prediction intervals, and multivariate forecasting.
+基于 spinesTS 构建，提供 25 种时间序列模型的统一接口，支持自动模型选择、保形预测区间和多变量预测。
 
 ---
 
@@ -39,8 +39,8 @@ Built on top of spinesTS, it provides a unified interface for 24 time series mod
 
 ## Features / 特性
 
-- **24 built-in models**: 14 neural network, 7 machine learning, 2 statistical, and 1 ensemble pipeline model.
-- **24 个内置模型**：14 个神经网络、7 个机器学习、2 个统计模型和 1 个集成管道模型。
+- **25 built-in models**: 15 neural network, 7 machine learning, 2 statistical, and 1 ensemble pipeline model.
+- **25 个内置模型**：15 个神经网络、7 个机器学习、2 个统计模型和 1 个集成管道模型。
 
 - **Automatic model selection**: `ModelPipeline` trains and compares all models, automatically selecting the best one.
 - **自动模型选择**：`ModelPipeline` 训练并比较所有模型，自动选出最佳模型。
@@ -181,7 +181,7 @@ plot_data_period(
 
 ## Available Models / 可用模型
 
-### Neural Network Models / 神经网络模型 (14)
+### Neural Network Models / 神经网络模型 (15)
 
 | Model / 模型 | Key / 键名 | Description / 描述 |
 |---|---|---|
@@ -199,6 +199,7 @@ plot_data_period(
 | TCNModel | `tcn` | Temporal Convolutional Network / 时序卷积网络 |
 | ITransformerModel | `itransformer` | Inverted Transformer (multivariate) / 反转 Transformer（多变量） |
 | SRSNetModel | `srs_net` | Selective Representation Space Network (multivariate) / 选择性表征空间网络（多变量） |
+| DeepARModel | `deepar` | Probabilistic forecasting with RWKV encoder + Gaussian head / 基于 RWKV 编码器 + 高斯输出头的概率预测 |
 
 ### Machine Learning Models / 机器学习模型 (7)
 

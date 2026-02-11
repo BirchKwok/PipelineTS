@@ -21,8 +21,8 @@ Welcome to the PipelineTS documentation. This guide covers everything you need t
 ### Core Guides / 核心指南
 
 - **[Model Reference / 模型参考](models.md)**
-  Detailed reference for all 24 built-in models, including parameters and usage examples.
-  所有 24 个内置模型的详细参考，包括参数和使用示例。
+  Detailed reference for all 25 built-in models, including parameters and usage examples.
+  所有 25 个内置模型的详细参考，包括参数和使用示例。
 
 - **[Pipeline Usage / 管道使用](pipeline.md)**
   How to use `ModelPipeline` for automatic model selection and comparison.

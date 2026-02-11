@@ -89,6 +89,7 @@ All located in `PipelineTS.nn_model`.
 | `TCNModel` | `from PipelineTS.nn_model import TCNModel` |
 | `ITransformerModel` | `from PipelineTS.nn_model import ITransformerModel` |
 | `SRSNetModel` | `from PipelineTS.nn_model import SRSNetModel` |
+| `DeepARModel` | `from PipelineTS.nn_model import DeepARModel` |
 
 **Common interface / 通用接口:**
 

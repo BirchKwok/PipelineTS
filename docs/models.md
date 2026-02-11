@@ -1,8 +1,8 @@
 # Model Reference
 # 模型参考
 
-PipelineTS includes 24 built-in time series forecasting models across three categories.
-PipelineTS 包含 24 个内置时间序列预测模型，分为三大类。
+PipelineTS includes 25 built-in time series forecasting models across three categories.
+PipelineTS 包含 25 个内置时间序列预测模型，分为三大类。
 
 All models share a unified API: `fit(data)` for training and `predict(n)` for forecasting.
 所有模型共享统一的 API：`fit(data)` 用于训练，`predict(n)` 用于预测。
@@ -254,6 +254,67 @@ model = SRSNetModel(
     quantile=0.9, epochs=50, verbose=False
 )
 ```
+
+### DeepARModel
+
+Probabilistic time series forecasting with autoregressive recurrent networks. Uses a modern RWKV (linear RNN) encoder instead of traditional LSTM, combined with a Gaussian probabilistic output head. During training, the model learns distribution parameters (μ, σ) via Gaussian NLL loss; at inference, point predictions use the learned mean.
+概率时间序列预测模型，使用自回归循环网络。采用现代 RWKV（线性 RNN）编码器替代传统 LSTM，结合高斯概率输出头。训练时通过高斯负对数似然损失学习分布参数（μ, σ）；推理时使用学习到的均值作为点预测。
+
+**Architecture / 架构:**
+
+```
+Input → RevIN → Per-timestep Embedding → RWKV Encoder → Attention-weighted Pooling
+→ Gated Residual Blocks → Gaussian Head (μ, σ) → RevIN Denormalize
+```
+
+- **RWKV Encoder**: Stacked RWKVBlocks (GatedTimeMixing + SiLU-gated ChannelMixing), all nn.Linear ops, O(T) parallel temporal mixing, no sequential recurrence
+- **RWKV 编码器**：堆叠的 RWKVBlock（门控时序混合 + SiLU 门控通道混合），全部 nn.Linear 操作，O(T) 并行时序混合，无顺序递归
+- **Gated Residual Blocks**: LayerNorm → sigmoid(gate) * SiLU(up) → dropout → residual
+- **门控残差块**：LayerNorm → sigmoid(gate) * SiLU(up) → dropout → 残差连接
+- **Gaussian Head**: Shared trunk with separate μ/σ heads; σ guaranteed positive via softplus
+- **高斯输出头**：共享主干 + 独立的 μ/σ 头；σ 通过 softplus 保证正值
+- **RevIN**: Instance normalization for non-stationary time series
+- **RevIN**：实例归一化，处理非平稳时间序列
+- **Direct residual shortcut**: Linear projection from input to output for gradient flow
+- **直接残差快捷连接**：从输入到输出的线性投影，改善梯度流
+
+**Model-specific parameters / 模型特有参数:**
+
+| Parameter / 参数 | Default / 默认值 | Description / 描述 |
+|---|---|---|
+| `d_model` | 64 | Hidden dimension for RWKV encoder and gated residual blocks / RWKV 编码器和门控残差块的隐藏维度 |
+| `n_blocks` | 3 | Number of gated residual refinement blocks / 门控残差精炼块数量 |
+| `n_rwkv_blocks` | 3 | Number of RWKV temporal mixing blocks in the encoder / 编码器中 RWKV 时序混合块的数量 |
+| `dropout` | 0.1 | Dropout rate / Dropout 比率 |
+
+```python
+from PipelineTS.nn_model import DeepARModel
+
+model = DeepARModel(
+    time_col='date', target_col='value', lags=12,
+    d_model=64,          # Hidden dimension / 隐藏维度
+    n_blocks=3,          # Gated residual blocks / 门控残差块数量
+    n_rwkv_blocks=3,     # RWKV encoder blocks / RWKV 编码器块数量
+    dropout=0.1,         # Dropout rate / Dropout 比率
+    quantile=0.9, epochs=50, verbose=False
+)
+model.fit(data)
+result = model.predict(10)
+```
+
+**Key differences from the original DeepAR paper / 与原始 DeepAR 论文的主要区别:**
+
+- Replaces LSTM with RWKV linear RNN encoder — fully parallelizable, O(T) complexity
+- 用 RWKV 线性 RNN 编码器替代 LSTM — 完全可并行化，O(T) 复杂度
+- Attention-weighted pooling instead of last hidden state — learns which timesteps matter most
+- 注意力加权池化替代最后隐藏状态 — 学习哪些时间步最重要
+- Gated residual refinement blocks for richer feature transformation
+- 门控残差精炼块实现更丰富的特征变换
+- Supports CQR (Conformalized Quantile Regression) for adaptive prediction intervals
+- 支持 CQR（保形分位数回归）生成自适应预测区间
+
+**Reference / 参考:**
+Salinas et al., "DeepAR: Probabilistic Forecasting with Autoregressive Recurrent Networks", International Journal of Forecasting, 2020.
 
 ---
 
