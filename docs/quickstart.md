@@ -130,6 +130,59 @@ result = pipeline.predict(10, model_name='xgboost')
 
 ---
 
+### Use SmartRouter for Intelligent Auto-Selection / 使用 SmartRouter 进行智能自动选择
+
+`SmartRouter` is an intelligent routing system that automatically analyzes data characteristics and selects optimal preprocessing, models, lags, and hyperparameters. It also supports weighted ensemble of top models.
+
+`SmartRouter` 是一个智能路由系统，自动分析数据特征并选择最优的预处理、模型、滞后窗口和超参数。它还支持顶级模型的加权集成。
+
+```python
+from PipelineTS.pipeline import SmartRouter
+
+# SmartRouter automatically profiles data and makes intelligent choices
+# SmartRouter 自动分析数据并做出智能选择
+router = SmartRouter(
+    time_col=time_col,
+    target_col=target_col,
+    n_predict=12,
+    max_models=5,
+    ensemble_strategy='auto',  # 'auto', 'weighted_avg', or 'none'
+    verbose=True,
+)
+
+# Fit and automatically select best strategy
+# 拟合并自动选择最佳策略
+router.fit(data)
+
+# Predict using ensemble (if built) or best single model
+# 使用集成（如果已构建）或最佳单模型进行预测
+result = router.predict(12)
+
+# Access the selected strategy details
+# 查看选择的策略详情
+print(router.strategy)
+print(router.leader_board_)
+```
+
+**Key Features / 主要特性:**
+
+- **Automatic data profiling**: Detects stationarity, seasonality, trend, noise, autocorrelation, and regime changes
+- **自动数据画像**：检测平稳性、季节性、趋势、噪声、自相关和机制变化
+
+- **Intelligent model scoring**: Scores models based on data length, seasonality strength, trend, noise, autocorrelation, and forecast horizon
+- **智能模型评分**：基于数据长度、季节性强度、趋势、噪声、自相关和预测范围对模型评分
+
+- **Adaptive feature engineering**: Automatically enables adaptive MoE routing for NN models and Prophet lag features when appropriate
+- **自适应特征工程**：自动为 NN 模型启用自适应 MoE 路由，并在适当时启用 Prophet 滞后特征
+
+- **Adaptive hyperparameters**: Auto-adjusts GBDT n_estimators/learning_rate/max_depth and NN routing_mode based on data profile
+- **自适应超参数**：根据数据画像自动调整 GBDT 的 n_estimators/learning_rate/max_depth 和 NN 的 routing_mode
+
+- **Ensemble support**: 'auto' mode builds ensemble when top models are competitive; 'weighted_avg' always builds ensemble
+- **集成支持**：'auto' 模式在顶级模型具有竞争力时构建集成；'weighted_avg' 始终构建集成
+
+---
+
 ## Step 5: Save and Load / 第五步：保存与加载
 
 ```python

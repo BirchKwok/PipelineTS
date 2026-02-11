@@ -279,6 +279,153 @@ GTB 可用于所有 12 个单变量 NN 模型：DLinear、NLinear、NBeats、NHi
 
 ---
 
+## SmartRouter / 智能路由器
+
+`SmartRouter` is an intelligent routing system that automatically analyzes time series data characteristics and makes optimal decisions for preprocessing, model selection, lag window size, feature engineering, and hyperparameters. It also supports automatic weighted ensemble of top-performing models.
+
+`SmartRouter` 是一个智能路由系统，自动分析时间序列数据特征，为预处理、模型选择、滞后窗口大小、特征工程和超参数做出最优决策。它还支持顶级模型的自动加权集成。
+
+### How SmartRouter Works / SmartRouter 工作原理
+
+1. **Data Profiling**: Analyzes data for stationarity, seasonality, trend, noise, autocorrelation, multi-seasonality, and regime changes
+2. **Strategy Building**: Selects preprocessing steps, models, lags, scaler, and differencing order based on data profile
+3. **Feature Engineering Routing**: Decides whether to enable adaptive MoE routing for NN models and Prophet lag features
+4. **Adaptive Hyperparameters**: Adjusts model parameters (GBDT n_estimators/learning_rate/max_depth, NN routing_mode) based on data
+5. **Pipeline Execution**: Trains selected models and generates leaderboard
+6. **Ensemble Building**: Optionally builds weighted ensemble from top-K models
+
+### Basic Usage / 基本用法
+
+```python
+from PipelineTS.pipeline import SmartRouter
+
+router = SmartRouter(
+    time_col='date',
+    target_col='value',
+    n_predict=12,
+    max_models=5,
+    ensemble_strategy='auto',
+    verbose=True,
+)
+
+router.fit(data)
+result = router.predict(12)
+```
+
+### Ensemble Strategies / 集成策略
+
+```python
+# 'auto' mode: builds ensemble only when top models are competitive (within 30% of best)
+# 'auto' 模式：仅在顶级模型具有竞争力时构建集成（在最佳模型的 30% 范围内）
+router = SmartRouter(..., ensemble_strategy='auto', ensemble_top_k=3)
+
+# 'weighted_avg' mode: always builds ensemble
+# 'weighted_avg' 模式：始终构建集成
+router = SmartRouter(..., ensemble_strategy='weighted_avg', ensemble_top_k=3)
+
+# 'none' mode: disables ensemble
+# 'none' 模式：禁用集成
+router = SmartRouter(..., ensemble_strategy='none')
+
+# Predict with ensemble (default) or force single model
+# 使用集成（默认）或强制单模型预测
+result = router.predict(12)                # Uses ensemble if available
+result = router.predict(12, use_ensemble=False)  # Force best single model
+```
+
+### Accessing Results and Strategy / 访问结果和策略
+
+```python
+# Full strategy dict with all decisions
+# 包含所有决策的完整策略字典
+strategy = router.strategy
+print(f"Selected models: {strategy['models']}")
+print(f"Lags: {strategy['lags']}")
+print(f"Scaler: {strategy['scaler']}")
+print(f"Feature engineering: {strategy['feature_engineering']}")
+print(f"Hyperparameters: {strategy['model_hyperparams']}")
+
+# Leaderboard with model rankings
+# 模型排名的排行榜
+print(router.leader_board_)
+
+# Ensemble information (if built)
+# 集成信息（如果已构建）
+if router.ensemble_:
+    print(router.ensemble_)
+    print(router.ensemble_.all_configs)
+
+# Get specific fitted model
+# 获取特定的拟合模型
+model = router.get_model('lightgbm')
+```
+
+### Data Profile Details / 数据画像详情
+
+The `DataProfile` object contains comprehensive data characteristics:
+
+```python
+from PipelineTS.pipeline import SmartRouter, DataProfile
+
+router = SmartRouter(time_col='date', target_col='value')
+profile = router._profile_data(data)
+
+print(f"Rows: {profile.n_rows}")
+print(f"Frequency: {profile.freq}")
+print(f"Stationarity: {profile.stationarity}")
+print(f"Trend strength: {profile.trend_strength:.3f}")
+print(f"Seasonality strength: {profile.seasonality_strength:.3f}")
+print(f"Autocorr lag-1: {profile.autocorr_lag1:.3f}")
+print(f"Number of seasonalities: {profile.n_seasonalities}")
+print(f"Regime changes: {profile.regime_changes}")
+print(f"Noise ratio: {profile.noise_ratio:.3f}")
+print(f"Skewness: {profile.skewness:.3f}")
+print(f"Missing: {profile.pct_missing:.2%}")
+print(f"Outliers: {profile.pct_outlier:.2%}")
+```
+
+### Model Scoring Factors / 模型评分因素
+
+SmartRouter scores each model based on:
+
+| Factor / 因素 | Impact / 影响 |
+|---|---|
+| **Series length** / 序列长度 | Small data favors statistical + ML; large data favors NN / 小数据偏好统计+ML；大数据偏好NN |
+| **Stationarity** / 平稳性 | Non-stationary data favors Prophet, ARIMA, DLinear, GBDT with differencing / 非平稳数据偏好 Prophet、ARIMA、DLinear、带差分的 GBDT |
+| **Seasonality** / 季节性 | Strong seasonality favors Prophet, NBeats, NHiTS, TFT / 强季节性偏好 Prophet、NBeats、NHiTS、TFT |
+| **Trend strength** / 趋势强度 | Strong trend favors Prophet, DLinear, NLinear, TiDE / 强趋势偏好 Prophet、DLinear、NLinear、TiDE |
+| **Autocorrelation** / 自相关 | High autocorr favors ARIMA, RNN, TCN; low favors tree models / 高自相关偏好 ARIMA、RNN、TCN；低偏好树模型 |
+| **Multi-seasonality** / 多季节性 | Multiple periods favor Prophet, TFT, NBeats / 多周期偏好 Prophet、TFT、NBeats |
+| **Forecast horizon** / 预测范围 | Long horizon favors extrapolation models; short allows complex models / 长范围偏好外推模型；短范围允许复杂模型 |
+| **Regime changes** / 机制变化 | Many changes favor tree models; penalizes smooth models / 多变化偏好树模型；惩罚平滑模型 |
+| **Noise level** / 噪声水平 | High noise favors regularized GBDT (LightGBM, XGBoost) / 高噪声偏好正则化 GBDT |
+
+### Customizing SmartRouter / 自定义 SmartRouter
+
+While SmartRouter makes automatic decisions, you can influence its behavior:
+
+```python
+# Force specific models by using max_models with a list
+# 通过使用 max_models 和列表强制特定模型
+from PipelineTS.pipeline import ModelPipeline
+
+# Custom pipeline with SmartRouter-selected lags but specific models
+# 使用 SmartRouter 选择的滞后窗口但指定模型的自定义管道
+router = SmartRouter(time_col='date', target_col='value')
+router.fit(data)
+
+# Use SmartRouter's lag selection with custom ModelPipeline
+# 将 SmartRouter 的滞后选择用于自定义 ModelPipeline
+custom_pipeline = ModelPipeline(
+    time_col='date',
+    target_col='value',
+    lags=router.strategy['lags'],  # Use SmartRouter's suggested lags
+    include_models=['lightgbm', 'prophet'],
+)
+```
+
+---
+
 ## Computing Backends / 计算后端
 
 Neural network models support multiple computing backends:

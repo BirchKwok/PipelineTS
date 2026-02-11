@@ -22,6 +22,7 @@ Built on top of spinesTS, it provides a unified interface for 25 time series mod
 - [Quick Start / 快速开始](#quick-start--快速开始)
 - [Available Models / 可用模型](#available-models--可用模型)
 - [ModelPipeline / 模型管道](#modelpipeline--模型管道)
+- [SmartRouter / 智能路由器](#smartrouter--智能路由器)
 - [Data Preprocessing / 数据预处理](#data-preprocessing--数据预处理)
 - [Feature Engineering / 特征工程](#feature-engineering--特征工程)
 - [Evaluation Metrics / 评估指标](#evaluation-metrics--评估指标)
@@ -44,6 +45,9 @@ Built on top of spinesTS, it provides a unified interface for 25 time series mod
 
 - **Automatic model selection**: `ModelPipeline` trains and compares all models, automatically selecting the best one.
 - **自动模型选择**：`ModelPipeline` 训练并比较所有模型，自动选出最佳模型。
+
+- **Intelligent SmartRouter**: `SmartRouter` intelligently analyzes data characteristics (stationarity, seasonality, trend, noise, autocorrelation) and automatically selects optimal preprocessing, models, lags, and hyperparameters. Supports weighted ensemble of top models with 'auto' or 'weighted_avg' strategies.
+- **智能 SmartRouter**：`SmartRouter` 智能分析数据特征（平稳性、季节性、趋势、噪声、自相关），自动选择最优预处理、模型、滞后窗口和超参数。支持顶级模型的加权集成，提供 'auto' 和 'weighted_avg' 策略。
 
 - **Conformal prediction intervals**: Industry-standard distribution-free prediction intervals with coverage guarantees.
 - **保形预测区间**：行业标准的无分布预测区间，具有覆盖率保证。
@@ -165,6 +169,23 @@ leaderboard = pipeline.fit(data)
 result = pipeline.predict(10)
 ```
 
+### Use SmartRouter for Intelligent Auto-Selection / 使用 SmartRouter 智能自动选择
+
+```python
+from PipelineTS.pipeline import SmartRouter
+
+router = SmartRouter(
+    time_col=time_col,
+    target_col=target_col,
+    n_predict=12,
+    max_models=5,
+    ensemble_strategy='auto',  # 'auto', 'weighted_avg', or 'none'
+)
+
+router.fit(data)
+result = router.predict(12)  # Uses ensemble if built, else best model
+```
+
 ### Visualize Results / 可视化结果
 
 ```python
@@ -273,6 +294,81 @@ pipeline = ModelPipeline(
     d_linear__lags=50,
 )
 ```
+
+---
+
+## SmartRouter / 智能路由器
+
+`SmartRouter` is an intelligent routing system that automatically analyzes time series data characteristics and makes optimal decisions for preprocessing, model selection, lag window size, and hyperparameters. It also supports automatic weighted ensemble of top-performing models.
+
+`SmartRouter` 是一个智能路由系统，自动分析时间序列数据特征，为预处理、模型选择、滞后窗口大小和超参数做出最优决策。它还支持顶级模型的自动加权集成。
+
+### Key Capabilities / 核心能力
+
+| Feature / 特性 | Description / 描述 |
+|---|---|
+| **Automatic Data Profiling** / 自动数据画像 | Detects stationarity, seasonality, trend strength, noise level, autocorrelation, multi-seasonality, and regime changes / 检测平稳性、季节性、趋势强度、噪声水平、自相关、多季节性和机制变化 |
+| **Intelligent Model Scoring** / 智能模型评分 | Scores 25+ models based on data characteristics (length, seasonality, trend, noise, autocorrelation, forecast horizon) / 基于数据特征（长度、季节性、趋势、噪声、自相关、预测范围）对 25+ 模型评分 |
+| **Adaptive Feature Engineering** / 自适应特征工程 | Auto-enables adaptive MoE routing for NN models; Prophet lag features when autocorrelation is strong / 为 NN 模型自动启用自适应 MoE 路由；自相关强时启用 Prophet 滞后特征 |
+| **Adaptive Hyperparameters** / 自适应超参数 | Auto-adjusts GBDT (n_estimators, learning_rate, max_depth) and NN (routing_mode) based on data profile / 根据数据画像自动调整 GBDT 和 NN 超参数 |
+| **Weighted Ensemble** / 加权集成 | `ensemble_strategy='auto'` builds ensemble when top models are competitive; `'weighted_avg'` always builds / `ensemble_strategy='auto'` 在顶级模型具有竞争力时构建集成；`'weighted_avg'` 始终构建 |
+
+### Usage / 用法
+
+```python
+from PipelineTS.pipeline import SmartRouter
+
+router = SmartRouter(
+    time_col='date',
+    target_col='value',
+    n_predict=12,               # Forecast horizon / 预测范围
+    max_models=5,               # Number of candidate models / 候选模型数量
+    ensemble_strategy='auto',   # 'auto', 'weighted_avg', or 'none'
+    ensemble_top_k=3,           # Max models in ensemble / 集成中最大模型数
+    random_state=42,
+    verbose=True,
+)
+
+router.fit(data)
+
+# Predict (uses ensemble if built, else best single model)
+# 预测（使用集成如果已构建，否则使用最佳单模型）
+result = router.predict(n=12)
+
+# Force using best single model (bypass ensemble)
+# 强制使用最佳单模型（绕过集成）
+result = router.predict(n=12, use_ensemble=False)
+
+# Access selected strategy
+# 查看选择的策略
+print(router.strategy)        # Full strategy dict / 完整策略字典
+print(router.leader_board_)   # Model rankings / 模型排名
+print(router.ensemble_)       # Ensemble info (if built) / 集成信息（如果已构建）
+```
+
+### Data Profile Fields / 数据画像字段
+
+The `DataProfile` object contains these characteristics:
+
+| Field / 字段 | Description / 描述 |
+|---|---|
+| `n_rows` | Number of observations / 观测值数量 |
+| `freq` | Detected frequency (MS, D, h, etc.) / 检测到的频率 |
+| `stationarity` | 'stationary', 'trend_stationary', 'non_stationary' / 平稳性结论 |
+| `trend_strength` | R² of linear fit (0-1) / 线性拟合 R² |
+| `seasonality_strength` | Spectral power at dominant frequency (0-1) / 主导频率的谱功率 |
+| `autocorr_lag1`, `autocorr_lag2` | Lag-1 and lag-2 autocorrelation / 一阶和二阶自相关 |
+| `n_seasonalities` | Number of detected seasonal periods / 检测到的季节周期数 |
+| `regime_changes` | Count of trend direction changes / 趋势方向变化次数 |
+| `noise_ratio` | Std of residuals / total std / 残差标准差 / 总标准差 |
+| `skewness`, `kurtosis` | Distribution shape metrics / 分布形状指标 |
+| `pct_missing`, `pct_outlier` | Missing and outlier percentages / 缺失值和异常值百分比 |
+
+### Ensemble Strategies / 集成策略
+
+- **`ensemble_strategy='auto'` (default)**: Builds ensemble only when multiple top models have similar performance (within 30% of best metric). This avoids ensemble with one dominant model.
+- **`ensemble_strategy='weighted_avg'`**: Always builds ensemble of top-K models with inverse-metric weighting.
+- **`ensemble_strategy='none'`**: Disables ensemble, always uses single best model.
 
 ---
 
