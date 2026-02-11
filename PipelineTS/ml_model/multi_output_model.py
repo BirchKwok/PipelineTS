@@ -24,7 +24,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
             lags=1,
             quantile=0.9,
             estimator=LGBMRegressor,
-            differential_n=1,
+            differential_n=0,
             **model_configs
     ):
         """
@@ -42,7 +42,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
             The quantile used for interval prediction. Set to None for point prediction.
         estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
             The base estimator used for the multi-output regression model.
-        differential_n : int,  optional, default: 1
+        differential_n : int,  optional, default: 0
             The number of differencing operations to apply to the target variable.
         **model_configs : dict
             Additional keyword arguments for configuring the base estimator.

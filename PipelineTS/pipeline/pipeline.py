@@ -1,4 +1,3 @@
-import time
 from copy import deepcopy
 import gc
 
@@ -29,9 +28,6 @@ from PipelineTS.pipeline.pipeline_models import get_all_available_models, get_al
 from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 from PipelineTS.base.base_utils import generate_models_set
-
-
-# TODO: 传入数据，进行数据采集周期检验，看看是否有漏数据，如果有，进行插值（可选），如果有异常值，进行噪音去除（可选）
 
 
 class ModelPipeline:
@@ -81,7 +77,7 @@ class ModelPipeline:
             scaler=True,  # whether to use the scaler, default is True, use MinMaxScaler
             accelerator='auto',
             cv=5,
-            gbdt_differential_n=1,
+            gbdt_differential_n=0,
             **model_init_kwargs
     ):
         """
@@ -146,8 +142,9 @@ class ModelPipeline:
             exclude_models = [exclude_models]
 
         if include_models == 'light':
-            include_models = ['d_linear', 'lightgbm', 'multi_step_model', 'n_hits', 'n_linear',
-                              'random_forest', 'regressor_chain', 'tcn', 'xgboost']
+            include_models = ['d_linear', 'itransformer', 'multi_output_model', 'multi_step_model',
+                              'n_hits', 'n_linear', 'patch_rnn', 'random_forest',
+                              'regressor_chain', 'tide', 'transformer']
         elif include_models == 'all':
             include_models = None
         elif include_models == 'nn':

@@ -24,8 +24,8 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             n_estimators=500,
             quantile=0.9,
             random_state=None,
-            differential_n=1,
-            moving_avg_n=2,
+            differential_n=0,
+            moving_avg_n=0,
             extend_daily_target_features=True,
             estimator=LGBMRegressor,
             **model_init_configs

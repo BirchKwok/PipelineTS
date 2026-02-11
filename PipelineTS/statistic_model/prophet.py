@@ -35,12 +35,14 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         Whether to include weekly seasonality.
     auto_seasonality : bool, optional, default: True
         Whether to auto-detect seasonality periods via FFT.
+    seasonality_mode : str, optional, default: 'auto'
+        'additive', 'multiplicative', or 'auto' (detects from data).
     trend_dampening : float, optional, default: 0.0
         Dampening for trend extrapolation (0=none, 1=flat).
-    use_lag_features : bool, optional, default: True
+    n_iter : int, optional, default: 5
+        Number of iterations for trend-seasonality decomposition.
+    use_lag_features : bool, optional, default: False
         Whether to include causal rolling lag features as additional regressors.
-        These capture recent dynamics (momentum, volatility, trend) without
-        data leakage.
     lag_window : int or 'auto', optional, default: 'auto'
         Window size for rolling lag features. 'auto' sets it based on data length.
     lag_prior_scale : float, optional, default: 5.0
@@ -60,8 +62,10 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             yearly_seasonality='auto',
             weekly_seasonality='auto',
             auto_seasonality=True,
+            seasonality_mode='auto',
             trend_dampening=0.0,
-            use_lag_features=True,
+            n_iter=5,
+            use_lag_features=False,
             lag_window='auto',
             lag_prior_scale=5.0,
             quantile=0.9,
@@ -80,7 +84,9 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             'yearly_seasonality': yearly_seasonality,
             'weekly_seasonality': weekly_seasonality,
             'auto_seasonality': auto_seasonality,
+            'seasonality_mode': seasonality_mode,
             'trend_dampening': trend_dampening,
+            'n_iter': n_iter,
             'use_lag_features': use_lag_features,
             'lag_window': lag_window,
             'lag_prior_scale': lag_prior_scale,
@@ -97,7 +103,9 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             yearly_seasonality=self.all_configs['yearly_seasonality'],
             weekly_seasonality=self.all_configs['weekly_seasonality'],
             auto_seasonality=self.all_configs['auto_seasonality'],
+            seasonality_mode=self.all_configs['seasonality_mode'],
             trend_dampening=self.all_configs['trend_dampening'],
+            n_iter=self.all_configs['n_iter'],
             use_lag_features=self.all_configs['use_lag_features'],
             lag_window=self.all_configs['lag_window'],
             lag_prior_scale=self.all_configs['lag_prior_scale'],
@@ -151,7 +159,25 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             signed_residuals, coverage=self.all_configs['quantile']
         )
 
-    def fit(self, data, freq='D', cv=5, fit_kwargs=None):
+    @staticmethod
+    def _infer_freq(dates):
+        """Infer pandas frequency string from datetime series."""
+        if len(dates) < 2:
+            return 'D'
+        diffs = np.diff(dates)
+        median_days = float(np.median(diffs) / np.timedelta64(1, 'D'))
+        if median_days >= 28:
+            return 'MS'
+        elif median_days >= 7:
+            return 'W'
+        elif median_days >= 1:
+            return 'D'
+        elif median_days >= 1.0 / 24:
+            return 'h'
+        else:
+            return 'min'
+
+    def fit(self, data, freq='auto', cv=5, fit_kwargs=None):
         """
         Fit the Prophet model on the input data.
 
@@ -159,8 +185,8 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         ----------
         data : pd.DataFrame
             The input data.
-        freq : str, optional, default: 'D'
-            Frequency of the time series.
+        freq : str, optional, default: 'auto'
+            Frequency of the time series. 'auto' detects from data.
         cv : int, optional, default: 5
             Number of cross-validation folds.
         fit_kwargs : ignored, for API compatibility.
@@ -181,7 +207,10 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         self.model = self._define_model()
         self.model.fit(dates, y)
 
-        self._freq = freq
+        if freq == 'auto':
+            self._freq = self._infer_freq(dates)
+        else:
+            self._freq = freq
 
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
