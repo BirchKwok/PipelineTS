@@ -200,16 +200,17 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             eval_set = None  # [(x, y)]
         else:
             check_time_col_is_timestamp(valid_data, self.all_configs['time_col'])
-            raise_if(
-                ValueError, valid_data[self.all_configs['time_col']].min() <= data[self.all_configs['time_col']].max(),
-                'validation data should be after the training data.')
+            # If valid_data overlaps with training data (e.g. pipeline passes last 2*lags rows),
+            # skip eval_set rather than crash — the pipeline uses this for metric evaluation, not early stopping.
+            if valid_data[self.all_configs['time_col']].min() <= data[self.all_configs['time_col']].max():
+                eval_set = None
+            else:
+                valid_data = generate_valid_data(data.copy(), valid_data, self.all_configs['lags'],
+                                                 self.all_configs['time_col'], self.all_configs['target_col'])
 
-            valid_data = generate_valid_data(data.copy(), valid_data, self.all_configs['lags'],
-                                             self.all_configs['time_col'], self.all_configs['target_col'])
+                valid_x, valid_y = self._data_preprocess(valid_data, mode='train')
 
-            valid_x, valid_y = self._data_preprocess(valid_data, mode='train')
-
-            eval_set = [(valid_x, valid_y)]
+                eval_set = [(valid_x, valid_y)]
 
         if self.all_configs['quantile'] is not None:
             alpha = 1.0 - self.all_configs['quantile']
@@ -342,6 +343,11 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         else:
             kwargs = deepcopy(fit_kwargs)
         kwargs.update({'verbose': False})
+        # Reduce epochs for CV calibration — approximate quantiles suffice
+        if 'epochs' in kwargs:
+            kwargs['epochs'] = min(kwargs['epochs'], 50)
+        else:
+            kwargs['epochs'] = 50
 
         alpha = 1.0 - self.all_configs['quantile']
         lags = self.all_configs['lags']
@@ -623,22 +629,22 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             eval_set = None
         else:
             check_time_col_is_timestamp(valid_data, self.all_configs['time_col'])
-            raise_if(
-                ValueError,
-                valid_data[self.all_configs['time_col']].min() <= data[self.all_configs['time_col']].max(),
-                'validation data should be after the training data.'
-            )
-            valid_data = valid_data[required_cols].copy()
+            # If valid_data overlaps with training data (e.g. pipeline passes last 2*lags rows),
+            # skip eval_set rather than crash.
+            if valid_data[self.all_configs['time_col']].min() <= data[self.all_configs['time_col']].max():
+                eval_set = None
+            else:
+                valid_data = valid_data[required_cols].copy()
 
-            lags = self.all_configs['lags']
-            min_rows_needed = 2 * lags
-            if valid_data.shape[0] < min_rows_needed:
-                pad_len = min_rows_needed - valid_data.shape[0]
-                pad_data = data.iloc[-pad_len:][required_cols].copy()
-                valid_data = pd.concat([pad_data, valid_data], axis=0).reset_index(drop=True)
+                lags = self.all_configs['lags']
+                min_rows_needed = 2 * lags
+                if valid_data.shape[0] < min_rows_needed:
+                    pad_len = min_rows_needed - valid_data.shape[0]
+                    pad_data = data.iloc[-pad_len:][required_cols].copy()
+                    valid_data = pd.concat([pad_data, valid_data], axis=0).reset_index(drop=True)
 
-            valid_x, valid_y = self._data_preprocess(valid_data, mode='train')
-            eval_set = [(valid_x, valid_y)]
+                valid_x, valid_y = self._data_preprocess(valid_data, mode='train')
+                eval_set = [(valid_x, valid_y)]
 
         if self.all_configs.get('quantile') is not None and self._is_univariate:
             alpha = 1.0 - self.all_configs['quantile']
@@ -670,6 +676,11 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         else:
             kwargs = deepcopy(fit_kwargs)
         kwargs.update({'verbose': False})
+        # Reduce epochs for CV calibration — approximate quantiles suffice
+        if 'epochs' in kwargs:
+            kwargs['epochs'] = min(kwargs['epochs'], 50)
+        else:
+            kwargs['epochs'] = 50
 
         alpha = 1.0 - self.all_configs['quantile']
         lags = self.all_configs['lags']
@@ -742,6 +753,11 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         else:
             kwargs = deepcopy(fit_kwargs)
         kwargs.update({'verbose': False})
+        # Reduce epochs for CV calibration — approximate residuals suffice
+        if 'epochs' in kwargs:
+            kwargs['epochs'] = min(kwargs['epochs'], 50)
+        else:
+            kwargs['epochs'] = 50
 
         signed_residuals = []
         n = len(data)

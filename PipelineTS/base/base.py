@@ -136,7 +136,11 @@ class IntervalEstimationMixin:
 
             valid_data_x, valid_data_y = self._data_preprocess(valid_data, **valid_data_process_kwargs)
 
-            model = self._define_model()
+            # Use lightweight model for CV if available (e.g. fewer estimators for GBDT)
+            if hasattr(self, '_define_model_for_cv'):
+                model = self._define_model_for_cv()
+            else:
+                model = self._define_model()
 
             if check_has_param(model.fit, 'eval_set'):
                 model.fit(data_x, data_y, eval_set=[(data_x, data_y)], **fit_kwargs)
@@ -217,6 +221,11 @@ class IntervalEstimationMixin:
             kwargs = deepcopy(fit_kwargs)
 
         kwargs.update({'verbose': False})
+        # Reduce epochs for CV calibration — approximate residuals suffice
+        if 'epochs' in kwargs:
+            kwargs['epochs'] = min(kwargs['epochs'], 50)
+        else:
+            kwargs['epochs'] = 50
 
         return self._calculate_confidence_interval_sps(
             data, fit_kwargs=kwargs, train_data_process_kwargs={'mode': 'train'},

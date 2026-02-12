@@ -189,6 +189,7 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
 
         Collects per-point signed residuals (y_true - y_pred) across CV folds,
         then computes asymmetric conformal quantiles with finite-sample correction.
+        Reuses the order found during the main fit to avoid redundant grid searches.
         """
         from PipelineTS.base.base import IntervalEstimationMixin
 
@@ -200,18 +201,11 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
             train_y = train_data[target_col].values.astype(np.float64)
 
             try:
-                result, _, _ = _auto_arima_search(
-                    train_y,
-                    start_p=self.all_configs['start_p'],
-                    max_p=self.all_configs['max_p'],
-                    start_q=self.all_configs['start_q'],
-                    max_q=self.all_configs['max_q'],
-                    max_d=self.all_configs['max_d'],
-                    seasonal=self.all_configs['seasonal'],
-                    m=self.all_configs['m'],
-                )
+                # Reuse the order from the main fit instead of re-running grid search
+                result = _fit_arima(train_y, self._order, self._seasonal_order)
                 if result is not None:
-                    preds = result.forecast(steps=len(valid_y))
+                    fitted_model, _ = result
+                    preds = fitted_model.forecast(steps=len(valid_y))
                     per_point = valid_y.flatten() - preds.flatten()
                     signed_residuals.extend(per_point.tolist())
             except Exception:

@@ -389,6 +389,11 @@ class CatBoostModel(_DirectGBDTMixin):
     def _define_model(self):
         return RegressorChain(_SklearnCatBoostWrapper(**self.all_configs['model_configs']))
 
+    def _define_model_for_cv(self):
+        cv_configs = dict(self.all_configs['model_configs'])
+        cv_configs['iterations'] = min(100, cv_configs.get('iterations', 500))
+        return RegressorChain(_SklearnCatBoostWrapper(**cv_configs))
+
 
 class LightGBMModel(_DirectGBDTMixin):
     def __init__(
@@ -481,6 +486,11 @@ class LightGBMModel(_DirectGBDTMixin):
     def _define_model(self):
         return RegressorChain(LGBMRegressor(**self.all_configs['model_configs']))
 
+    def _define_model_for_cv(self):
+        cv_configs = dict(self.all_configs['model_configs'])
+        cv_configs['n_estimators'] = min(100, cv_configs.get('n_estimators', 500))
+        return RegressorChain(LGBMRegressor(**cv_configs))
+
 
 class XGBoostModel(_DirectGBDTMixin):
     def __init__(
@@ -564,6 +574,11 @@ class XGBoostModel(_DirectGBDTMixin):
     def _define_model(self):
         return RegressorChain(XGBRegressor(**self.all_configs['model_configs']))
 
+    def _define_model_for_cv(self):
+        cv_configs = dict(self.all_configs['model_configs'])
+        cv_configs['n_estimators'] = min(100, cv_configs.get('n_estimators', 500))
+        return RegressorChain(XGBRegressor(**cv_configs))
+
 
 class RandomForestModel(_DirectGBDTMixin):
     def __init__(
@@ -626,3 +641,8 @@ class RandomForestModel(_DirectGBDTMixin):
 
     def _define_model(self):
         return RegressorChain(RandomForestRegressor(**self.all_configs['model_configs']))
+
+    def _define_model_for_cv(self):
+        cv_configs = dict(self.all_configs['model_configs'])
+        cv_configs['n_estimators'] = min(100, cv_configs.get('n_estimators', 300))
+        return RegressorChain(RandomForestRegressor(**cv_configs))

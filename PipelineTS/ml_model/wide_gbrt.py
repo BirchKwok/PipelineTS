@@ -135,6 +135,11 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
         """
         return RegressorChain(self._estimator(**self.all_configs['model_configs']))
 
+    def _define_model_for_cv(self):
+        cv_configs = dict(self.all_configs['model_configs'])
+        cv_configs['n_estimators'] = min(100, cv_configs.get('n_estimators', 500))
+        return RegressorChain(self._estimator(**cv_configs))
+
     @ParameterValuesAssert({
         'mode': ('train', 'predict')
     })
@@ -235,6 +240,8 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
         raise_if_not(ValueError, np.ndim(x) == 2, 'The input data must have 2 dimensions.')
         raise_if_not(TypeError, isinstance(n, int), 'The number of steps to predict must be an integer.')
 
+        # Guard against NaN from feature preprocessing
+        x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         current_res = self.model.predict(x)  # np.ndarray
         if current_res.ndim == 1:
             current_res = current_res.reshape((1, -1))
@@ -264,6 +271,8 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
                 to_predict_x = pd.DataFrame(
                     self._data_preprocess(last_data, 'predict')
                 ).iloc[-1:, :]
+                # Guard against NaN from feature preprocessing on reconstructed data
+                to_predict_x = to_predict_x.fillna(0.0)
 
                 current_res = self.model.predict(to_predict_x).squeeze()
                 res.append(current_res[0])
