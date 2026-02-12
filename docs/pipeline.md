@@ -262,6 +262,120 @@ pipeline.fit(train_data, valid_data=valid_data)
 
 ---
 
+## Multi-Series (Panel Data) / 多序列（面板数据）
+
+Use `id_col` to train on multiple time series simultaneously. Each series gets its own scaler.
+
+使用 `id_col` 同时在多条时间序列上训练。每条序列拥有独立的缩放器。
+
+```python
+pipeline = ModelPipeline(
+    time_col='date',
+    target_col='value',
+    lags=12,
+    id_col='store_id',
+    include_models=['lightgbm', 'catboost'],
+)
+pipeline.fit(panel_data)
+
+# Returns DataFrame with store_id column / 返回带 store_id 列的 DataFrame
+result = pipeline.predict(n=10)
+```
+
+---
+
+## Covariate Support / 协变量支持
+
+Pass known future covariates and past covariates to GBDT, Prophet, and AutoARIMA models.
+
+向 GBDT、Prophet 和 AutoARIMA 模型传递已知未来协变量和历史协变量。
+
+```python
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    known_covariates=['holiday', 'promotion'],
+    past_covariates=['temperature'],
+    include_models=['lightgbm', 'prophet'],
+)
+pipeline.fit(data)
+
+import pandas as pd
+future_cov = pd.DataFrame({
+    'holiday': [0, 0, 1, 0, 0],
+    'promotion': [1, 0, 0, 0, 0],
+})
+result = pipeline.predict(n=5, future_covariates=future_cov)
+```
+
+---
+
+## Incremental Learning / 增量学习
+
+Use `update()` to incrementally train on new data without full retraining.
+
+使用 `update()` 在新数据上进行增量训练，无需完全重新训练。
+
+- **Neural networks**: Warm-start with fewer epochs on combined data.
+- **神经网络**：在合并数据上以更少轮次热启动。
+
+- **Other models**: Efficiently refitted on combined old + new data.
+- **其他模型**：在合并的旧 + 新数据上高效重新拟合。
+
+```python
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models=['lightgbm'],
+)
+pipeline.fit(initial_data)
+
+# When new data arrives / 当新数据到达时
+pipeline.update(new_data)
+result = pipeline.predict(10)
+```
+
+**Note**: `update()` raises `ValueError` if the pipeline has not been fitted yet.
+**注意**：如果管道尚未拟合，`update()` 会抛出 `ValueError`。
+
+---
+
+## Multi-Quantile Prediction / 多分位数预测
+
+Output prediction intervals at multiple coverage levels simultaneously.
+
+同时输出多个覆盖水平的预测区间。
+
+```python
+pipeline.fit(data)
+
+result = pipeline.predict_quantiles(n=10, levels=[0.5, 0.8, 0.95])
+# Columns: date, value, value_q0.5_lower, value_q0.5_upper, ...
+```
+
+---
+
+## Visualization / 可视化
+
+Pipeline provides built-in `plot()` and `plot_leaderboard()` methods with Chinese font support.
+
+管道提供内置 `plot()` 和 `plot_leaderboard()` 方法，支持中文字体。
+
+```python
+# Forecast plot (best model) / 预测图（最佳模型）
+pipeline.plot(n=12, lang='zh')
+
+# Use specific model / 使用指定模型
+pipeline.plot(n=12, model_name='lightgbm', history_tail=60, lang='en')
+
+# Leaderboard chart / 排行榜图
+pipeline.plot_leaderboard(lang='zh')
+```
+
+For more visualization functions, see [Visualization / 可视化](visualization.md).
+
+更多可视化函数，请参阅 [可视化](visualization.md)。
+
+---
+
 ## Save and Load Pipeline / 保存与加载管道
 
 ```python

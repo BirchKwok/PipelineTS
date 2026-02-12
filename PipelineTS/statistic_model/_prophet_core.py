@@ -307,6 +307,8 @@ class SpinesProphet:
         self._lag_feature_std = None
         self._last_lag_features = None
         self._n_lag_features = 0
+        self._n_extra_regressors = 0
+        self._regressor_prior_scale = 10.0
 
     @staticmethod
     def _build_rolling_lag_features(y, window):
@@ -471,7 +473,7 @@ class SpinesProphet:
             return np.column_stack(features)
         return np.zeros((len(t_days), 0))
 
-    def fit(self, dates, y):
+    def fit(self, dates, y, extra_regressors=None):
         """Fit using iterative trend-seasonality decomposition.
 
         Algorithm:
@@ -487,6 +489,8 @@ class SpinesProphet:
             Timestamps.
         y : np.ndarray
             Target values.
+        extra_regressors : np.ndarray or None, shape (n, k)
+            Optional extra regressor columns (e.g. known covariates).
 
         Returns
         -------
@@ -556,6 +560,14 @@ class SpinesProphet:
 
         # Build seasonality design matrix
         X_season = self._build_season_matrix(t_days)
+
+        # Append extra regressors to seasonality matrix
+        if extra_regressors is not None and extra_regressors.shape[1] > 0:
+            self._n_extra_regressors = extra_regressors.shape[1]
+            X_season = np.column_stack([X_season, extra_regressors])
+        else:
+            self._n_extra_regressors = 0
+
         n_season = X_season.shape[1]
 
         # Recency weights: exponential, half-life at 60% of data
@@ -573,8 +585,13 @@ class SpinesProphet:
             reg_trend[2:2 + n_cp] = 1.0 / max(self.changepoint_prior_scale, 1e-8)
 
         # Seasonality regularization
-        reg_season = np.full(n_season,
+        n_pure_season = n_season - self._n_extra_regressors
+        reg_season = np.full(n_pure_season,
                              1.0 / max(self.seasonality_prior_scale, 1e-8))
+        if self._n_extra_regressors > 0:
+            reg_regressor = np.full(self._n_extra_regressors,
+                                    1.0 / max(self._regressor_prior_scale, 1e-8))
+            reg_season = np.concatenate([reg_season, reg_regressor])
 
         # --- Initial trend estimate via weighted moving average ---
         samples_per_year = max(3, int(round(365.25 / max(self._freq, 0.5))))
@@ -652,13 +669,16 @@ class SpinesProphet:
 
         return self
 
-    def predict(self, dates):
+    def predict(self, dates, extra_regressors=None):
         """Predict for given dates.
 
         Parameters
         ----------
         dates : np.ndarray of datetime64 or pd.DatetimeIndex
             Timestamps to predict for.
+        extra_regressors : np.ndarray or None, shape (n_pred, k)
+            Extra regressor values for prediction period.
+            Must have same number of columns as used in fit.
 
         Returns
         -------
@@ -688,8 +708,15 @@ class SpinesProphet:
 
         trend = X_trend @ self._trend_beta
 
-        # Seasonality
+        # Seasonality + extra regressors
         X_season = self._build_season_matrix(t_days)
+        if self._n_extra_regressors > 0:
+            if extra_regressors is not None and extra_regressors.shape[1] > 0:
+                X_season = np.column_stack([X_season, extra_regressors])
+            else:
+                X_season = np.column_stack(
+                    [X_season, np.zeros((n_pred, self._n_extra_regressors))]
+                )
         if X_season.shape[1] > 0 and len(self._season_beta) > 0:
             season = X_season @ self._season_beta
         else:

@@ -50,6 +50,7 @@ class Backtester:
         metric: Callable,
         metric_name: str = 'metric',
         metric_less_is_better: bool = True,
+        id_col: Optional[str] = None,
     ):
         self.model = model
         self.time_col = time_col
@@ -57,6 +58,7 @@ class Backtester:
         self.metric = metric
         self.metric_name = metric_name
         self.metric_less_is_better = metric_less_is_better
+        self.id_col = id_col
         self._results = None
 
     def fit(
@@ -91,6 +93,15 @@ class Backtester:
         pd.DataFrame
             Per-fold results with columns: fold, train_size, test_size, metric.
         """
+        id_col = self.id_col
+
+        # Multi-series panel backtesting
+        if id_col is not None and id_col in data.columns:
+            return self._fit_panel(
+                data, n_splits=n_splits, test_size=test_size,
+                mode=mode, train_size=train_size, verbose=verbose,
+            )
+
         df = data.sort_values(self.time_col).reset_index(drop=True)
         n = len(df)
 
@@ -203,6 +214,105 @@ class Backtester:
                 folds.append((train_start, train_end, test_end))
 
         return folds
+
+    def _fit_panel(
+        self,
+        data: pd.DataFrame,
+        n_splits: int = 5,
+        test_size: int = 10,
+        mode: Literal['expanding', 'sliding'] = 'expanding',
+        train_size: Optional[int] = None,
+        verbose: bool = True,
+    ) -> pd.DataFrame:
+        """Run backtesting on multi-series panel data.
+
+        Splits each series independently at the same temporal fold boundaries
+        (based on the shortest series), combines into panel train/test
+        DataFrames, and evaluates predictions across all series.
+        """
+        id_col = self.id_col
+
+        # Sort each series by time
+        series_dfs = {}
+        for sid, sdf in data.groupby(id_col):
+            series_dfs[sid] = sdf.sort_values(self.time_col).reset_index(drop=True)
+
+        # Compute folds based on the shortest series
+        min_len = min(len(sdf) for sdf in series_dfs.values())
+        folds = self._compute_folds(min_len, n_splits, test_size, mode, train_size)
+
+        records = []
+        all_preds = []
+        all_actuals = []
+
+        for i, (train_start, train_end, test_end) in enumerate(folds):
+            # Build panel train/test by splitting each series at the same indices
+            train_parts = []
+            test_parts = []
+            for sid, sdf in series_dfs.items():
+                train_parts.append(sdf.iloc[train_start:train_end].copy())
+                test_parts.append(sdf.iloc[train_end:test_end].copy())
+
+            train_df = pd.concat(train_parts, ignore_index=True)
+            test_df = pd.concat(test_parts, ignore_index=True)
+            per_series_test_size = test_end - train_end
+
+            if verbose:
+                n_series = len(series_dfs)
+                print(f"  Fold {i + 1}/{len(folds)}: "
+                      f"train[{train_start}:{train_end}] ({train_end - train_start}/series, "
+                      f"{len(train_df)} total) → "
+                      f"test[{train_end}:{test_end}] ({per_series_test_size}/series, "
+                      f"{len(test_df)} total, {n_series} series)")
+
+            fold_model = deepcopy(self.model)
+
+            try:
+                fold_model.fit(train_df)
+                pred_df = fold_model.predict(per_series_test_size)
+
+                # Match predictions to actuals per series
+                y_true_all = []
+                y_pred_all = []
+                for sid in series_dfs:
+                    test_sid = test_df[test_df[id_col] == sid]
+                    pred_sid = pred_df[pred_df[id_col] == sid] if id_col in pred_df.columns else pred_df
+                    yt = test_sid[self.target_col].values
+                    yp = pred_sid[self.target_col].values[:len(yt)]
+                    y_true_all.extend(yt.tolist())
+                    y_pred_all.extend(yp.tolist())
+
+                y_true = np.array(y_true_all)
+                y_pred = np.array(y_pred_all)
+                score = self.metric(y_true, y_pred)
+
+                all_preds.extend(y_pred.tolist())
+                all_actuals.extend(y_true.tolist())
+
+                records.append({
+                    'fold': i + 1,
+                    'train_size': len(train_df),
+                    'test_size': len(test_df),
+                    self.metric_name: score,
+                })
+            except Exception as e:
+                if verbose:
+                    print(f"    ⚠ Fold {i + 1} failed: {e}")
+                records.append({
+                    'fold': i + 1,
+                    'train_size': len(train_df),
+                    'test_size': len(test_df),
+                    self.metric_name: np.nan,
+                })
+
+            del fold_model
+
+        result_df = pd.DataFrame(records)
+        self._results = result_df
+        self._all_preds = np.array(all_preds) if all_preds else np.array([])
+        self._all_actuals = np.array(all_actuals) if all_actuals else np.array([])
+
+        return result_df
 
     # Backward-compatible alias
     run = fit

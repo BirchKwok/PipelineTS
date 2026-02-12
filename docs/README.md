@@ -32,6 +32,12 @@ Welcome to the PipelineTS documentation. This guide covers everything you need t
   Built-in datasets, data scalers, sequence splitting, and evaluation metrics.
   内置数据集、数据缩放器、序列分割和评估指标。
 
+### Visualization / 可视化
+
+- **[Visualization / 可视化](visualization.md)**
+  Comprehensive plotting toolkit with Chinese font support, forecast charts, leaderboard, residual diagnostics, and more.
+  全面的绘图工具包，支持中文字体、预测图表、排行榜、残差诊断等。
+
 ### Advanced Topics / 高级主题
 
 - **[Multivariate Prediction / 多变量预测](multivariate.md)**
@@ -39,8 +45,8 @@ Welcome to the PipelineTS documentation. This guide covers everything you need t
   使用 ITransformer 和 SRSNet 进行多输入/多输出预测。
 
 - **[Advanced Features / 高级功能](advanced.md)**
-  Hyperparameter tuning, differencing, custom scalers, and more.
-  超参数调优、差分、自定义缩放器等高级功能。
+  Hyperparameter tuning, differencing, custom scalers, multi-quantile, covariates, incremental learning, HPO, and more.
+  超参数调优、差分、自定义缩放器、多分位数、协变量、增量学习、HPO 等高级功能。
 
 - **[API Reference / API 参考](api_reference.md)**
   Complete API reference for all public classes and functions.

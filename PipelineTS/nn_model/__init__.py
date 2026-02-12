@@ -13,3 +13,8 @@ from PipelineTS.nn_model.tcn import TCNModel
 from PipelineTS.nn_model.itransformer import ITransformerModel
 from PipelineTS.nn_model.srs_net import SRSNetModel
 from PipelineTS.nn_model.deepar import DeepARModel
+
+try:
+    from PipelineTS.nn_model.chronos import ChronosModel
+except ImportError:
+    pass

@@ -39,10 +39,16 @@ ModelPipeline(
 | Method / 方法 | Description / 描述 |
 |---|---|
 | `fit(data, valid_data=None)` | Train all models and return leaderboard / 训练所有模型并返回排行榜 |
-| `predict(n, model_name=None, data=None)` | Predict n steps using best or specified model / 使用最佳或指定模型预测 n 步 |
+| `predict(n, model_name=None, data=None, future_covariates=None)` | Predict n steps using best or specified model / 使用最佳或指定模型预测 n 步 |
+| `predict_quantiles(n, levels, model_name=None)` | Multi-quantile prediction / 多分位数预测 |
+| `update(new_data)` | Incremental learning on new data / 在新数据上增量学习 |
+| `plot(n=None, lang='zh', history_tail=None)` | Plot forecast from best model / 绘制最佳模型预测图 |
+| `plot_leaderboard(lang='zh')` | Plot model leaderboard chart / 绘制模型排行榜图 |
 | `get_model(model_name=None)` | Get the best or specified trained model / 获取最佳或指定的已训练模型 |
 | `get_model_all_configs(model_name=None)` | Get all configs for a model / 获取模型的全部配置 |
 | `list_all_available_models()` | Class method: list all model names / 类方法：列出所有模型名称 |
+| `save(path)` | Save pipeline to zip file / 保存管道到 zip 文件 |
+| `load(path)` | Static: load pipeline from zip / 静态方法：从 zip 加载管道 |
 
 **Attributes / 属性:**
 
@@ -50,6 +56,56 @@ ModelPipeline(
 |---|---|
 | `leader_board_` | DataFrame with model performance rankings / 模型性能排名 DataFrame |
 | `best_model_` | The best performing model object / 最佳模型对象 |
+| `failed_models` | List of failed model details / 失败模型详情列表 |
+| `skipped_models` | List of skipped model names and reasons / 跳过的模型名称和原因列表 |
+
+---
+
+### `PipelineTS.pipeline.SmartRouter`
+
+Intelligent routing system for automatic data profiling, model selection, and ensemble building.
+智能路由系统，自动数据画像、模型选择和集成构建。
+
+```python
+SmartRouter(
+    time_col: str,
+    target_col: str,
+    n_predict: int | None = None,
+    max_models: int = 5,
+    quantile: float | None = None,
+    ensemble_strategy: str = 'auto',
+    ensemble_top_k: int = 3,
+    id_col: str | None = None,
+    known_covariates: list | None = None,
+    past_covariates: list | None = None,
+    hpo_strategy: str = 'none',
+    hpo_n_trials: int = 10,
+    time_limit: float | None = None,
+    random_state: int = 0,
+    verbose: bool = True,
+)
+```
+
+**Methods / 方法:**
+
+| Method / 方法 | Description / 描述 |
+|---|---|
+| `fit(data)` | Profile data, select models, train, optionally build ensemble / 数据画像、选择模型、训练、可选构建集成 |
+| `predict(n, use_ensemble=True, future_covariates=None)` | Predict using ensemble or best model / 使用集成或最佳模型预测 |
+| `predict_quantiles(n, levels)` | Multi-quantile prediction / 多分位数预测 |
+| `update(new_data)` | Incremental learning / 增量学习 |
+| `plot(n=None, lang='zh')` | Plot forecast / 绘制预测图 |
+| `plot_leaderboard(lang='zh')` | Plot leaderboard / 绘制排行榜 |
+| `get_model(model_name=None)` | Get fitted model / 获取已训练模型 |
+
+**Attributes / 属性:**
+
+| Attribute / 属性 | Description / 描述 |
+|---|---|
+| `strategy` | Selected strategy dict (models, lags, scaler, etc.) / 选定策略字典 |
+| `leader_board_` | Model rankings / 模型排名 |
+| `ensemble_` | EnsemblePredictor (if built) / 集成预测器 |
+| `pipeline_` | Underlying ModelPipeline / 底层 ModelPipeline |
 
 ---
 
@@ -477,15 +533,80 @@ load_model(path: str)                       # Load model / 加载模型
 
 ## Plotting / 绘图
 
+All located in `PipelineTS.plot`.
+全部位于 `PipelineTS.plot`。
+
+### Chinese Font Configuration / 中文字体配置
+
+```python
+from PipelineTS.plot import configure_chinese_font
+
+configure_chinese_font(force: bool = False) -> str
+# Auto-detect and set Chinese font. Returns font name.
+# 自动检测并设置中文字体。返回字体名称。
+```
+
+### `TSPlotter`
+
+```python
+TSPlotter(time_col: str, target_col: str, lang: str = 'zh')
+
+plotter.plot_series(data, id_col=None, **kwargs)
+plotter.plot_forecast(train_data, forecast_data, **kwargs)
+plotter.plot_leaderboard(leaderboard, **kwargs)
+plotter.plot_leaderboard_detail(leaderboard, **kwargs)
+plotter.plot_model_comparison(train_data, predictions, **kwargs)
+plotter.plot_residuals(y_true, y_pred, **kwargs)
+plotter.plot_acf_pacf(series, **kwargs)
+plotter.plot_decomposition(data, **kwargs)
+plotter.plot_train_test_split(train_data, test_data, **kwargs)
+```
+
+### Standalone Plot Functions / 独立绑图函数
+
+```python
+from PipelineTS.plot import (
+    plot_series, plot_forecast, plot_leaderboard, plot_leaderboard_detail,
+    plot_model_comparison, plot_residuals, plot_acf_pacf,
+    plot_decomposition, plot_train_test_split,
+)
+```
+
+| Function / 函数 | Signature / 签名 |
+|---|---|
+| `plot_series` | `(data, time_col, target_col, id_col=None, max_series=9, lang='zh', show=True)` |
+| `plot_forecast` | `(train_data, forecast_data, time_col, target_col, history_tail=None, lang='zh', show=True)` |
+| `plot_leaderboard` | `(leaderboard, metric_col='metric', model_col='model', lang='zh', show=True)` |
+| `plot_leaderboard_detail` | `(leaderboard, lang='zh', show=True)` |
+| `plot_model_comparison` | `(train_data, predictions: dict, time_col, target_col, lang='zh', show=True)` |
+| `plot_residuals` | `(y_true, y_pred, time_index=None, lang='zh', show=True)` |
+| `plot_acf_pacf` | `(series, max_lags=30, lang='zh', show=True)` |
+| `plot_decomposition` | `(data, time_col, target_col, period=None, model='additive', lang='zh', show=True)` |
+| `plot_train_test_split` | `(train_data, test_data, time_col, target_col, lang='zh', show=True)` |
+
+All functions return `matplotlib.figure.Figure` and accept `title`, `figsize`, `show` parameters.
+所有函数返回 `matplotlib.figure.Figure`，接受 `title`、`figsize`、`show` 参数。
+
+### Color Constants / 颜色常量
+
+```python
+from PipelineTS.plot import COLORS, MODEL_COLORS
+
+COLORS: dict   # Named colors: primary, forecast, actual, interval, etc.
+MODEL_COLORS: list  # 15-color palette for model comparison
+```
+
+### Legacy Functions / 旧版函数
+
 ```python
 from PipelineTS.plot import plot_data_period
 
 plot_data_period(
-    data1: pd.DataFrame,      # First dataset (e.g., train) / 第一个数据集（如训练集）
-    data2: pd.DataFrame,      # Second dataset (e.g., prediction) / 第二个数据集（如预测集）
-    time_col: str,             # Time column name / 时间列名
-    target_col: str,           # Target column name / 目标列名
-    labels: list = None,       # Legend labels / 图例标签
-    date_fmt: str = '%Y-%m-%d', # Date format / 日期格式
+    data1: pd.DataFrame,      # First dataset (e.g., train) / 第一个数据集
+    data2: pd.DataFrame,      # Second dataset (e.g., prediction) / 第二个数据集
+    time_col: str,
+    target_col: str,
+    labels: list = None,
+    date_fmt: str = '%Y-%m-%d',
 )
 ```

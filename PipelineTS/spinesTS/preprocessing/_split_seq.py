@@ -125,6 +125,111 @@ def lag_splits(x_seq, window_size, skip_steps=1, pred_steps=1):
     return np.array(X)
 
 
+def split_series_panel(x_seq, y_seq, group_ids, window_size: int, pred_steps: int, skip_steps: int = 1):
+    """Split multiple time series into sliding windows without cross-series leakage.
+
+    Creates (X, y) pairs per-series using split_series, then stacks them.
+    This ensures lag windows never cross series boundaries.
+
+    Parameters
+    ----------
+    x_seq : np.ndarray or pd.Series
+        Input values (all series concatenated).
+    y_seq : np.ndarray or pd.Series
+        Target values (all series concatenated).
+    group_ids : np.ndarray or pd.Series
+        Series identifier for each row. Must be same length as x_seq.
+    window_size : int
+        Sliding window size.
+    pred_steps : int
+        Number of steps to predict forward.
+    skip_steps : int, default 1
+        Steps to skip between windows.
+
+    Returns
+    -------
+    X : np.ndarray, shape (N_total, window_size)
+    y : np.ndarray, shape (N_total, pred_steps) or (N_total,) if pred_steps==1
+    series_indices : list of (group_id, n_samples) tuples
+        Tracks how many samples came from each series.
+    """
+    if isinstance(x_seq, pd.Series):
+        x_seq = x_seq.values
+    if isinstance(y_seq, pd.Series):
+        y_seq = y_seq.values
+    if isinstance(group_ids, pd.Series):
+        group_ids = group_ids.values
+
+    unique_ids = []
+    seen = set()
+    for gid in group_ids:
+        if gid not in seen:
+            seen.add(gid)
+            unique_ids.append(gid)
+
+    all_X, all_y = [], []
+    series_indices = []
+
+    for gid in unique_ids:
+        mask = group_ids == gid
+        x_g = x_seq[mask]
+        y_g = y_seq[mask]
+
+        if len(x_g) < window_size + pred_steps:
+            continue
+
+        X_g, y_g = split_series(x_g, y_g, window_size=window_size,
+                                pred_steps=pred_steps, skip_steps=skip_steps)
+        all_X.append(X_g)
+        all_y.append(y_g)
+        series_indices.append((gid, len(X_g)))
+
+    if not all_X:
+        return np.array([]).reshape(0, window_size), np.array([]), []
+
+    return np.vstack(all_X), np.vstack(all_y) if pred_steps > 1 else np.concatenate(all_y), series_indices
+
+
+def lag_splits_panel(x_seq, group_ids, window_size, skip_steps=1, pred_steps=1):
+    """Panel-aware lag_splits: returns last lag window per series.
+
+    Parameters
+    ----------
+    x_seq : np.ndarray or pd.Series
+        Input values (all series concatenated).
+    group_ids : np.ndarray or pd.Series
+        Series identifier for each row.
+    window_size : int
+        Sliding window size.
+
+    Returns
+    -------
+    dict : {group_id: np.ndarray of shape (1, window_size)}
+        Last lag window for each series.
+    """
+    if isinstance(x_seq, pd.Series):
+        x_seq = x_seq.values
+    if isinstance(group_ids, pd.Series):
+        group_ids = group_ids.values
+
+    unique_ids = []
+    seen = set()
+    for gid in group_ids:
+        if gid not in seen:
+            seen.add(gid)
+            unique_ids.append(gid)
+
+    result = {}
+    for gid in unique_ids:
+        mask = group_ids == gid
+        x_g = x_seq[mask]
+        if len(x_g) >= window_size:
+            last_window = x_g[-window_size:].reshape(1, -1)
+            result[gid] = last_window
+
+    return result
+
+
 train_test_split_ts = partial(train_test_split, shuffle=False)  # train_test_split for time series
 
 

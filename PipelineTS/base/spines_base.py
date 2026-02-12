@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from PipelineTS.spinesTS.preprocessing import split_series, lag_splits, split_series_multivariate
+from PipelineTS.spinesTS.preprocessing import split_series, lag_splits, split_series_multivariate, split_series_panel, lag_splits_panel
 from spinesUtils.asserts import ParameterValuesAssert, ParameterTypeAssert
 from spinesUtils.asserts import raise_if, raise_if_not
 from spinesUtils.preprocessing import gc_collector
@@ -115,37 +115,77 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         >>> x_train, y_train = self._data_preprocess(train_data, mode='train')
         """
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
+        id_col = self.all_configs.get('id_col')
 
-        if mode == 'train':
-            # x_train, y_train
-            x_train, y_train = split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
-                                            window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
+        if id_col is not None and id_col in data.columns:
+            # Multi-series path
+            if mode == 'train':
+                x_train, y_train, _ = split_series_panel(
+                    data[self.all_configs['target_col']],
+                    data[self.all_configs['target_col']],
+                    data[id_col],
+                    window_size=self.all_configs['lags'],
+                    pred_steps=self.all_configs['lags']
+                )
+                if x_train.ndim == 1:
+                    x_train = x_train.reshape(1, -1)
+                if y_train.ndim == 1:
+                    y_train = y_train.reshape(1, -1)
+                return x_train, y_train
 
-            if x_train.ndim == 1:
-                x_train = x_train.view((1, -1))
-            if y_train.ndim == 1:
-                y_train = y_train.view((1, -1))
+            elif mode == 'validation':
+                # For validation in multi-series, use split_series_panel on full data
+                x, y, _ = split_series_panel(
+                    data[self.all_configs['target_col']],
+                    data[self.all_configs['target_col']],
+                    data[id_col],
+                    window_size=self.all_configs['lags'],
+                    pred_steps=self.all_configs['lags']
+                )
+                if x.ndim == 1:
+                    x = x.reshape(1, -1)
+                if y.ndim == 1:
+                    y = y.reshape(1, -1)
+                return x, y
 
-            return x_train, y_train
-
-        elif mode == 'validation':
-            x, y = split_series(pd.concat((self.last_x, data[self.all_configs['target_col']])),
-                                pd.concat((self.last_x, data[self.all_configs['target_col']])),
-                                window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
-
-            if x.ndim == 1:
-                x = x.view((1, -1))
-            if y.ndim == 1:
-                y = y.view((1, -1))
-
-            return x, y
-
+            else:
+                # Predict: return per-series last windows as dict
+                return lag_splits_panel(
+                    data[self.all_configs['target_col']],
+                    data[id_col],
+                    window_size=self.all_configs['lags']
+                )
         else:
-            x = lag_splits(data[self.all_configs['target_col']], window_size=self.all_configs['lags'])
-            if x.ndim == 1:
-                x = x.view((1, -1))
+            # Single-series path (original behavior)
+            if mode == 'train':
+                x_train, y_train = split_series(data[self.all_configs['target_col']], data[self.all_configs['target_col']],
+                                                window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
 
-            return x
+                if x_train.ndim == 1:
+                    x_train = x_train.view((1, -1))
+                if y_train.ndim == 1:
+                    y_train = y_train.view((1, -1))
+
+                return x_train, y_train
+
+            elif mode == 'validation':
+                x, y = split_series(pd.concat((self.last_x, data[self.all_configs['target_col']])),
+                                    pd.concat((self.last_x, data[self.all_configs['target_col']])),
+                                    window_size=self.all_configs['lags'], pred_steps=self.all_configs['lags'])
+
+                if x.ndim == 1:
+                    x = x.view((1, -1))
+                if y.ndim == 1:
+                    y = y.view((1, -1))
+
+                return x, y
+
+            else:
+                x = lag_splits(data[self.all_configs['target_col']], window_size=self.all_configs['lags'])
+                if x.ndim == 1:
+                    x = x.view((1, -1))
+
+                return x
 
     @ParameterTypeAssert({
         'valid_data': (None, pd.DataFrame)
@@ -178,7 +218,12 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         """
         check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
-        data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
+        id_col = self.all_configs.get('id_col')
+        if id_col is not None and id_col in data.columns:
+            data = data[[self.all_configs['time_col'], self.all_configs['target_col'], id_col]]
+        else:
+            data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
+            id_col = None
 
         if fit_kwargs is None:
             fit_kwargs = {}
@@ -191,8 +236,30 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             if fit_param not in fit_kwargs:
                 fit_kwargs.update({fit_param: self.all_configs[fit_param]})
 
-        self.x = data[self.all_configs['target_col']].iloc[-self.all_configs['lags']:]
-        self.last_dt = data[self.all_configs['time_col']].max()
+        # Training stability params (with safe defaults)
+        _stability_defaults = {
+            'use_ema': False, 'ema_decay': 0.999,
+            'use_swa': False, 'swa_start_frac': 0.75,
+            'warmup_epochs': 0,
+        }
+        for p, default in _stability_defaults.items():
+            if p not in fit_kwargs:
+                fit_kwargs[p] = self.all_configs.get(p, default)
+
+        if id_col is not None:
+            # Multi-series: store per-series last windows and timestamps
+            self._panel_last_x = {}
+            self._panel_last_dt = {}
+            for sid, sdf in data.groupby(id_col):
+                sdf = sdf.sort_values(self.all_configs['time_col'])
+                self._panel_last_x[sid] = sdf[self.all_configs['target_col']].iloc[-self.all_configs['lags']:]
+                self._panel_last_dt[sid] = sdf[self.all_configs['time_col']].max()
+            # Keep single-series attrs for fallback
+            self.x = data[self.all_configs['target_col']].iloc[-self.all_configs['lags']:]
+            self.last_dt = data[self.all_configs['time_col']].max()
+        else:
+            self.x = data[self.all_configs['target_col']].iloc[-self.all_configs['lags']:]
+            self.last_dt = data[self.all_configs['time_col']].max()
 
         x, y = self._data_preprocess(data, mode='train')
 
@@ -211,6 +278,13 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                 valid_x, valid_y = self._data_preprocess(valid_data, mode='train')
 
                 eval_set = [(valid_x, valid_y)]
+
+        # Enable mHC-inspired residual gate if requested
+        if self.all_configs.get('use_residual_gate', False):
+            self.model._enable_residual_gate(
+                n_sinkhorn_iters=self.all_configs.get('n_sinkhorn_iters', 10),
+                init_alpha=self.all_configs.get('gate_init_alpha', 0.3),
+            )
 
         if self.all_configs['quantile'] is not None:
             alpha = 1.0 - self.all_configs['quantile']
@@ -381,6 +455,8 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         if len(scores) == 0:
             return 0.0
 
+        self.all_configs['_conformal_residuals'] = scores
+
         scores = np.array(scores)
         n_cal = len(scores)
         level = min(1.0, (1.0 - alpha) * (1.0 + 1.0 / n_cal))
@@ -413,8 +489,58 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         if predict_kwargs is None:
             predict_kwargs = {}
 
+        id_col = self.all_configs.get('id_col')
+        target_col = self.all_configs['target_col']
+        time_col = self.all_configs['time_col']
+
+        # Multi-series panel prediction
+        if id_col is not None and hasattr(self, '_panel_last_x') and self._panel_last_x:
+            if data is not None:
+                check_time_col_is_timestamp(data, time_col)
+                # Build per-series windows from provided data
+                panel_windows = {}
+                panel_last_dts = {}
+                for sid, sdf in data.groupby(id_col):
+                    sdf = sdf.sort_values(time_col)
+                    if len(sdf) >= self.all_configs['lags']:
+                        vals = sdf[target_col].iloc[-self.all_configs['lags']:].values
+                        panel_windows[sid] = vals.reshape(1, -1)
+                        panel_last_dts[sid] = sdf[time_col].max()
+            else:
+                panel_windows = {}
+                panel_last_dts = {}
+                for sid, last_x in self._panel_last_x.items():
+                    vals = last_x.values if hasattr(last_x, 'values') else last_x
+                    panel_windows[sid] = vals.reshape(1, -1)
+                    panel_last_dts[sid] = self._panel_last_dt[sid]
+
+            all_results = []
+            for sid, x in panel_windows.items():
+                last_dt = panel_last_dts[sid]
+
+                if getattr(self.model, '_cqr_enabled', False) and self.all_configs['quantile'] is not None:
+                    cqr = self._extend_predict_cqr(x, n, predict_kwargs=predict_kwargs)
+                    res = pd.DataFrame(cqr['median'], columns=[target_col])
+                    res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+                    q_hat = self.all_configs['quantile_error']
+                    res[f"{target_col}_lower"] = np.array(cqr['lower']) - q_hat
+                    res[f"{target_col}_upper"] = np.array(cqr['upper']) + q_hat
+                else:
+                    preds = self._extend_predict(x, n, predict_kwargs=predict_kwargs)
+                    res = pd.DataFrame(preds, columns=[target_col])
+                    res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+                    if self.all_configs['quantile'] is not None:
+                        res = self.interval_predict(res)
+
+                res = self.chosen_cols(res)
+                res[id_col] = sid
+                all_results.append(res)
+
+            return pd.concat(all_results, ignore_index=True)
+
+        # Single-series prediction (original behavior)
         if data is not None:
-            check_time_col_is_timestamp(data, self.all_configs['time_col'])
+            check_time_col_is_timestamp(data, time_col)
             raise_if_not(
                 ValueError, len(data) >= self.all_configs['lags'],
                 'The length of the series must greater than or equal to the lags. '
@@ -422,7 +548,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
             x = self._data_preprocess(data.iloc[-self.all_configs['lags']:, :],
                                       mode='predict')
-            last_dt = data[self.all_configs['time_col']].max()
+            last_dt = data[time_col].max()
         else:
             x_vals = self.x.values
             if x_vals.ndim == 1:
@@ -430,9 +556,6 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             else:
                 x = x_vals.reshape((1, -1))
             last_dt = self.last_dt
-
-        target_col = self.all_configs['target_col']
-        time_col = self.all_configs['time_col']
 
         if getattr(self.model, '_cqr_enabled', False) and self.all_configs['quantile'] is not None:
             cqr = self._extend_predict_cqr(x, n, predict_kwargs=predict_kwargs)
@@ -554,12 +677,35 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             y : np.ndarray, shape (N, lags) for single-target, (N, lags, n_targets) for multi-target
         For mode='predict':
             X : np.ndarray, shape (1, lags, C) for multivariate, (1, lags) for univariate
+            For multi-series predict: dict {series_id: np.ndarray}
         """
         data = data.copy()
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
         lags = self.all_configs['lags']
+        id_col = self.all_configs.get('id_col')
 
         if self._is_univariate:
+            # Multi-series panel path (univariate)
+            if id_col is not None and id_col in data.columns:
+                if mode in ('train', 'validation'):
+                    x, y, _ = split_series_panel(
+                        data[self._primary_target].values,
+                        data[self._primary_target].values,
+                        data[id_col].values,
+                        window_size=lags, pred_steps=lags
+                    )
+                    if x.ndim == 1:
+                        x = x.reshape((1, -1))
+                    if y.ndim == 1:
+                        y = y.reshape((1, -1))
+                    return x, y
+                else:
+                    return lag_splits_panel(
+                        data[self._primary_target].values,
+                        data[id_col].values,
+                        window_size=lags
+                    )
+
             if mode in ('train', 'validation'):
                 x, y = split_series(
                     data[self._primary_target], data[self._primary_target],
@@ -606,8 +752,13 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         """
         check_time_col_is_timestamp(data, self.all_configs['time_col'])
 
+        id_col = self.all_configs.get('id_col')
         required_cols = self._get_data_columns()
-        data = data[required_cols].copy()
+        if id_col is not None and id_col in data.columns:
+            data = data[required_cols + [id_col]].copy()
+        else:
+            data = data[required_cols].copy()
+            id_col = None
 
         if fit_kwargs is None:
             fit_kwargs = {}
@@ -620,8 +771,29 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             if fit_param not in fit_kwargs:
                 fit_kwargs.update({fit_param: self.all_configs[fit_param]})
 
-        self._last_features = data[self._feature_cols].iloc[-self.all_configs['lags']:].copy()
-        self.last_dt = data[self.all_configs['time_col']].max()
+        # Training stability params (with safe defaults)
+        _stability_defaults = {
+            'use_ema': False, 'ema_decay': 0.999,
+            'use_swa': False, 'swa_start_frac': 0.75,
+            'warmup_epochs': 0,
+        }
+        for p, default in _stability_defaults.items():
+            if p not in fit_kwargs:
+                fit_kwargs[p] = self.all_configs.get(p, default)
+
+        if id_col is not None:
+            # Multi-series: store per-series last features and timestamps
+            self._panel_last_features = {}
+            self._panel_last_dt = {}
+            for sid, sdf in data.groupby(id_col):
+                sdf = sdf.sort_values(self.all_configs['time_col'])
+                self._panel_last_features[sid] = sdf[self._feature_cols].iloc[-self.all_configs['lags']:].copy()
+                self._panel_last_dt[sid] = sdf[self.all_configs['time_col']].max()
+            self._last_features = data[self._feature_cols].iloc[-self.all_configs['lags']:].copy()
+            self.last_dt = data[self.all_configs['time_col']].max()
+        else:
+            self._last_features = data[self._feature_cols].iloc[-self.all_configs['lags']:].copy()
+            self.last_dt = data[self.all_configs['time_col']].max()
 
         x, y = self._data_preprocess(data, mode='train')
 
@@ -645,6 +817,13 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
                 valid_x, valid_y = self._data_preprocess(valid_data, mode='train')
                 eval_set = [(valid_x, valid_y)]
+
+        # Enable mHC-inspired residual gate if requested
+        if self.all_configs.get('use_residual_gate', False):
+            self.model._enable_residual_gate(
+                n_sinkhorn_iters=self.all_configs.get('n_sinkhorn_iters', 10),
+                init_alpha=self.all_configs.get('gate_init_alpha', 0.3),
+            )
 
         if self.all_configs.get('quantile') is not None and self._is_univariate:
             alpha = 1.0 - self.all_configs['quantile']
@@ -733,6 +912,8 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         if len(scores) == 0:
             return 0.0
 
+        self.all_configs['_conformal_residuals'] = scores
+
         scores = np.array(scores)
         n_cal = len(scores)
         level = min(1.0, (1.0 - alpha) * (1.0 + 1.0 / n_cal))
@@ -798,6 +979,8 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
                 per_point = actuals - preds
                 signed_residuals.extend(per_point.tolist())
+
+        self.all_configs['_conformal_residuals'] = signed_residuals
 
         return IntervalEstimationMixin._compute_conformal_quantiles(
             signed_residuals, coverage=self.all_configs['quantile']
@@ -931,15 +1114,54 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         if predict_kwargs is None:
             predict_kwargs = {}
 
+        id_col = self.all_configs.get('id_col')
+        target_col = self.all_configs['target_col']
+        time_col = self.all_configs['time_col']
+
+        # Multi-series panel prediction (univariate)
+        if (id_col is not None and self._is_univariate
+                and hasattr(self, '_panel_last_features') and self._panel_last_features):
+            if data is not None:
+                check_time_col_is_timestamp(data, time_col)
+                panel_windows = {}
+                panel_last_dts = {}
+                for sid, sdf in data.groupby(id_col):
+                    sdf = sdf.sort_values(time_col)
+                    if len(sdf) >= self.all_configs['lags']:
+                        vals = sdf[self._primary_target].iloc[-self.all_configs['lags']:].values
+                        panel_windows[sid] = vals.reshape(1, -1)
+                        panel_last_dts[sid] = sdf[time_col].max()
+            else:
+                panel_windows = {}
+                panel_last_dts = {}
+                for sid, feat_df in self._panel_last_features.items():
+                    vals = feat_df[self._primary_target].values
+                    panel_windows[sid] = vals.reshape(1, -1)
+                    panel_last_dts[sid] = self._panel_last_dt[sid]
+
+            all_results = []
+            for sid, x in panel_windows.items():
+                last_dt = panel_last_dts[sid]
+                preds = self._extend_predict(x, n, predict_kwargs=predict_kwargs)
+                res = pd.DataFrame(preds, columns=[self._primary_target])
+                res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+                if self.all_configs.get('quantile') is not None:
+                    res = self.interval_predict(res)
+                res = self.chosen_cols(res)
+                res[id_col] = sid
+                all_results.append(res)
+            return pd.concat(all_results, ignore_index=True)
+
+        # Single-series prediction
         if data is not None:
-            check_time_col_is_timestamp(data, self.all_configs['time_col'])
+            check_time_col_is_timestamp(data, time_col)
             lags = self.all_configs['lags']
             raise_if_not(
                 ValueError, len(data) >= lags,
                 'The length of the series must be >= lags.'
             )
             subset = data.iloc[-lags:]
-            last_dt = data[self.all_configs['time_col']].max()
+            last_dt = data[time_col].max()
         else:
             subset = None
             last_dt = self.last_dt
@@ -955,9 +1177,6 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                 x = self._data_preprocess(subset, mode='predict')
             else:
                 x = self._last_features.values.reshape((1, self.all_configs['lags'], self._n_vars))
-
-        target_col = self.all_configs['target_col']
-        time_col = self.all_configs['time_col']
 
         # CQR path for univariate mode
         if (self._is_univariate and getattr(self.model, '_cqr_enabled', False)

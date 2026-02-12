@@ -1,6 +1,9 @@
 from copy import deepcopy
 import gc
+import time
+import traceback
 
+import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.base import TransformerMixin
@@ -43,7 +46,9 @@ class ModelPipeline:
         'include_init_config_model': bool,
         'accelerator': (str, None),
         'cv': int,
-        'gbdt_differential_n': int
+        'gbdt_differential_n': int,
+        'time_limit': (int, float, None),
+        'id_col': (str, None),
     }, 'Pipeline')
     @ParameterValuesAssert({
         'metric': lambda s: check_obj_is_function(s),
@@ -67,6 +72,9 @@ class ModelPipeline:
             lags,
             quantile=None,  # the quantile prediction switch
             feature_cols=None,  # input feature columns for multivariate models
+            id_col=None,  # series identifier column for multi-series (panel) data
+            known_covariates=None,  # columns available for both history and future
+            past_covariates=None,  # columns available only historically
             include_models='light',
             exclude_models=None,
             metric=mae,
@@ -78,6 +86,7 @@ class ModelPipeline:
             accelerator='auto',
             cv=5,
             gbdt_differential_n=0,
+            time_limit=None,
             **model_init_kwargs
     ):
         """
@@ -190,6 +199,11 @@ class ModelPipeline:
         self.time_col = time_col
         self.lags = lags
         self.feature_cols = feature_cols
+        self.id_col = id_col
+        self.known_covariates = known_covariates or []
+        self.past_covariates = past_covariates or []
+        self._panel_scalers = {}  # per-series scalers for multi-series mode
+        self._temp_panel_scalers = {}  # temp scalers for CV folds
         self.metric = metric
         self.metric_less_is_better = metric_less_is_better
         self.random_state = random_state
@@ -211,10 +225,17 @@ class ModelPipeline:
         self.best_model_ = None
         self.accelerator = accelerator
         self.cv = cv
+        self.time_limit = time_limit
 
         self._timer = Timer()
+        self._fit_start_time = None
+        self._failed_models = []
+        self._skipped_models = []
+        self._on_model_complete_callback = None
+        self._device_info_logged = False
 
         self._model_init_kwargs = {}
+        self._training_data = None
 
         model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
                                                          {
@@ -225,6 +246,9 @@ class ModelPipeline:
                                                              'catboost__verbose': False,
                                                              'xgboost__verbose': 0
                                                          })
+
+        if time_limit is not None and time_limit <= 0:
+            raise ValueError("time_limit must be a positive number or None.")
 
         for k, v in model_init_kwargs.items():
             raise_if(ValueError, '__' not in k,
@@ -237,13 +261,91 @@ class ModelPipeline:
             if k.split('__')[0] in self._available_models:
                 self._model_init_kwargs[k] = v
 
-        self._compute_device_msg = detect_available_device(self.accelerator)[1] + '\n\n'
+        # Build compact single-line device description
+        _device, _device_detail = detect_available_device(self.accelerator)
+        _active = _device.upper().replace(':', ' ').split()[0]  # 'mps', 'cuda:0' -> 'MPS', 'CUDA'
+        self._compute_device_msg = f"Device: {_active} ({_device})  |  {_device_detail.replace(chr(10), ', ')}"
 
         self.gbdt_differential_n = gbdt_differential_n
+
+    def _check_time_budget(self):
+        """Check if time budget is exhausted. Returns remaining seconds or None."""
+        if self.time_limit is None or self._fit_start_time is None:
+            return None
+        elapsed = time.time() - self._fit_start_time
+        remaining = self.time_limit - elapsed
+        return remaining
+
+    def _is_time_exhausted(self):
+        """Return True if time budget is used up."""
+        remaining = self._check_time_budget()
+        if remaining is None:
+            return False
+        return remaining <= 0
+
+    def _format_leaderboard_table(self, res_df):
+        """Format leaderboard as a readable string table for logging."""
+        if res_df.empty:
+            return "  (no models completed)"
+
+        sorted_df = res_df.sort_values(
+            by='metric', ascending=self.metric_less_is_better
+        ).reset_index(drop=True)
+
+        lines = []
+        # Header
+        cols = sorted_df.columns.tolist()
+        header = f"  {'Rank':<5} "
+        for c in cols:
+            if c == 'model':
+                header += f"{'Model':<25} "
+            elif c == 'metric':
+                header += f"{'Metric':>12} "
+            elif 'cost' in c:
+                header += f"{c:>15} "
+            elif c == 'quantile_acc':
+                header += f"{'QAcc':>8} "
+            else:
+                header += f"{c:>12} "
+        lines.append(header)
+        lines.append("  " + "-" * (len(header) - 2))
+
+        # Rows
+        for rank, (_, row) in enumerate(sorted_df.iterrows(), 1):
+            marker = " *" if rank == 1 else "  "
+            line = f"{marker}{rank:<4} "
+            for c in cols:
+                val = row[c]
+                if c == 'model':
+                    line += f"{str(val):<25} "
+                elif isinstance(val, float):
+                    line += f"{val:>12.4f} "
+                else:
+                    line += f"{str(val):>12} "
+            lines.append(line)
+
+        return "\n".join(lines)
+
+    def _inject_pipeline_configs(self, m):
+        """Inject pipeline-level configs (id_col, covariates) into model all_configs."""
+        if not hasattr(m, 'all_configs'):
+            return
+        if self.id_col is not None:
+            m.all_configs['id_col'] = self.id_col
+        if self.known_covariates:
+            m.all_configs['known_covariates'] = list(self.known_covariates)
+        if self.past_covariates:
+            m.all_configs['past_covariates'] = list(self.past_covariates)
 
     def _initial_models(self):
         initial_models = []
         ms = generate_models_set(self._available_models, self._given_models)
+
+        # Auto-construct feature_cols from known_covariates for multivariate NN models
+        effective_feature_cols = self.feature_cols
+        if effective_feature_cols is None and self.known_covariates:
+            target = self.target_col if isinstance(self.target_col, str) else self.target_col[0]
+            effective_feature_cols = [target] + list(self.known_covariates)
 
         # 模型训练顺序
         for (model_name, model) in ms:
@@ -256,7 +358,7 @@ class ModelPipeline:
                 quantile=self.quantile,
                 accelerator=self.accelerator,
                 differential_n=self.gbdt_differential_n,
-                feature_cols=self.feature_cols
+                feature_cols=effective_feature_cols
             )
 
             # Populate model initialization parameters specified in double underscore format.
@@ -279,16 +381,24 @@ class ModelPipeline:
                             self.configs.get_configs(model_name_after_rename_in_config).get('init_configs')
                         )
 
-                        initial_models.append([model_name_after_rename_in_config, model(**new_model_kwargs)])
+                        m = model(**new_model_kwargs)
+                        self._inject_pipeline_configs(m)
+                        initial_models.append([model_name_after_rename_in_config, m])
 
                         if self.include_init_config_model:
                             if [model_name, model(**model_kwargs)] not in initial_models:
-                                initial_models.append([model_name, model(**model_kwargs)])
+                                m2 = model(**model_kwargs)
+                                self._inject_pipeline_configs(m2)
+                                initial_models.append([model_name, m2])
 
                 if not include_in_configs:
-                    initial_models.append([model_name, model(**model_kwargs)])
+                    m = model(**model_kwargs)
+                    self._inject_pipeline_configs(m)
+                    initial_models.append([model_name, m])
             else:
-                initial_models.append([model_name, model(**model_kwargs)])
+                m = model(**model_kwargs)
+                self._inject_pipeline_configs(m)
+                initial_models.append([model_name, m])
 
         return initial_models
 
@@ -336,14 +446,37 @@ class ModelPipeline:
             scaler = self._temp_scaler
 
         if scaler is not None:
-            df[self.target_col] = scaler.fit_transform(
-                df[self.target_col].values.reshape(-1, 1)
-            ).squeeze()
+            if self.id_col is not None and self.id_col in df.columns:
+                # Per-series scaling: each series gets its own scaler
+                scalers = self._panel_scalers if refit_scaler else self._temp_panel_scalers
+                for sid, idx in df.groupby(self.id_col).groups.items():
+                    s = deepcopy(scaler) if sid not in scalers else scalers[sid]
+                    if refit_scaler or sid not in scalers:
+                        df.loc[idx, self.target_col] = s.fit_transform(
+                            df.loc[idx, self.target_col].values.reshape(-1, 1)
+                        ).squeeze()
+                        scalers[sid] = s
+                    else:
+                        df.loc[idx, self.target_col] = s.transform(
+                            df.loc[idx, self.target_col].values.reshape(-1, 1)
+                        ).squeeze()
 
-            if valid_data is not None:
-                valid_df = valid_data.copy()
-                valid_df[self.target_col] = scaler.transform(
-                    valid_df[self.target_col].values.reshape(-1, 1)).squeeze()
+                if valid_data is not None:
+                    valid_df = valid_data.copy()
+                    for sid, idx in valid_df.groupby(self.id_col).groups.items():
+                        if sid in scalers:
+                            valid_df.loc[idx, self.target_col] = scalers[sid].transform(
+                                valid_df.loc[idx, self.target_col].values.reshape(-1, 1)
+                            ).squeeze()
+            else:
+                df[self.target_col] = scaler.fit_transform(
+                    df[self.target_col].values.reshape(-1, 1)
+                ).squeeze()
+
+                if valid_data is not None:
+                    valid_df = valid_data.copy()
+                    valid_df[self.target_col] = scaler.transform(
+                        valid_df[self.target_col].values.reshape(-1, 1)).squeeze()
 
         return df, valid_df
 
@@ -357,9 +490,17 @@ class ModelPipeline:
             columns = self.target_col
 
         if scaler is not None:
-            df[columns] = scaler.inverse_transform(
-                df[columns].values.reshape(-1, 1)
-            ).squeeze()
+            if self.id_col is not None and self.id_col in df.columns:
+                scalers = self._panel_scalers if use_scaler else self._temp_panel_scalers
+                for sid, idx in df.groupby(self.id_col).groups.items():
+                    if sid in scalers:
+                        df.loc[idx, columns] = scalers[sid].inverse_transform(
+                            df.loc[idx, columns].values.reshape(-1, 1)
+                        ).squeeze()
+            else:
+                df[columns] = scaler.inverse_transform(
+                    df[columns].values.reshape(-1, 1)
+                ).squeeze()
 
         return df
 
@@ -406,10 +547,17 @@ class ModelPipeline:
         else:
             predict_kwargs = {}
 
-        if check_has_param(model.predict, 'predict_kwargs'):
-            eval_res = model.predict(valid_df.shape[0], data=valid_df, predict_kwargs=predict_kwargs)
+        # For multi-series, predict per-series steps, not total rows
+        _is_panel = self.id_col is not None and self.id_col in valid_df.columns
+        if _is_panel:
+            n_predict = int(valid_df.groupby(self.id_col).size().min())
         else:
-            eval_res = model.predict(valid_df.shape[0])
+            n_predict = valid_df.shape[0]
+
+        if check_has_param(model.predict, 'predict_kwargs'):
+            eval_res = model.predict(n_predict, data=valid_df, predict_kwargs=predict_kwargs)
+        else:
+            eval_res = model.predict(n_predict)
 
         if use_scaler:
             scaler = self.scaler
@@ -419,20 +567,60 @@ class ModelPipeline:
         yt = valid_df[self.target_col].values
         yp = eval_res[self.target_col].values
 
+        res_quantile_acc = None
         if self.quantile:
             left_pred = eval_res[f"{self.target_col}_lower"].values
             right_pred = eval_res[f"{self.target_col}_upper"].values
 
         if scaler is not None:
-            yt = scaler.inverse_transform(yt.reshape(-1, 1)).squeeze()
-            yp = scaler.inverse_transform(yp.reshape(-1, 1)).squeeze()
+            if _is_panel and self._panel_scalers:
+                # Per-series inverse transform for both actuals and predictions
+                yt_inv, yp_inv = [], []
+                lp_inv, rp_inv = [], []
+                for sid in valid_df[self.id_col].unique():
+                    s = self._panel_scalers.get(sid)
+                    if s is None:
+                        continue
+                    v_mask = valid_df[self.id_col] == sid
+                    yt_s = valid_df.loc[v_mask, self.target_col].values
+                    yt_inv.append(s.inverse_transform(yt_s.reshape(-1, 1)).squeeze())
 
-            if self.quantile:
-                left_pred = scaler.inverse_transform(left_pred.reshape(-1, 1)).squeeze()
-                right_pred = scaler.inverse_transform(right_pred.reshape(-1, 1)).squeeze()
-                res_quantile_acc = quantile_acc(yt, left_pred, right_pred)
+                    if self.id_col in eval_res.columns:
+                        p_mask = eval_res[self.id_col] == sid
+                        yp_s = eval_res.loc[p_mask, self.target_col].values
+                    else:
+                        yp_s = yp[:len(yt_s)]
+                        yp = yp[len(yt_s):]
+                    yp_inv.append(s.inverse_transform(yp_s.reshape(-1, 1)).squeeze())
 
-        metric = self.metric(yt, yp)
+                    if self.quantile:
+                        if self.id_col in eval_res.columns:
+                            lp_s = eval_res.loc[p_mask, f"{self.target_col}_lower"].values
+                            rp_s = eval_res.loc[p_mask, f"{self.target_col}_upper"].values
+                        else:
+                            lp_s = left_pred[:len(yt_s)]
+                            rp_s = right_pred[:len(yt_s)]
+                            left_pred = left_pred[len(yt_s):]
+                            right_pred = right_pred[len(yt_s):]
+                        lp_inv.append(s.inverse_transform(lp_s.reshape(-1, 1)).squeeze())
+                        rp_inv.append(s.inverse_transform(rp_s.reshape(-1, 1)).squeeze())
+
+                yt = np.concatenate(yt_inv)
+                yp = np.concatenate(yp_inv)
+                if self.quantile:
+                    left_pred = np.concatenate(lp_inv)
+                    right_pred = np.concatenate(rp_inv)
+                    res_quantile_acc = quantile_acc(yt, left_pred, right_pred)
+            else:
+                yt = scaler.inverse_transform(yt.reshape(-1, 1)).squeeze()
+                yp = scaler.inverse_transform(yp.reshape(-1, 1)).squeeze()
+
+                if self.quantile:
+                    left_pred = scaler.inverse_transform(left_pred.reshape(-1, 1)).squeeze()
+                    right_pred = scaler.inverse_transform(right_pred.reshape(-1, 1)).squeeze()
+                    res_quantile_acc = quantile_acc(yt, left_pred, right_pred)
+
+        metric_val = self.metric(yt, yp)
 
         eval_cost = self._timer.last_timestamp_diff()
 
@@ -446,16 +634,19 @@ class ModelPipeline:
         if self.quantile:
             res_df = pd.concat(
                 (res_df, pd.DataFrame(
-                    [[model_name_after_rename, train_cost, eval_cost, metric, res_quantile_acc]],
+                    [[model_name_after_rename, train_cost, eval_cost, metric_val, res_quantile_acc]],
                     columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])),
                 axis=0, ignore_index=True)
         else:
             res_df = pd.concat(
-                (res_df, pd.DataFrame([[model_name_after_rename, train_cost, eval_cost, metric]],
+                (res_df, pd.DataFrame([[model_name_after_rename, train_cost, eval_cost, metric_val]],
                                       columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric'])),
                 axis=0, ignore_index=True)
 
-        return model_name_after_rename, model, res_df
+        return model_name_after_rename, model, res_df, {
+            'train_cost': train_cost, 'eval_cost': eval_cost,
+            'metric': metric_val, 'quantile_acc': res_quantile_acc,
+        }
 
     @ParameterTypeAssert({
         'data': pd.DataFrame,
@@ -501,12 +692,32 @@ class ModelPipeline:
         - The optional valid_data parameter allows for model evaluation on a separate validation dataset.
         - The resulting leaderboard provides a ranked list of models based on the specified evaluation metric.
         """
-        self.logger.info('Information about the device used for computation:\n'+self._compute_device_msg)
+        self._fit_start_time = time.time()
+        self._failed_models = []
+        self._skipped_models = []
+
+        if not self._device_info_logged:
+            self.logger.info(self._compute_device_msg)
+            self._device_info_logged = True
+        if self.time_limit is not None:
+            self.logger.info(f"Time budget: {self.time_limit:.0f}s")
 
         check_time_col_is_timestamp(data, self.time_col)
 
-        if data.shape[0] <= self.lags:
-            raise ValueError(f'length of df must be greater than lags, df length = {data.shape[0]}, lags = {self.lags}')
+        if self.id_col is not None and self.id_col in data.columns:
+            # Multi-series: validate each series has enough data
+            for sid, sdf in data.groupby(self.id_col):
+                if len(sdf) <= self.lags:
+                    self.logger.warning(
+                        f"Series '{sid}' has only {len(sdf)} rows (<= lags={self.lags}), will be skipped."
+                    )
+            if self.id_col not in data.columns:
+                raise ValueError(f"id_col '{self.id_col}' not found in data columns.")
+            n_series = data[self.id_col].nunique()
+            self.logger.info(f"Multi-series mode: {n_series} series detected (id_col='{self.id_col}')")
+        else:
+            if data.shape[0] <= self.lags:
+                raise ValueError(f'length of df must be greater than lags, df length = {data.shape[0]}, lags = {self.lags}')
 
         if valid_data is not None:
             raise_if_not(AssertionError, data.columns.tolist() == valid_data.columns.tolist(),
@@ -515,7 +726,15 @@ class ModelPipeline:
 
             df, valid_df = data.copy(), valid_data.copy()
         else:
-            df, valid_df = data.copy(), data.iloc[-(2 * self.lags):, :]
+            if self.id_col is not None and self.id_col in data.columns:
+                # Multi-series: take last 2*lags rows per series as validation
+                parts = []
+                for sid, sdf in data.groupby(self.id_col):
+                    sdf = sdf.sort_values(self.time_col)
+                    parts.append(sdf.iloc[-(2 * self.lags):])
+                df, valid_df = data.copy(), pd.concat(parts, ignore_index=True)
+            else:
+                df, valid_df = data.copy(), data.iloc[-(2 * self.lags):, :]
 
         # 如果指定scaler，此语句会对数据缩放
         df, valid_df = self._scale_data(df, valid_df, refit_scaler=True)
@@ -525,18 +744,89 @@ class ModelPipeline:
             res = pd.DataFrame(columns=['model', 'train_cost(s)', 'eval_cost(s)', 'metric', 'quantile_acc'])
 
         models = self._initial_models()
-        self.logger.info(f"There are a total of {len(models)} models to be trained.")
+        n_models = len(models)
+        model_names = [name for name, _ in models]
+        self.logger.info(f"Training {n_models} models: {model_names}")
 
         for idx, (model_name_after_rename, model) in enumerate(models):
-            self.logger.info(f"[model {idx:>{len(str(len(models)))}d}] fitting and "
-                              f"evaluating {model_name_after_rename}...")
+            # Check time budget before starting next model
+            if self._is_time_exhausted():
+                remaining_names = [name for name, _ in models[idx:]]
+                self._skipped_models.extend(
+                    [(name, 'time_limit_exceeded') for name in remaining_names]
+                )
+                self.logger.warning(
+                    f"Time budget exhausted after {time.time() - self._fit_start_time:.1f}s. "
+                    f"Skipping {len(remaining_names)} remaining model(s): {remaining_names}"
+                )
+                break
 
-            model_name_after_rename, model, res = self._fit(
-                model_name_after_rename, model, df, valid_df, res,
-                use_scaler=True
+            remaining = self._check_time_budget()
+            budget_str = f" | remaining {remaining:.0f}s" if remaining is not None else ""
+            self.logger.info(
+                f"[{idx + 1}/{n_models}] Fitting {model_name_after_rename}...{budget_str}"
             )
 
-            self.models_.append((model_name_after_rename, model))
+            try:
+                model_name_after_rename, model, res, fit_info = self._fit(
+                    model_name_after_rename, model, df, valid_df, res,
+                    use_scaler=True
+                )
+                self.models_.append((model_name_after_rename, model))
+
+                # Log per-model result
+                metric_val = fit_info['metric']
+                train_t = fit_info['train_cost']
+                eval_t = fit_info['eval_cost']
+                qacc_str = ""
+                if fit_info.get('quantile_acc') is not None:
+                    qacc_str = f", quantile_acc={fit_info['quantile_acc']:.3f}"
+                self.logger.info(
+                    f"  => {model_name_after_rename}: metric={metric_val:.6f}, "
+                    f"train={train_t:.2f}s, eval={eval_t:.2f}s{qacc_str}"
+                )
+
+                # Invoke callback for SmartRouter integration
+                if self._on_model_complete_callback is not None:
+                    self._on_model_complete_callback(
+                        model_name=model_name_after_rename,
+                        model=model,
+                        fit_info=fit_info,
+                        idx=idx,
+                        total=n_models,
+                    )
+
+            except Exception as e:
+                self._failed_models.append({
+                    'model': model_name_after_rename,
+                    'error': str(e),
+                    'traceback': traceback.format_exc(),
+                })
+                self.logger.error(
+                    f"  => {model_name_after_rename} FAILED: {type(e).__name__}: {e}"
+                )
+
+        # Summary logging
+        total_time = time.time() - self._fit_start_time
+        n_success = len([r for r in res.itertuples()]) if not res.empty else 0
+        n_failed = len(self._failed_models)
+        n_skipped = len(self._skipped_models)
+
+        self.logger.info(
+            f"\nTraining complete: {n_success} succeeded, "
+            f"{n_failed} failed, {n_skipped} skipped "
+            f"({total_time:.1f}s total)"
+        )
+
+        if n_failed > 0:
+            self.logger.warning(
+                f"Failed models: {[f['model'] for f in self._failed_models]}"
+            )
+
+        if res.empty:
+            self.logger.error("No models completed successfully.")
+            self.leader_board_ = res
+            return self.leader_board_
 
         self.leader_board_ = res.sort_values(
             by='metric', ascending=self.metric_less_is_better
@@ -544,9 +834,18 @@ class ModelPipeline:
 
         self.leader_board_.columns.name = 'Leaderboard'
 
-        self.best_model_ = self.get_model(self.leader_board_.iloc[0, :]['model'])
+        # Log formatted leaderboard
+        self.logger.info(f"\n{self._format_leaderboard_table(self.leader_board_)}")
 
-        del data, valid_data, df, valid_df, res
+        self.best_model_ = self.get_model(self.leader_board_.iloc[0, :]['model'])
+        self.logger.info(
+            f"Best model: {self.leader_board_.iloc[0]['model']} "
+            f"(metric={self.leader_board_.iloc[0]['metric']:.6f})"
+        )
+
+        self._training_data = data if hasattr(data, 'copy') else None
+
+        del valid_data, df, valid_df, res
         gc.collect()
         gc.garbage.clear()
 
@@ -629,7 +928,7 @@ class ModelPipeline:
         'data': (pd.DataFrame, None),
         'model_name': (None, str)
     })
-    def predict(self, n, data=None, model_name=None):
+    def predict(self, n, data=None, model_name=None, future_covariates=None):
         """
         Generate predictions using the trained models in the ModelPipeline.
 
@@ -641,46 +940,321 @@ class ModelPipeline:
             The input data for making predictions. If None, the last available data in the pipeline will be used.
         model_name : str or None, optional, default: None
             Model name to use for predictions. If None, the best model will be used.
+        future_covariates : pd.DataFrame or None, optional, default: None
+            Future known covariate values for the forecast horizon.
+            Must have at least n rows and columns matching known_covariates.
+            For multi-series, include the id_col to provide per-series covariates.
 
         Returns
         -------
         predictions : pd.DataFrame
             DataFrame containing the predicted values for the specified model or the best model.
-
-        Example
-        -------
-        >>> pipeline = ModelPipeline(time_col='timestamp', target_col='value', lags=10)
-        >>> pipeline.fit(train_data, valid_data)
-        >>> predictions_best_model = pipeline.predict(n=5)
-        >>> predictions_specific_model = pipeline.predict(n=5, model_name='lightgbm_0', data=test_data)
-
-        Notes
-        -----
-        - The predict function generates future predictions using the trained models in the pipeline.
-        - If data is not provided, the function uses the last available data in the pipeline.
-        - If model_name is not provided, the function uses the best-performing model based on the leaderboard.
         """
         df = None
         if data is not None:
             df = data.copy()
             if self.scaler is not None:
-                df[self.target_col] = self.scaler.transform(df[self.target_col].values.reshape(-1, 1)).squeeze()
+                if self.id_col is not None and self.id_col in df.columns and self._panel_scalers:
+                    for sid, idx in df.groupby(self.id_col).groups.items():
+                        if sid in self._panel_scalers:
+                            df.loc[idx, self.target_col] = self._panel_scalers[sid].transform(
+                                df.loc[idx, self.target_col].values.reshape(-1, 1)
+                            ).squeeze()
+                else:
+                    df[self.target_col] = self.scaler.transform(
+                        df[self.target_col].values.reshape(-1, 1)).squeeze()
 
-        if model_name is not None:
-            if check_has_param(self.get_model(model_name).predict, 'data'):
+        target_model = self.get_model(model_name) if model_name is not None else self.best_model_
 
-                res = self.get_model(model_name).predict(n, data=df)
-            else:
-                res = self.get_model(model_name).predict(n)
-        else:
-            if check_has_param(self.get_model(model_name).predict, 'data'):
+        # Build predict kwargs based on model capabilities
+        predict_kwargs = {'n': n}
+        if check_has_param(target_model.predict, 'data'):
+            predict_kwargs['data'] = df
+        if future_covariates is not None and check_has_param(target_model.predict, 'future_covariates'):
+            predict_kwargs['future_covariates'] = future_covariates
 
-                res = self.best_model_.predict(n, data=df)
-            else:
-                res = self.best_model_.predict(n)
+        res = target_model.predict(**predict_kwargs)
 
         for i in res.columns:
             if i.startswith(self.target_col):
                 res = self._inverse_data(res, columns=i)
 
         return res
+
+    def predict_quantiles(self, n, levels=None, data=None, model_name=None,
+                          future_covariates=None):
+        """Produce multi-quantile forecasts.
+
+        Uses stored conformal residuals from the calibration phase to compute
+        prediction intervals at arbitrary coverage levels.  Residuals are
+        applied in **scaled space** (where calibration happened) and the
+        resulting bounds are inverse-transformed to the original scale.
+
+        Parameters
+        ----------
+        n : int
+            Number of future steps to predict.
+        levels : list of float or None
+            Coverage levels, e.g. ``[0.5, 0.8, 0.9]``.
+            Defaults to ``[0.5, 0.8, 0.9, 0.95]``.
+        data : pd.DataFrame or None
+            Optional input data for prediction.
+        model_name : str or None
+            Model to use. None = best model.
+        future_covariates : pd.DataFrame or None
+            Future known covariate values.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with time_col, target_col (point prediction), and
+            ``{target}_q{level}_lower`` / ``{target}_q{level}_upper`` for
+            each requested level.
+        """
+        if levels is None:
+            levels = [0.5, 0.8, 0.9, 0.95]
+
+        # Get the inverse-transformed point predictions
+        point_df = self.predict(n=n, data=data, model_name=model_name,
+                                future_covariates=future_covariates)
+
+        target_model = (self.get_model(model_name)
+                        if model_name is not None else self.best_model_)
+
+        if not hasattr(target_model, 'predict_quantiles'):
+            return point_df
+
+        # Conformal residuals were collected in *scaled* space, so we need
+        # to compute bounds in scaled space then inverse-transform them.
+        # Re-scale the point predictions back to scaled space for offset math.
+        point_vals = point_df[self.target_col].values.copy()
+        if self.scaler is not None:
+            scaled_pts = self.scaler.transform(
+                point_vals.reshape(-1, 1)).squeeze()
+        else:
+            scaled_pts = point_vals
+
+        # Compute quantile bounds in scaled space
+        q_result = target_model.predict_quantiles(scaled_pts, levels)
+
+        # Build output DataFrame
+        result = point_df[[self.time_col, self.target_col]].copy()
+        if self.id_col is not None and self.id_col in point_df.columns:
+            result[self.id_col] = point_df[self.id_col].values
+
+        for lv in sorted(levels):
+            lo, hi = q_result[lv]
+            # Inverse-transform bounds from scaled space to original
+            if self.scaler is not None:
+                lo = self.scaler.inverse_transform(
+                    np.asarray(lo).reshape(-1, 1)).squeeze()
+                hi = self.scaler.inverse_transform(
+                    np.asarray(hi).reshape(-1, 1)).squeeze()
+
+            lv_str = f"{lv:.2f}".rstrip('0').rstrip('.')
+            result[f"{self.target_col}_q{lv_str}_lower"] = lo
+            result[f"{self.target_col}_q{lv_str}_upper"] = hi
+
+        return result
+
+    def update(self, new_data, update_epochs=50, refit_all=False):
+        """Incrementally update fitted models with new data.
+
+        Concatenates *new_data* with the stored training data and refits
+        each model.  Neural-network models warm-start from their current
+        weights with *update_epochs* epochs; tree / statistical models
+        are retrained from scratch on the combined data (fast).
+
+        Parameters
+        ----------
+        new_data : pd.DataFrame
+            New observations.  Must have the same columns as the
+            original training data.
+        update_epochs : int, default 50
+            Number of training epochs for NN warm-start updates.
+        refit_all : bool, default False
+            If True, refit every model in ``models_``.
+            If False (default), refit only the best model.
+
+        Returns
+        -------
+        self
+        """
+        if self._training_data is None:
+            raise ValueError("No training data stored. Call fit() first.")
+        if self.best_model_ is None:
+            raise ValueError("Pipeline has not been fitted yet.")
+
+        check_time_col_is_timestamp(new_data, self.time_col)
+
+        # Combine old + new data
+        combined = pd.concat(
+            [self._training_data, new_data], ignore_index=True
+        ).sort_values(self.time_col).reset_index(drop=True)
+
+        # Re-scale combined data
+        if self.scaler is not None:
+            if self.id_col is not None and self.id_col in combined.columns:
+                for sid, idx in combined.groupby(self.id_col).groups.items():
+                    s = MinMaxScaler()
+                    combined.loc[idx, self.target_col] = s.fit_transform(
+                        combined.loc[idx, self.target_col].values.reshape(-1, 1)
+                    ).squeeze()
+                    self._panel_scalers[sid] = s
+            else:
+                self.scaler.fit(combined[self.target_col].values.reshape(-1, 1))
+                combined[self.target_col] = self.scaler.transform(
+                    combined[self.target_col].values.reshape(-1, 1)
+                ).squeeze()
+
+        # Determine which models to refit
+        if refit_all:
+            targets = list(self.models_)
+        else:
+            best_name = self.leader_board_.iloc[0]['model']
+            targets = [(n, m) for n, m in self.models_ if n == best_name]
+
+        n_updated = 0
+        for model_name, model in targets:
+            try:
+                # Build fit_kwargs — NN models get reduced epochs
+                fit_kwargs = {}
+                if hasattr(model, 'model') and hasattr(model.model, 'fit'):
+                    inner = model.model
+                    if hasattr(inner, 'training_logs'):
+                        # TorchModelMixin — warm-start with fewer epochs
+                        fit_kwargs['epochs'] = update_epochs
+                        fit_kwargs['verbose'] = False
+
+                # Refit the model on combined data
+                if check_has_param(model.fit, 'fit_kwargs'):
+                    model.fit(combined, cv=min(self.cv, 3),
+                              fit_kwargs=fit_kwargs)
+                elif check_has_param(model.fit, 'cv'):
+                    model.fit(combined, cv=min(self.cv, 3))
+                else:
+                    model.fit(combined)
+
+                n_updated += 1
+                self.logger.info(f"  Updated: {model_name}")
+            except Exception as e:
+                self.logger.warning(
+                    f"  Failed to update {model_name}: {type(e).__name__}: {e}"
+                )
+
+        # Store updated training data (in original scale)
+        self._training_data = pd.concat(
+            [self._training_data, new_data], ignore_index=True
+        ).sort_values(self.time_col).reset_index(drop=True)
+
+        self.logger.info(
+            f"Incremental update complete: {n_updated}/{len(targets)} models updated, "
+            f"total training rows: {len(self._training_data)}"
+        )
+
+        return self
+
+    @property
+    def failed_models(self):
+        """Return list of failed model details."""
+        return list(self._failed_models)
+
+    @property
+    def skipped_models(self):
+        """Return list of skipped model names and reasons."""
+        return list(self._skipped_models)
+
+    def plot(self, n=None, data=None, model_name=None, history_tail=None,
+             lang='zh', figsize=(14, 5), show=True):
+        """Plot forecast from the best (or specified) model against history.
+
+        Parameters
+        ----------
+        n : int or None
+            Forecast horizon. Defaults to ``lags``.
+        data : pd.DataFrame or None
+            Custom data for prediction. None uses last training data.
+        model_name : str or None
+            Model to use. None uses the best model.
+        history_tail : int or None
+            Show only last N history points for clarity.
+        lang : 'zh' or 'en'
+        figsize : tuple
+        show : bool
+
+        Returns
+        -------
+        fig : matplotlib Figure
+        """
+        from PipelineTS.plot.ts_plot import plot_forecast
+        if n is None:
+            n = self.lags
+        pred = self.predict(n=n, data=data, model_name=model_name)
+        train = self._training_data if self._training_data is not None else pd.DataFrame()
+        return plot_forecast(
+            train, pred, self.time_col, self.target_col,
+            history_tail=history_tail, lang=lang, figsize=figsize, show=show,
+        )
+
+    def plot_leaderboard(self, lang='zh', figsize=(10, 5), show=True):
+        """Plot the model leaderboard as a bar chart.
+
+        Parameters
+        ----------
+        lang : 'zh' or 'en'
+        figsize : tuple
+        show : bool
+
+        Returns
+        -------
+        fig : matplotlib Figure
+        """
+        from PipelineTS.plot.ts_plot import plot_leaderboard_detail
+        if self.leader_board_ is None or self.leader_board_.empty:
+            raise ValueError("No leaderboard available. Call fit() first.")
+        return plot_leaderboard_detail(
+            self.leader_board_, lang=lang, figsize=figsize, show=show,
+        )
+
+    def save(self, path):
+        """Save this fitted pipeline to a zip file.
+
+        Parameters
+        ----------
+        path : str
+            File path ending with '.zip'.
+
+        Returns
+        -------
+        str
+            The path to the saved zip file.
+
+        Examples
+        --------
+        >>> pipeline.save('my_pipeline.zip')
+        >>> loaded = ModelPipeline.load('my_pipeline.zip')
+        """
+        from PipelineTS.io import save_model
+        return save_model(path, self)
+
+    @staticmethod
+    def load(path):
+        """Load a fitted pipeline from a zip file.
+
+        Parameters
+        ----------
+        path : str
+            File path ending with '.zip'.
+
+        Returns
+        -------
+        ModelPipeline
+            The loaded pipeline with all models restored.
+
+        Examples
+        --------
+        >>> pipeline = ModelPipeline.load('my_pipeline.zip')
+        >>> pipeline.predict(n=12)
+        """
+        from PipelineTS.io import load_model
+        return load_model(path)

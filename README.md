@@ -10,8 +10,8 @@
 One-stop time series analysis tool, supporting data preprocessing, feature engineering, model training, model evaluation, and forecasting.
 一站式时间序列分析工具，支持数据预处理、特征工程、模型训练、模型评估与预测。
 
-Built on top of spinesTS, it provides a unified interface for 25 time series models with automatic model selection, conformal prediction intervals, and multivariate forecasting.
-基于 spinesTS 构建，提供 25 种时间序列模型的统一接口，支持自动模型选择、保形预测区间和多变量预测。
+Built on top of spinesTS, it provides a unified interface for 26 time series models with automatic model selection, conformal prediction intervals, multivariate forecasting, and rich visualization with Chinese font support.
+基于 spinesTS 构建，提供 26 种时间序列模型的统一接口，支持自动模型选择、保形预测区间、多变量预测，以及支持中文字体的丰富可视化。
 
 ---
 
@@ -29,8 +29,13 @@ Built on top of spinesTS, it provides a unified interface for 25 time series mod
 - [Model Evaluation / 模型评估](#model-evaluation--模型评估)
 - [Training Utilities / 训练工具](#training-utilities--训练工具)
 - [Prediction Utilities / 预测工具](#prediction-utilities--预测工具)
+- [Visualization / 可视化](#visualization--可视化)
 - [Interval Prediction / 区间预测](#interval-prediction--区间预测)
+- [Multi-Quantile Prediction / 多分位数预测](#multi-quantile-prediction--多分位数预测)
 - [Multivariate Prediction / 多变量预测](#multivariate-prediction--多变量预测)
+- [Multi-Series (Panel Data) / 多序列（面板数据）](#multi-series-panel-data--多序列面板数据)
+- [Covariate Support / 协变量支持](#covariate-support--协变量支持)
+- [Incremental Learning / 增量学习](#incremental-learning--增量学习)
 - [Save and Load / 保存与加载](#save-and-load--保存与加载)
 - [Documentation / 文档](#documentation--文档)
 - [Tutorials / 教程](#tutorials--教程)
@@ -55,8 +60,23 @@ Built on top of spinesTS, it provides a unified interface for 25 time series mod
 - **CQR for neural networks**: Conformalized Quantile Regression provides adaptive, input-dependent intervals for NN models.
 - **神经网络 CQR**：保形分位数回归为神经网络模型提供自适应的、依赖输入的预测区间。
 
+- **Multi-quantile prediction**: Output prediction intervals at multiple coverage levels simultaneously (e.g., 50%, 80%, 95%).
+- **多分位数预测**：同时输出多个覆盖水平的预测区间（如 50%、80%、95%）。
+
 - **Multivariate forecasting**: ITransformer and SRSNet support multi-input/multi-output prediction modes.
 - **多变量预测**：ITransformer 和 SRSNet 支持多输入/多输出预测模式。
+
+- **Multi-series (panel data)**: Native support for multiple time series via `id_col`, with per-series scaling and prediction.
+- **多序列（面板数据）**：通过 `id_col` 原生支持多条时间序列，每条序列独立缩放和预测。
+
+- **Covariate support**: Known future covariates and past covariates for GBDT, Prophet, and AutoARIMA models.
+- **协变量支持**：GBDT、Prophet 和 AutoARIMA 模型支持已知未来协变量和历史协变量。
+
+- **Incremental learning**: `update()` method for warm-start training on new data without full retraining.
+- **增量学习**：`update()` 方法支持在新数据上热启动训练，无需完全重新训练。
+
+- **Visualization with Chinese font support**: Comprehensive plotting toolkit with automatic Chinese font detection, supporting single/multi-series plots, forecast visualization, leaderboard charts, residual diagnostics, ACF/PACF, and time series decomposition.
+- **支持中文字体的可视化**：全面的绘图工具包，自动检测中文字体，支持单/多序列图、预测可视化、排行榜图表、残差诊断、ACF/PACF 和时间序列分解。
 
 - **GlobalTemporalBlock (GTB)**: Optional plug-in module for all 12 NN models combining frequency mixing, gated linear attention, and SwiGLU FFN with residual connections and RevIN normalization. Supports both static (manual) and adaptive MoE (Mixture-of-Experts) routing modes.
 - **GlobalTemporalBlock (GTB)**：所有 12 个 NN 模型的可选插件模块，组合频率混合、门控线性注意力和 SwiGLU FFN，带残差连接和 RevIN 归一化。支持静态（手动）和自适应 MoE（混合专家）路由模式。
@@ -79,8 +99,11 @@ Built on top of spinesTS, it provides a unified interface for 25 time series mod
 - **User-facing feature engineering**: Unified API composing Fourier features, holiday features, rolling lag features, and calendar features.
 - **面向用户的特征工程**：统一 API，组合傅里叶特征、节假日特征、滚动滞后特征和日历特征。
 
-- **Training utilities**: Built-in AutoTune (Optuna / random search), weighted ensemble, and stacking ensemble.
-- **训练工具**：内置 AutoTune（Optuna / 随机搜索）、加权集成、堆叠集成。
+- **Training utilities**: Built-in AutoTune (Optuna / random search), weighted ensemble, stacking ensemble, and multi-layer stacking.
+- **训练工具**：内置 AutoTune（Optuna / 随机搜索）、加权集成、堆叠集成、多层堆叠集成。
+
+- **SmartRouter HPO**: Built-in Optuna hyperparameter optimization in SmartRouter with 'quick' and 'full' strategies.
+- **SmartRouter HPO**：SmartRouter 内置 Optuna 超参数优化，支持 'quick' 和 'full' 策略。
 
 - **Prediction utilities**: Rolling (sliding window) predictor and model explainability (feature importance).
 - **预测工具**：滚动（滑动窗口）预测器和模型可解释性（特征重要性）。
@@ -189,13 +212,17 @@ result = router.predict(12)  # Uses ensemble if built, else best model
 ### Visualize Results / 可视化结果
 
 ```python
-from PipelineTS.plot import plot_data_period
+# One-line plot from pipeline (supports Chinese labels)
+# 管道一键绘图（支持中文标签）
+pipeline.plot(n=10, lang='zh')
+pipeline.plot_leaderboard(lang='zh')
 
-plot_data_period(
-    data, result,
-    time_col=time_col,
-    target_col=target_col
-)
+# Or use standalone functions / 或使用独立函数
+from PipelineTS.plot import plot_forecast, plot_series, configure_chinese_font
+
+configure_chinese_font()  # Auto-detect Chinese font / 自动检测中文字体
+plot_forecast(train_data, result, time_col=time_col, target_col=target_col)
+plot_series(data, time_col=time_col, target_col=target_col)
 ```
 
 ---
@@ -724,6 +751,81 @@ explainer.plot_importance(top_k=15)
 
 ---
 
+## Visualization / 可视化
+
+PipelineTS provides a comprehensive visualization toolkit with automatic Chinese font detection. All plot functions support bilingual labels (`lang='zh'` or `lang='en'`).
+
+PipelineTS 提供全面的可视化工具包，自动检测中文字体。所有绑图函数支持双语标签（`lang='zh'` 或 `lang='en'`）。
+
+### Chinese Font Configuration / 中文字体配置
+
+```python
+from PipelineTS.plot import configure_chinese_font
+
+# Auto-detect and configure Chinese font (macOS/Windows/Linux)
+# 自动检测并配置中文字体（macOS/Windows/Linux）
+font_name = configure_chinese_font()
+print(f"Using font: {font_name}")  # e.g., 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC'
+```
+
+### Plot Functions / 绑图函数
+
+| Function / 函数 | Description / 描述 |
+|---|---|
+| `plot_series()` | Single or multi-series (panel) visualization / 单序列或多序列（面板）可视化 |
+| `plot_forecast()` | Actual vs forecast with prediction intervals / 实际值 vs 预测值 + 预测区间 |
+| `plot_leaderboard()` | Model ranking horizontal bar chart / 模型排名水平柱状图 |
+| `plot_leaderboard_detail()` | Leaderboard with training/eval cost / 排行榜 + 训练/评估耗时 |
+| `plot_model_comparison()` | Multi-model forecast overlay / 多模型预测叠加对比 |
+| `plot_residuals()` | 4-panel residual diagnostics / 四面板残差诊断 |
+| `plot_acf_pacf()` | ACF + PACF side by side / ACF + PACF 并排图 |
+| `plot_decomposition()` | Trend / seasonal / residual decomposition / 趋势/季节性/残差分解 |
+| `plot_train_test_split()` | Visualize train/test partition / 训练集/测试集分割可视化 |
+
+### Quick Examples / 快速示例
+
+```python
+from PipelineTS.plot import plot_series, plot_forecast, plot_decomposition, TSPlotter
+
+# Single series / 单序列
+plot_series(data, time_col='date', target_col='value', title='销量趋势')
+
+# Multi-series panel / 多序列面板
+plot_series(panel_data, time_col='date', target_col='value', id_col='store_id')
+
+# Forecast with intervals / 预测 + 区间
+plot_forecast(train_data, pred_data, time_col='date', target_col='value')
+
+# Time series decomposition / 时间序列分解
+plot_decomposition(data, time_col='date', target_col='value')
+```
+
+### TSPlotter Class / TSPlotter 类
+
+```python
+# Reusable plotter with fixed column names / 可复用的绑图器
+plotter = TSPlotter(time_col='date', target_col='value', lang='zh')
+plotter.plot_series(data)
+plotter.plot_forecast(train, pred)
+plotter.plot_leaderboard(leaderboard)
+plotter.plot_decomposition(data)
+plotter.plot_residuals(y_true, y_pred)
+```
+
+### Pipeline Integration / 管道集成
+
+```python
+# One-line plot from Pipeline or SmartRouter
+# 管道或智能路由器一键绘图
+pipeline.plot(n=12, lang='zh')            # Forecast plot / 预测图
+pipeline.plot_leaderboard(lang='zh')      # Leaderboard chart / 排行榜图
+
+router.plot(n=12, lang='zh')              # SmartRouter forecast / 智能路由器预测图
+router.plot_leaderboard(lang='zh')        # SmartRouter leaderboard / 智能路由器排行榜
+```
+
+---
+
 ## Interval Prediction / 区间预测
 
 PipelineTS uses Conformal Prediction for distribution-free prediction intervals with coverage guarantees.
@@ -762,6 +864,39 @@ result = pipeline.predict(10)
 
 ---
 
+## Multi-Quantile Prediction / 多分位数预测
+
+Output prediction intervals at multiple coverage levels simultaneously. This is useful when you need to visualize uncertainty at different confidence levels.
+
+同时输出多个覆盖水平的预测区间。当需要在不同置信水平下可视化不确定性时非常有用。
+
+```python
+from PipelineTS.pipeline import ModelPipeline
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    quantile=0.9, include_models=['lightgbm'],
+)
+pipeline.fit(data)
+
+# Multi-quantile output / 多分位数输出
+result = pipeline.predict_quantiles(n=10, levels=[0.5, 0.8, 0.95])
+# Columns: date, value, value_q0.5_lower, value_q0.5_upper,
+#          value_q0.8_lower, value_q0.8_upper, value_q0.95_lower, value_q0.95_upper
+# 列: date, value, value_q0.5_lower, value_q0.5_upper, ...
+```
+
+```python
+# SmartRouter also supports multi-quantile / SmartRouter 也支持多分位数
+from PipelineTS.pipeline import SmartRouter
+
+router = SmartRouter(time_col='date', target_col='value', quantile=0.9)
+router.fit(data)
+result = router.predict_quantiles(n=12, levels=[0.5, 0.9])
+```
+
+---
+
 ## Multivariate Prediction / 多变量预测
 
 ITransformerModel and SRSNetModel support three prediction modes:
@@ -786,6 +921,108 @@ model = ITransformerModel(
 )
 model.fit(data)
 result = model.predict(10)
+```
+
+---
+
+## Multi-Series (Panel Data) / 多序列（面板数据）
+
+Native support for multiple time series via the `id_col` parameter. Each series gets its own scaler and predictions.
+
+通过 `id_col` 参数原生支持多条时间序列。每条序列拥有独立的缩放器和预测结果。
+
+```python
+from PipelineTS.pipeline import ModelPipeline
+import pandas as pd
+
+# Panel data with multiple series / 包含多条序列的面板数据
+# data has columns: date, value, store_id
+# data 包含列: date, value, store_id
+
+pipeline = ModelPipeline(
+    time_col='date',
+    target_col='value',
+    lags=12,
+    id_col='store_id',  # Enable multi-series / 启用多序列
+    include_models=['lightgbm', 'catboost'],
+)
+pipeline.fit(data)
+
+# Returns DataFrame with store_id column / 返回带有 store_id 列的 DataFrame
+result = pipeline.predict(n=10)
+```
+
+```python
+# SmartRouter with multi-series / SmartRouter 多序列
+from PipelineTS.pipeline import SmartRouter
+
+router = SmartRouter(
+    time_col='date', target_col='value',
+    id_col='store_id',
+)
+router.fit(data)
+result = router.predict(10)
+```
+
+---
+
+## Covariate Support / 协变量支持
+
+GBDT, Prophet, and AutoARIMA models support known future covariates and past covariates.
+
+GBDT、Prophet 和 AutoARIMA 模型支持已知未来协变量和历史协变量。
+
+```python
+from PipelineTS.pipeline import ModelPipeline
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    known_covariates=['holiday', 'promotion'],   # Known future values / 已知未来值
+    past_covariates=['temperature'],              # Historical only / 仅历史值
+    include_models=['lightgbm', 'prophet'],
+)
+pipeline.fit(data)  # data must contain covariate columns / data 必须包含协变量列
+
+# Provide future covariates at prediction time / 预测时提供未来协变量
+future_cov = pd.DataFrame({
+    'holiday': [0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+    'promotion': [1, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+})
+result = pipeline.predict(n=10, future_covariates=future_cov)
+```
+
+---
+
+## Incremental Learning / 增量学习
+
+The `update()` method enables incremental training on new data without full retraining. Neural network models use warm-start (fewer epochs), while other models are efficiently refitted on combined data.
+
+`update()` 方法支持在新数据上进行增量训练，无需完全重新训练。神经网络模型使用热启动（更少的轮次），其他模型在合并数据上高效重新拟合。
+
+```python
+from PipelineTS.pipeline import ModelPipeline
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models=['lightgbm', 'catboost'],
+)
+pipeline.fit(initial_data)
+
+# Later, when new data arrives / 当新数据到达时
+pipeline.update(new_data)
+
+# Predictions now reflect the new data / 预测结果现在反映新数据
+result = pipeline.predict(10)
+```
+
+```python
+# SmartRouter also supports update() / SmartRouter 也支持 update()
+from PipelineTS.pipeline import SmartRouter
+
+router = SmartRouter(time_col='date', target_col='value')
+router.fit(initial_data)
+router.update(new_data)
+result = router.predict(12)
 ```
 
 ---
@@ -818,6 +1055,7 @@ For detailed documentation, see the [docs/](docs/) directory:
 - [Evaluation & Metrics / 评估与指标](docs/evaluation.md)
 - [Training Utilities / 训练工具](docs/training.md)
 - [Prediction Utilities / 预测工具](docs/prediction.md)
+- [Visualization / 可视化](docs/visualization.md)
 - [Multivariate Prediction / 多变量预测](docs/multivariate.md)
 - [Advanced Features / 高级功能](docs/advanced.md)
 - [API Reference / API 参考](docs/api_reference.md)

@@ -2,6 +2,22 @@ import pandas as pd
 
 from spinesUtils.asserts import ParameterTypeAssert, raise_if_not
 
+from PipelineTS.plot.ts_plot import (
+    configure_chinese_font,
+    TSPlotter,
+    plot_series,
+    plot_forecast,
+    plot_leaderboard,
+    plot_leaderboard_detail,
+    plot_model_comparison,
+    plot_residuals,
+    plot_acf_pacf,
+    plot_decomposition,
+    plot_train_test_split,
+    COLORS,
+    MODEL_COLORS,
+)
+
 
 @ParameterTypeAssert({
     'data1': pd.DataFrame,

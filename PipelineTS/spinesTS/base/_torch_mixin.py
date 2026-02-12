@@ -55,6 +55,90 @@ class CQRWrapper(nn.Module):
         return torch.cat([q_lower, center, q_upper], dim=-1)
 
 
+class SinkhornResidualGate(nn.Module):
+    """mHC-inspired residual gate with doubly-stochastic constraint.
+
+    Inspired by DeepSeek's Manifold-Constrained Hyper-Connections (mHC),
+    this module applies a learnable mixing gate between model output and
+    a residual projection of the input. The gate matrix is projected onto
+    the Birkhoff polytope via Sinkhorn-Knopp normalization, ensuring:
+    - Spectral norm <= 1 (no signal amplification)
+    - Closure under composition (stable across depth)
+    - Smooth gradient flow
+
+    Forward pass:
+        residual = linear_proj(input)
+        output = alpha * sinkhorn(W) @ model(input) + (1 - alpha) * residual
+
+    Parameters
+    ----------
+    base_model : nn.Module
+        The original model to wrap.
+    in_features : int
+        Input dimension (lags).
+    out_features : int
+        Output dimension (lags / forecast horizon).
+    n_sinkhorn_iters : int, default=10
+        Sinkhorn-Knopp iterations for doubly-stochastic projection.
+    init_alpha : float, default=0.3
+        Initial mixing weight for model output (conservative start).
+    """
+
+    def __init__(self, base_model, in_features, out_features,
+                 n_sinkhorn_iters=10, init_alpha=0.3):
+        super().__init__()
+        self.base_model = base_model
+        self.out_features = out_features
+        self.n_sinkhorn_iters = n_sinkhorn_iters
+
+        # Learnable mixing matrix (will be Sinkhorn-projected)
+        # Initialize near identity for conservative start
+        self.W_logits = nn.Parameter(
+            torch.eye(out_features) * 2.0 + torch.randn(out_features, out_features) * 0.01
+        )
+
+        # Learnable residual scale (sigmoid -> [0, 1])
+        # Initialize so sigmoid(raw) ≈ init_alpha
+        init_logit = np.log(init_alpha / (1.0 - init_alpha + 1e-8))
+        self.alpha_logit = nn.Parameter(torch.tensor(float(init_logit)))
+
+        # Residual projection (input -> output dimension)
+        if in_features != out_features:
+            self.residual_proj = nn.Linear(in_features, out_features, bias=False)
+        else:
+            self.residual_proj = nn.Identity()
+
+    def _sinkhorn(self, M):
+        """Project matrix onto Birkhoff polytope (doubly stochastic).
+
+        Iterative row/column normalization. The result has all rows
+        and columns summing to 1, with spectral norm <= 1.
+        """
+        # Ensure non-negative via exp
+        S = torch.exp(M)
+        for _ in range(self.n_sinkhorn_iters):
+            S = S / (S.sum(dim=1, keepdim=True) + 1e-8)  # Row normalize
+            S = S / (S.sum(dim=0, keepdim=True) + 1e-8)  # Column normalize
+        return S
+
+    def forward(self, x):
+        # Get model prediction
+        model_out = self.base_model(x)  # (B, out_features)
+
+        # Sinkhorn-normalized mixing matrix
+        W = self._sinkhorn(self.W_logits)  # (out, out), doubly stochastic
+
+        # Apply doubly-stochastic mixing to model output
+        # This prevents any single output dimension from being amplified
+        mixed = torch.matmul(model_out, W)  # (B, out_features)
+
+        # Learnable residual blend
+        alpha = torch.sigmoid(self.alpha_logit)
+        residual = self.residual_proj(x)  # (B, out_features)
+
+        return alpha * mixed + (1.0 - alpha) * residual
+
+
 @ParameterTypeAssert({
     'device': (str, None)
 })
@@ -248,6 +332,11 @@ class TorchModelMixin:
             lr_factor=0.1,
             restore_best_weights=True,
             verbose=True,
+            use_ema=False,
+            ema_decay=0.999,
+            use_swa=False,
+            swa_start_frac=0.75,
+            warmup_epochs=0,
             **lr_scheduler_kwargs
             ):
         """Fit your model.
@@ -285,9 +374,6 @@ class TorchModelMixin:
         self
 
         """
-        if verbose:
-            logger.info('Information about the device used for computation:\n' + self.string_format)
-
         return self._fit(
             X,
             y,
@@ -304,6 +390,11 @@ class TorchModelMixin:
             lr_factor=lr_factor,
             restore_best_weights=restore_best_weights,
             verbose=verbose,
+            use_ema=use_ema,
+            ema_decay=ema_decay,
+            use_swa=use_swa,
+            swa_start_frac=swa_start_frac,
+            warmup_epochs=warmup_epochs,
             **lr_scheduler_kwargs
         )
 
@@ -325,6 +416,30 @@ class TorchModelMixin:
         )
         self._cqr_enabled = True
         self._cqr_alpha = alpha
+
+    def _enable_residual_gate(self, n_sinkhorn_iters=10, init_alpha=0.3):
+        """Enable mHC-inspired Sinkhorn residual gate.
+
+        Wraps ``self.model`` with :class:`SinkhornResidualGate`, which adds a
+        doubly-stochastic mixing matrix (Birkhoff polytope projection) and a
+        learnable residual blend. This prevents signal amplification and
+        stabilizes training, especially for noisy or oscillating loss.
+
+        Must be called before ``_fit()`` (after model is defined).
+        """
+        self.model = SinkhornResidualGate(
+            self.model,
+            in_features=self.in_features,
+            out_features=self.out_features,
+            n_sinkhorn_iters=n_sinkhorn_iters,
+            init_alpha=init_alpha,
+        )
+        weight_decay = getattr(self, 'weight_decay', 1e-4)
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(), lr=self.learning_rate,
+            weight_decay=weight_decay,
+        )
+        self._residual_gate_enabled = True
 
     def predict(self, X):
         """
@@ -651,6 +766,11 @@ class TorchModelMixin:
             lr_factor=0.1,
             restore_best_weights=True,
             verbose=True,
+            use_ema=False,
+            ema_decay=0.999,
+            use_swa=False,
+            swa_start_frac=0.75,
+            warmup_epochs=0,
             **lr_scheduler_kwargs
     ):
         """
@@ -708,6 +828,22 @@ class TorchModelMixin:
             steps_per_epoch=batches,
             **lr_scheduler_kwargs)
 
+        # --- EMA: Exponential Moving Average of weights ---
+        ema_state = None
+        if use_ema:
+            ema_state = {k: v.clone() for k, v in self.model.state_dict().items()}
+
+        # --- SWA: Stochastic Weight Averaging ---
+        swa_state = None
+        swa_count = 0
+        swa_start_epoch = int(epochs * swa_start_frac) if use_swa else epochs + 1
+
+        # --- Warmup: linear LR warmup ---
+        warmup_epochs = max(0, int(warmup_epochs))
+        if warmup_epochs > 0:
+            warmup_start_lr = init_lr * 0.1
+            warmup_delta = (init_lr - warmup_start_lr) / max(warmup_epochs, 1)
+
         for epoch in range(epochs):
             tik = time.time()
             stop_state = False
@@ -715,12 +851,34 @@ class TorchModelMixin:
             self.training_logs['epochs'].append(epoch)
             self.training_logs['batches'].append(batches)
 
+            # --- Warmup LR override ---
+            if warmup_epochs > 0 and epoch < warmup_epochs:
+                warmup_lr = warmup_start_lr + warmup_delta * epoch
+                for pg in self.optimizer.param_groups:
+                    pg['lr'] = warmup_lr
+
             train_loss_current, train_acc = self.train_on_one_epoch(train_dataloader, model=self.model,
                                                                     loss_fn=self.loss_fn,
                                                                     optimizer=self.optimizer)
 
-            if lr_scheduler:
+            if lr_scheduler and epoch >= warmup_epochs:
                 scheduler.step() if lr_scheduler != 'ReduceLROnPlateau' else scheduler.step(train_loss_current)
+
+            # --- EMA update ---
+            if ema_state is not None:
+                with torch.no_grad():
+                    for k, v in self.model.state_dict().items():
+                        ema_state[k].mul_(ema_decay).add_(v, alpha=1.0 - ema_decay)
+
+            # --- SWA accumulation ---
+            if use_swa and epoch >= swa_start_epoch:
+                sd = self.model.state_dict()
+                if swa_state is None:
+                    swa_state = {k: v.clone() for k, v in sd.items()}
+                else:
+                    for k in swa_state:
+                        swa_state[k] += sd[k]
+                swa_count += 1
 
             self.training_logs['lrs'].append(round(float(self.optimizer.state_dict()['param_groups'][0]['lr']), 7))
 
@@ -754,6 +912,15 @@ class TorchModelMixin:
                 if verbose:
                     print(f"Early stopping at epoch {epoch}.")
                 break
+
+        # --- Apply weight averaging strategies ---
+        # Priority: SWA > EMA > best_weight (from early stopping)
+        if use_swa and swa_state is not None and swa_count > 0:
+            for k in swa_state:
+                swa_state[k] /= swa_count
+            self.model.load_state_dict(swa_state)
+        elif use_ema and ema_state is not None:
+            self.model.load_state_dict(ema_state)
 
         self.__spinesTS_is_fitted__ = True
         return self

@@ -155,6 +155,8 @@ class IntervalEstimationMixin:
 
             del train_data, valid_data, data_x, data_y, valid_data_x, valid_data_y, model, preds, actuals
 
+        self.all_configs['_conformal_residuals'] = signed_residuals
+
         return self._compute_conformal_quantiles(
             signed_residuals, coverage=self.all_configs['quantile']
         )
@@ -255,3 +257,37 @@ class IntervalEstimationMixin:
             res[self.all_configs['target_col']].values + q_upper
 
         return self.chosen_cols(res)
+
+    def predict_quantiles(self, point_preds, levels):
+        """Produce multi-quantile predictions from stored conformal residuals.
+
+        Parameters
+        ----------
+        point_preds : np.ndarray
+            Point predictions (1-D array of length n).
+        levels : list of float
+            Quantile levels, e.g. [0.1, 0.5, 0.9].  Each value is a
+            *coverage* probability — 0.9 means 90 % prediction interval.
+
+        Returns
+        -------
+        dict
+            Mapping ``level -> (q_lower_array, q_upper_array)`` where each
+            array has the same length as *point_preds*.  For CQR-calibrated
+            models the correction is symmetric (scalar Q_hat); for conformal
+            models it is asymmetric.
+        """
+        residuals = self.all_configs.get('_conformal_residuals')
+        if residuals is None or len(residuals) == 0:
+            # No calibration data — return zero-width intervals
+            zeros = np.zeros_like(point_preds)
+            return {lv: (zeros.copy(), zeros.copy()) for lv in levels}
+
+        result = {}
+        for lv in levels:
+            q_lo, q_hi = self._compute_conformal_quantiles(residuals, coverage=lv)
+            result[lv] = (
+                point_preds + q_lo,
+                point_preds + q_hi,
+            )
+        return result

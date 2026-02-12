@@ -196,16 +196,45 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         self
         """
         check_time_col_is_timestamp(data, self.all_configs['time_col'])
+        id_col = self.all_configs.get('id_col')
+        known_covs = self.all_configs.get('known_covariates') or []
+        self._known_cov_cols = [c for c in known_covs if c in data.columns]
 
-        data = data[[self.all_configs['time_col'], self.all_configs['target_col']]].copy()
+        if id_col is not None and id_col in data.columns:
+            # Multi-series: train per-series local models
+            self._panel_models = {}
+            self._panel_last_dt = {}
+            self._panel_freq = {}
+            for sid, sdf in data.groupby(id_col):
+                sdf = sdf.copy()
+                sdf[self.all_configs['time_col']] = pd.to_datetime(sdf[self.all_configs['time_col']])
+                dates = sdf[self.all_configs['time_col']].values
+                y = sdf[self.all_configs['target_col']].values.astype(np.float64)
+                extra_reg = None
+                if self._known_cov_cols:
+                    extra_reg = sdf[self._known_cov_cols].values.astype(np.float64)
+                m = self._define_model()
+                m.fit(dates, y, extra_regressors=extra_reg)
+                self._panel_models[sid] = m
+                self._panel_last_dt[sid] = sdf[self.all_configs['time_col']].max()
+                self._panel_freq[sid] = self._infer_freq(dates) if freq == 'auto' else freq
+            self.last_dt = data[self.all_configs['time_col']].max()
+            self._freq = list(self._panel_freq.values())[0]
+            return self
+
+        keep_cols = [self.all_configs['time_col'], self.all_configs['target_col']] + self._known_cov_cols
+        data = data[keep_cols].copy()
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
         self.last_dt = data[self.all_configs['time_col']].max()
 
         dates = data[self.all_configs['time_col']].values
         y = data[self.all_configs['target_col']].values.astype(np.float64)
+        extra_reg = None
+        if self._known_cov_cols:
+            extra_reg = data[self._known_cov_cols].values.astype(np.float64)
 
         self.model = self._define_model()
-        self.model.fit(dates, y)
+        self.model.fit(dates, y, extra_regressors=extra_reg)
 
         if freq == 'auto':
             self._freq = self._infer_freq(dates)
@@ -218,7 +247,7 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def predict(self, n, freq=None, include_history=False):
+    def predict(self, n, freq=None, include_history=False, future_covariates=None):
         """
         Make predictions.
 
@@ -230,18 +259,61 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
             Frequency. None uses the freq from fit().
         include_history : bool
             Whether to include historical predictions.
+        future_covariates : pd.DataFrame or None
+            Future known covariate values. Must have at least n rows and
+            columns matching known_covariates used during fit.
 
         Returns
         -------
         pd.DataFrame
         """
+        id_col = self.all_configs.get('id_col')
+        known_cols = getattr(self, '_known_cov_cols', [])
+
+        # Multi-series panel prediction
+        if id_col is not None and hasattr(self, '_panel_models') and self._panel_models:
+            all_results = []
+            for sid, model in self._panel_models.items():
+                f = freq or self._panel_freq.get(sid, 'D')
+                future_df = model.make_future_dataframe(
+                    periods=n, freq=f, include_history=include_history
+                )
+                extra_reg = None
+                if known_cols and future_covariates is not None:
+                    if id_col in future_covariates.columns:
+                        sid_fc = future_covariates[future_covariates[id_col] == sid]
+                    else:
+                        sid_fc = future_covariates
+                    extra_reg = sid_fc[known_cols].values[:len(future_df)].astype(np.float64)
+                    if len(extra_reg) < len(future_df):
+                        pad = np.zeros((len(future_df) - len(extra_reg), len(known_cols)))
+                        extra_reg = np.vstack([extra_reg, pad])
+                preds = model.predict(future_df['ds'].values, extra_regressors=extra_reg)
+                res = pd.DataFrame({
+                    self.all_configs['time_col']: future_df['ds'].values,
+                    self.all_configs['target_col']: preds,
+                })
+                if self.all_configs['quantile'] is not None:
+                    res = self.interval_predict(res)
+                res = self.chosen_cols(res)
+                res[id_col] = sid
+                all_results.append(res)
+            return pd.concat(all_results, ignore_index=True)
+
+        # Single-series prediction
         if freq is None:
             freq = getattr(self, '_freq', 'D')
 
         future_df = self.model.make_future_dataframe(
             periods=n, freq=freq, include_history=include_history
         )
-        preds = self.model.predict(future_df['ds'].values)
+        extra_reg = None
+        if known_cols and future_covariates is not None:
+            extra_reg = future_covariates[known_cols].values[:len(future_df)].astype(np.float64)
+            if len(extra_reg) < len(future_df):
+                pad = np.zeros((len(future_df) - len(extra_reg), len(known_cols)))
+                extra_reg = np.vstack([extra_reg, pad])
+        preds = self.model.predict(future_df['ds'].values, extra_regressors=extra_reg)
 
         res = pd.DataFrame({
             self.all_configs['time_col']: future_df['ds'].values,

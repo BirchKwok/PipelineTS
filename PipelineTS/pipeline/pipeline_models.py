@@ -21,7 +21,7 @@ def get_all_available_models():
     - The function attempts to import external dependencies to check for additional models.
     - If the 'prophet' package is installed, a 'prophet' model will be added to the available models.
     """
-    MODELS = frozendict({
+    models = {
         'auto_arima': AutoARIMAModel,
         'prophet': ProphetModel,
         'catboost': CatBoostModel,
@@ -46,10 +46,17 @@ def get_all_available_models():
         'regressor_chain': RegressorChainModel,
         'itransformer': ITransformerModel,
         'srs_net': SRSNetModel,
-        'deepar': DeepARModel
-    })
+        'deepar': DeepARModel,
+    }
 
-    return MODELS
+    # Chronos is optional — only register if chronos-forecasting is installed
+    try:
+        from PipelineTS.nn_model.chronos import ChronosModel
+        models['chronos'] = ChronosModel
+    except ImportError:
+        pass
+
+    return frozendict(models)
 
 
 def get_all_model_class_name():

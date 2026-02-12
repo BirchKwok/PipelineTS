@@ -28,7 +28,7 @@ def _determine_d(y, max_d=2):
     return max_d
 
 
-def _fit_arima(y, order, seasonal_order=None, suppress_warnings=True):
+def _fit_arima(y, order, seasonal_order=None, suppress_warnings=True, exog=None):
     """Fit a SARIMAX model and return (model_result, aic) or None on failure."""
     try:
         with warnings.catch_warnings():
@@ -37,6 +37,7 @@ def _fit_arima(y, order, seasonal_order=None, suppress_warnings=True):
             model = SARIMAX(
                 y, order=order,
                 seasonal_order=seasonal_order if seasonal_order else (0, 0, 0, 0),
+                exog=exog,
                 enforce_stationarity=False,
                 enforce_invertibility=False
             )
@@ -48,7 +49,8 @@ def _fit_arima(y, order, seasonal_order=None, suppress_warnings=True):
 
 def _auto_arima_search(y, start_p=0, max_p=5, start_q=0, max_q=5,
                        max_d=2, seasonal=False, m=1,
-                       max_P=2, max_Q=2, max_D=1, information_criterion='aic'):
+                       max_P=2, max_Q=2, max_D=1, information_criterion='aic',
+                       exog=None):
     """Grid search for best ARIMA/SARIMA order by AIC."""
     d = _determine_d(y, max_d=max_d)
 
@@ -73,7 +75,7 @@ def _auto_arima_search(y, start_p=0, max_p=5, start_q=0, max_q=5,
             order = (p, d, q)
             seasonal_order = (P, D, Q, m) if seasonal and m > 1 else (0, 0, 0, 0)
 
-            out = _fit_arima(y, order, seasonal_order)
+            out = _fit_arima(y, order, seasonal_order, exog=exog)
             if out is not None:
                 result, aic = out
                 if aic < best_aic:
@@ -84,7 +86,7 @@ def _auto_arima_search(y, start_p=0, max_p=5, start_q=0, max_q=5,
 
     # Fallback: if grid search failed entirely, try (1, d, 0)
     if best_result is None:
-        out = _fit_arima(y, (1, d, 0))
+        out = _fit_arima(y, (1, d, 0), exog=exog)
         if out is not None:
             best_result, best_aic = out
             best_order = (1, d, 0)
@@ -196,16 +198,20 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
         signed_residuals = []
         target_col = self.all_configs['target_col']
 
+        known_cols = getattr(self, '_known_cov_cols', [])
+
         for train_data, valid_data in self._cv_split(data, cv=cv):
             valid_y = valid_data[target_col].values
             train_y = train_data[target_col].values.astype(np.float64)
+            train_exog = train_data[known_cols].values.astype(np.float64) if known_cols else None
+            valid_exog = valid_data[known_cols].values.astype(np.float64) if known_cols else None
 
             try:
                 # Reuse the order from the main fit instead of re-running grid search
-                result = _fit_arima(train_y, self._order, self._seasonal_order)
+                result = _fit_arima(train_y, self._order, self._seasonal_order, exog=train_exog)
                 if result is not None:
                     fitted_model, _ = result
-                    preds = fitted_model.forecast(steps=len(valid_y))
+                    preds = fitted_model.forecast(steps=len(valid_y), exog=valid_exog)
                     per_point = valid_y.flatten() - preds.flatten()
                     signed_residuals.extend(per_point.tolist())
             except Exception:
@@ -231,12 +237,44 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
         self
         """
         check_time_col_is_timestamp(data, self.all_configs['time_col'])
+        id_col = self.all_configs.get('id_col')
+        known_covs = self.all_configs.get('known_covariates') or []
+        self._known_cov_cols = [c for c in known_covs if c in data.columns]
 
-        data = data[[self.all_configs['time_col'], self.all_configs['target_col']]].copy()
+        if id_col is not None and id_col in data.columns:
+            # Multi-series: train per-series local ARIMA models
+            self._panel_models = {}
+            self._panel_last_dt = {}
+            self._panel_orders = {}
+            for sid, sdf in data.groupby(id_col):
+                sdf = sdf.copy()
+                sdf[self.all_configs['time_col']] = pd.to_datetime(sdf[self.all_configs['time_col']])
+                train_y = sdf[self.all_configs['target_col']].values.astype(np.float64)
+                exog = sdf[self._known_cov_cols].values.astype(np.float64) if self._known_cov_cols else None
+                model, order, seasonal_order = _auto_arima_search(
+                    train_y,
+                    start_p=self.all_configs['start_p'],
+                    max_p=self.all_configs['max_p'],
+                    start_q=self.all_configs['start_q'],
+                    max_q=self.all_configs['max_q'],
+                    max_d=self.all_configs['max_d'],
+                    seasonal=self.all_configs['seasonal'],
+                    m=self.all_configs['m'],
+                    exog=exog,
+                )
+                self._panel_models[sid] = model
+                self._panel_last_dt[sid] = sdf[self.all_configs['time_col']].max()
+                self._panel_orders[sid] = (order, seasonal_order)
+            self.last_dt = data[self.all_configs['time_col']].max()
+            return self
+
+        keep_cols = [self.all_configs['time_col'], self.all_configs['target_col']] + self._known_cov_cols
+        data = data[keep_cols].copy()
         data[self.all_configs['time_col']] = pd.to_datetime(data[self.all_configs['time_col']])
         self.last_dt = data[self.all_configs['time_col']].max()
 
         train_y = data[self.all_configs['target_col']].values.astype(np.float64)
+        exog = data[self._known_cov_cols].values.astype(np.float64) if self._known_cov_cols else None
 
         self.model, self._order, self._seasonal_order = _auto_arima_search(
             train_y,
@@ -247,6 +285,7 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
             max_d=self.all_configs['max_d'],
             seasonal=self.all_configs['seasonal'],
             m=self.all_configs['m'],
+            exog=exog,
         )
 
         if self.all_configs['quantile'] is not None:
@@ -255,7 +294,7 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
 
         return self
 
-    def predict(self, n, **kwargs):
+    def predict(self, n, future_covariates=None, **kwargs):
         """
         Make predictions using the fitted AutoARIMA model.
 
@@ -263,12 +302,56 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
         ----------
         n : int
             The number of time steps to predict.
+        future_covariates : pd.DataFrame or None
+            Future known covariate values for the forecast horizon.
 
         Returns
         -------
         pd.DataFrame
         """
-        preds = self.model.forecast(steps=n)
+        id_col = self.all_configs.get('id_col')
+        known_cols = getattr(self, '_known_cov_cols', [])
+
+        # Multi-series panel prediction
+        if id_col is not None and hasattr(self, '_panel_models') and self._panel_models:
+            all_results = []
+            for sid, model in self._panel_models.items():
+                last_dt = self._panel_last_dt[sid]
+                exog_future = None
+                if known_cols and future_covariates is not None:
+                    if id_col in future_covariates.columns:
+                        sid_fc = future_covariates[future_covariates[id_col] == sid]
+                    else:
+                        sid_fc = future_covariates
+                    exog_future = sid_fc[known_cols].values[:n].astype(np.float64)
+                    if len(exog_future) < n:
+                        pad = np.zeros((n - len(exog_future), len(known_cols)))
+                        exog_future = np.vstack([exog_future, pad])
+                elif known_cols:
+                    exog_future = np.zeros((n, len(known_cols)))
+                preds = model.forecast(steps=n, exog=exog_future)
+                res = pd.DataFrame({
+                    self.all_configs['target_col']: preds
+                })
+                res[self.all_configs['time_col']] = \
+                    last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+                if self.all_configs['quantile'] is not None:
+                    res = self.interval_predict(res)
+                res = self.chosen_cols(res)
+                res[id_col] = sid
+                all_results.append(res)
+            return pd.concat(all_results, ignore_index=True)
+
+        # Single-series prediction
+        exog_future = None
+        if known_cols and future_covariates is not None:
+            exog_future = future_covariates[known_cols].values[:n].astype(np.float64)
+            if len(exog_future) < n:
+                pad = np.zeros((n - len(exog_future), len(known_cols)))
+                exog_future = np.vstack([exog_future, pad])
+        elif known_cols:
+            exog_future = np.zeros((n, len(known_cols)))
+        preds = self.model.forecast(steps=n, exog=exog_future)
 
         res = pd.DataFrame({
             self.all_configs['target_col']: preds

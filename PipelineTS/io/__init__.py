@@ -332,9 +332,138 @@ def _load_pipeline(path, unzip_file_path=None, unzip=True):
     return pipeline
 
 
+def _save_smart_router(path, router):
+    """Save a SmartRouter to a zip file.
+
+    Saves the router metadata and the inner pipeline separately.
+    """
+    from pathlib import Path
+    import shutil
+    import cloudpickle
+    from spinesUtils.asserts import raise_if, raise_if_not
+
+    raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
+    raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
+    raise_if(ValueError, router.pipeline_ is None, "SmartRouter has not been fitted. Call fit() first.")
+
+    zipfile_fp = path
+    name_subfix = _hash_string(path.strip()[:-4])
+    router_dir = Path(path).parent.joinpath(path.strip()[:-4] + name_subfix + '/')
+    Path.mkdir(router_dir)
+
+    file_fps = []
+
+    # Save inner pipeline as nested zip
+    pipeline_zip = str(router_dir.joinpath('inner_pipeline.zip'))
+    _save_pipeline(pipeline_zip, router.pipeline_)
+    file_fps.append(pipeline_zip)
+
+    # Save router metadata (everything except pipeline_ and logger)
+    meta_fp = str(router_dir.joinpath('router_meta.pkl'))
+    meta = {
+        'time_col': router.time_col,
+        'target_col': router.target_col,
+        'n_predict': router.n_predict,
+        'quantile': router.quantile,
+        'accelerator': router.accelerator,
+        'random_state': router.random_state,
+        'verbose': router.verbose,
+        'max_models': router.max_models,
+        'cv': router.cv,
+        'time_limit': router.time_limit,
+        'ensemble_strategy': router.ensemble_strategy,
+        'ensemble_top_k': router.ensemble_top_k,
+        'search_strategy': router.search_strategy,
+        'profile_': router.profile_,
+        'strategy_': router.strategy_,
+        'leader_board_': router.leader_board_,
+        'model_scores_': router.model_scores_,
+        'ensemble_': router.ensemble_,
+        '_scaler_obj': router._scaler_obj,
+        '_screening_results': router._screening_results,
+        '_lag_exploration_results': router._lag_exploration_results,
+        '_calibration_rho': router._calibration_rho,
+    }
+    with open(meta_fp, 'wb') as f:
+        cloudpickle.dump(meta, f)
+    file_fps.append(meta_fp)
+
+    # Marker file so load_model can detect SmartRouter
+    marker_fp = str(router_dir.joinpath('smart_router.marker'))
+    with open(marker_fp, 'w') as f:
+        f.write('SmartRouter')
+    file_fps.append(marker_fp)
+
+    _zip_file(zipfile_fp, *file_fps)
+    shutil.rmtree(router_dir)
+    return zipfile_fp
+
+
+def _load_smart_router(path, unzip_file_path=None, unzip=True):
+    """Load a SmartRouter from a zip file."""
+    import os
+    from pathlib import Path
+    import shutil
+    import cloudpickle
+    from spinesUtils.asserts import raise_if, raise_if_not
+
+    raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
+    raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
+
+    if unzip:
+        unzip_file_fp = _load_zip_file(path)
+    else:
+        unzip_file_fp = unzip_file_path
+
+    # Load metadata
+    meta_fp = str(Path(unzip_file_fp).joinpath('router_meta.pkl'))
+    with open(meta_fp, 'rb') as f:
+        meta = cloudpickle.load(f)
+
+    # Load inner pipeline
+    pipeline_zip = str(Path(unzip_file_fp).joinpath('inner_pipeline.zip'))
+    pipeline = _load_pipeline(pipeline_zip)
+
+    # Reconstruct SmartRouter
+    from PipelineTS.pipeline.smart_router import SmartRouter
+    router = SmartRouter(
+        time_col=meta['time_col'],
+        target_col=meta['target_col'],
+        n_predict=meta.get('n_predict'),
+        quantile=meta.get('quantile'),
+        accelerator=meta.get('accelerator', 'auto'),
+        random_state=meta.get('random_state', 0),
+        verbose=meta.get('verbose', True),
+        max_models=meta.get('max_models', 8),
+        cv=meta.get('cv', 5),
+        time_limit=meta.get('time_limit'),
+        ensemble_strategy=meta.get('ensemble_strategy', 'auto'),
+        ensemble_top_k=meta.get('ensemble_top_k', 3),
+        search_strategy=meta.get('search_strategy', 'auto'),
+    )
+    router.pipeline_ = pipeline
+    router.profile_ = meta.get('profile_')
+    router.strategy_ = meta.get('strategy_')
+    router.leader_board_ = meta.get('leader_board_')
+    router.best_model_ = pipeline.best_model_
+    router.model_scores_ = meta.get('model_scores_')
+    router.ensemble_ = meta.get('ensemble_')
+    router._scaler_obj = meta.get('_scaler_obj')
+    router._screening_results = meta.get('_screening_results')
+    router._lag_exploration_results = meta.get('_lag_exploration_results')
+    router._calibration_rho = meta.get('_calibration_rho')
+
+    # Re-link ensemble pipeline reference
+    if router.ensemble_ is not None:
+        router.ensemble_.pipeline = pipeline
+
+    shutil.rmtree(unzip_file_fp)
+    return router
+
+
 def save_model(path, model, scaler=None):
     """
-    Save a machine learning model or a pipeline to a zip file.
+    Save a machine learning model, pipeline, or SmartRouter to a zip file.
 
     [Note that]: A loaded model cannot be saved.
 
@@ -344,10 +473,10 @@ def save_model(path, model, scaler=None):
         The path to the zip file.
 
     model : object
-        The fitted machine learning model or pipeline.
+        The fitted machine learning model, ModelPipeline, or SmartRouter.
 
     scaler : object, optional
-        The scaler associated with the model.
+        The scaler associated with the model (only for single models).
 
     Returns
     -------
@@ -355,7 +484,10 @@ def save_model(path, model, scaler=None):
         The path to the saved zip file.
     """
     from PipelineTS.pipeline import ModelPipeline
-    if isinstance(model, ModelPipeline):
+    from PipelineTS.pipeline.smart_router import SmartRouter
+    if isinstance(model, SmartRouter):
+        return _save_smart_router(path, model)
+    elif isinstance(model, ModelPipeline):
         return _save_pipeline(path, model)
     else:
         return _save_single_model(path, model, scaler)
@@ -363,7 +495,7 @@ def save_model(path, model, scaler=None):
 
 def load_model(path):
     """
-    Load a machine learning model or a pipeline from a zip file.
+    Load a machine learning model, pipeline, or SmartRouter from a zip file.
 
     Parameters
     ----------
@@ -373,12 +505,14 @@ def load_model(path):
     Returns
     -------
     object
-        The loaded machine learning model or pipeline.
+        The loaded machine learning model, ModelPipeline, or SmartRouter.
     """
     import os
     unzip_file_fp = _load_zip_file(path)
 
-    if 'pipeline.pkl' in os.listdir(unzip_file_fp):
+    if 'smart_router.marker' in os.listdir(unzip_file_fp):
+        return _load_smart_router(path, unzip_file_path=unzip_file_fp, unzip=False)
+    elif 'pipeline.pkl' in os.listdir(unzip_file_fp):
         return _load_pipeline(path, unzip_file_path=unzip_file_fp, unzip=False)
     else:
         return _load_single_model(path, unzip_file_path=unzip_file_fp, unzip=False)

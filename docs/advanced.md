@@ -479,6 +479,236 @@ The lag features include 7 causal rolling statistics:
 
 ---
 
+## Multi-Quantile Prediction / 多分位数预测
+
+Output prediction intervals at multiple coverage levels simultaneously. The `predict_quantiles()` method is available on `ModelPipeline` and `SmartRouter`.
+
+同时输出多个覆盖水平的预测区间。`predict_quantiles()` 方法在 `ModelPipeline` 和 `SmartRouter` 上均可用。
+
+```python
+from PipelineTS.pipeline import ModelPipeline
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    quantile=0.9, include_models=['lightgbm', 'catboost'],
+)
+pipeline.fit(data)
+
+# Single quantile (standard) / 单分位数（标准）
+result = pipeline.predict(10)
+# Columns: date, value, value_lower, value_upper
+
+# Multi-quantile output / 多分位数输出
+result = pipeline.predict_quantiles(n=10, levels=[0.5, 0.8, 0.95])
+# Columns: date, value, value_q0.5_lower, value_q0.5_upper,
+#          value_q0.8_lower, value_q0.8_upper, value_q0.95_lower, value_q0.95_upper
+```
+
+The intervals are guaranteed to be monotonic: wider coverage levels always produce wider intervals.
+区间保证单调性：更宽的覆盖水平始终产生更宽的区间。
+
+---
+
+## Multi-Series (Panel Data) / 多序列（面板数据）
+
+PipelineTS natively supports panel data with multiple time series via the `id_col` parameter.
+
+PipelineTS 通过 `id_col` 参数原生支持包含多条时间序列的面板数据。
+
+### Key Design Decisions / 关键设计决策
+
+- **Per-series scaling**: Each series gets its own fitted `MinMaxScaler` stored in `_panel_scalers`.
+- **每序列缩放**：每条序列拥有独立的 `MinMaxScaler`，存储在 `_panel_scalers` 中。
+
+- **Per-series prediction**: Each series is predicted independently with correct inverse scaling.
+- **每序列预测**：每条序列独立预测，正确执行逆缩放。
+
+- **Full backward compatibility**: All single-series behavior is unchanged when `id_col=None`.
+- **完全向后兼容**：`id_col=None` 时所有单序列行为不变。
+
+```python
+from PipelineTS.pipeline import ModelPipeline, SmartRouter
+
+# ModelPipeline with panel data
+pipe = ModelPipeline(
+    time_col='date', target_col='value', lags=10,
+    id_col='series_id',
+    include_models=['catboost', 'lightgbm'],
+)
+pipe.fit(panel_data)
+result = pipe.predict(n=5)  # Returns DataFrame with series_id column
+                             # 返回带 series_id 列的 DataFrame
+
+# SmartRouter with panel data (profiles longest series)
+# SmartRouter 使用面板数据（对最长序列做数据画像）
+router = SmartRouter(
+    time_col='date', target_col='value',
+    id_col='series_id',
+)
+router.fit(panel_data)
+result = router.predict(10)
+```
+
+---
+
+## Covariate Support / 协变量支持
+
+GBDT, Prophet, and AutoARIMA models support external covariates for improved forecasts.
+
+GBDT、Prophet 和 AutoARIMA 模型支持外部协变量以改善预测。
+
+### Types of Covariates / 协变量类型
+
+| Type / 类型 | Description / 描述 | Supported Models / 支持的模型 |
+|---|---|---|
+| `known_covariates` | Future values known at prediction time (holidays, promotions) / 预测时已知的未来值 | GBDT, Prophet, AutoARIMA, NN (via feature_cols) |
+| `past_covariates` | Historical-only features (weather, sensor data) / 仅历史特征 | GBDT |
+
+```python
+from PipelineTS.pipeline import ModelPipeline
+import pandas as pd
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    known_covariates=['holiday', 'promotion'],
+    past_covariates=['temperature'],
+    include_models=['lightgbm', 'prophet', 'auto_arima'],
+)
+pipeline.fit(data)  # data must contain all covariate columns
+                    # data 必须包含所有协变量列
+
+# At prediction time, provide future values of known covariates
+# 预测时提供已知协变量的未来值
+future_cov = pd.DataFrame({
+    'holiday': [0, 0, 0, 1, 0],
+    'promotion': [1, 0, 0, 0, 0],
+})
+result = pipeline.predict(n=5, future_covariates=future_cov)
+```
+
+If `future_covariates` is not provided at prediction time but the model was trained with covariates, zero placeholders are used automatically.
+
+如果预测时未提供 `future_covariates` 但模型训练时使用了协变量，将自动使用零占位符。
+
+---
+
+## Incremental Learning / 增量学习
+
+The `update()` method enables incremental training on new data without full retraining from scratch.
+
+`update()` 方法支持在新数据上进行增量训练，无需从头完全重新训练。
+
+### How It Works / 工作原理
+
+| Model Type / 模型类型 | Strategy / 策略 |
+|---|---|
+| **Neural Networks** / 神经网络 | Warm-start: continue training with fewer epochs on combined data / 热启动：在合并数据上以更少轮次继续训练 |
+| **GBDT / Statistical** / GBDT/统计模型 | Full refit on combined old + new data (efficient due to cached parameters) / 在合并数据上完全重新拟合 |
+
+```python
+from PipelineTS.pipeline import ModelPipeline
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models=['lightgbm', 'tide'],
+)
+pipeline.fit(initial_data)
+
+# When new data arrives / 当新数据到达时
+pipeline.update(new_data)
+
+# Training data is now: initial_data + new_data / 训练数据现在是：初始数据 + 新数据
+result = pipeline.predict(10)
+```
+
+```python
+# SmartRouter also supports update() / SmartRouter 也支持 update()
+from PipelineTS.pipeline import SmartRouter
+
+router = SmartRouter(time_col='date', target_col='value')
+router.fit(initial_data)
+router.update(new_data)
+```
+
+**Note**: `update()` raises `ValueError` if the pipeline/router has not been fitted yet.
+**注意**：如果管道/路由器尚未拟合，`update()` 会抛出 `ValueError`。
+
+---
+
+## SmartRouter HPO / SmartRouter 超参数优化
+
+SmartRouter has built-in Optuna hyperparameter optimization that runs between lag exploration and full training.
+
+SmartRouter 内置 Optuna 超参数优化，在滞后窗口探索和正式训练之间运行。
+
+### HPO Strategies / HPO 策略
+
+| Strategy / 策略 | Description / 描述 |
+|---|---|
+| `'none'` (default) | No HPO, use default or adaptive hyperparameters / 不使用 HPO，使用默认或自适应超参数 |
+| `'quick'` | Capped at 5 trials per model, fast exploration / 每模型最多 5 次试验，快速探索 |
+| `'full'` | Full search with `hpo_n_trials` trials per model / 每模型完整搜索 `hpo_n_trials` 次试验 |
+
+```python
+from PipelineTS.pipeline import SmartRouter
+
+router = SmartRouter(
+    time_col='date',
+    target_col='value',
+    hpo_strategy='quick',           # 'none', 'quick', or 'full'
+    hpo_n_trials=10,                # Trials per model (for 'full') / 每模型试验数
+    hpo_timeout_per_model=60,       # Seconds per model (None=no limit) / 每模型秒数
+)
+router.fit(data)
+
+# Access HPO results / 访问 HPO 结果
+print(router._hpo_results)  # {model: {best_params, best_value, n_trials, time}}
+```
+
+### Search Spaces / 搜索空间
+
+| Model Type / 模型类型 | Parameters / 参数 |
+|---|---|
+| **GBDT** (LightGBM, XGBoost) | n_estimators, max_depth, learning_rate |
+| **CatBoost** | iterations, depth, learning_rate |
+| **NN light** | learning_rate, epochs |
+| **NN heavy** | learning_rate, epochs |
+| **Prophet** | changepoint_prior_scale |
+
+---
+
+## Multi-Layer Stacking Ensemble / 多层堆叠集成
+
+SmartRouter supports `'multi_stack'` ensemble strategy that trains a two-layer meta-learner.
+
+SmartRouter 支持 `'multi_stack'` 集成策略，训练两层元学习器。
+
+```python
+from PipelineTS.pipeline import SmartRouter
+
+router = SmartRouter(
+    time_col='date',
+    target_col='value',
+    ensemble_strategy='multi_stack',   # Two-layer stacking / 两层堆叠
+    ensemble_top_k=3,
+)
+router.fit(data)
+result = router.predict(12)
+```
+
+**How it works / 工作原理:**
+
+1. **Layer 1**: Ridge + ElasticNet meta-learners trained on expanding-window OOF predictions.
+1. **第 1 层**：Ridge + ElasticNet 元学习器在扩展窗口的 OOF 预测上训练。
+
+2. **Layer 2**: Blends Layer 1 predictions with weights inversely proportional to validation MSE.
+2. **第 2 层**：以与验证 MSE 成反比的权重混合第 1 层预测。
+
+Falls back gracefully to simpler stacking or weighted_avg if multi-layer stacking fails.
+如果多层堆叠失败，会优雅回退到简单堆叠或加权平均。
+
+---
+
 ## Saving and Loading with Scaler / 带缩放器的保存与加载
 
 When using manual scaling, you can save the scaler alongside the model.

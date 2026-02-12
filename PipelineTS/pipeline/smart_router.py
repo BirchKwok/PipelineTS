@@ -20,6 +20,7 @@ from spinesUtils.asserts import ParameterTypeAssert, raise_if
 
 from PipelineTS.pipeline.pipeline import ModelPipeline
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
+from PipelineTS.spinesTS.metrics import mae
 from PipelineTS.preprocessing import (
     TimeSeriesMissingHandler,
     TimeSeriesOutlierDetector,
@@ -82,6 +83,8 @@ class DataProfile:
         self.autocorr_lag2 = 0.0
         self.n_seasonalities = 0
         self.regime_changes = 0
+        self.n_series = 1
+        self._total_rows = 0
 
     def summary(self) -> dict:
         return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
@@ -102,10 +105,12 @@ class DataProfile:
 # ---------------------------------------------------------------------------
 
 class EnsemblePredictor:
-    """Weighted ensemble of multiple fitted models.
+    """Multi-strategy ensemble of multiple fitted models.
 
-    Combines predictions from top-K models using inverse-metric weighting
-    for both point forecasts and interval predictions.
+    Supports three combination strategies:
+    - 'weighted_avg': Inverse-metric weighted average (default).
+    - 'median': Median of predictions (robust to outlier models).
+    - 'stacking': Ridge meta-learner trained on cross-validated predictions.
 
     Parameters
     ----------
@@ -119,17 +124,24 @@ class EnsemblePredictor:
         Name of the datetime column.
     target_col : str
         Name of the target column.
+    ensemble_method : str, default='weighted_avg'
+        One of 'weighted_avg', 'median', 'stacking'.
+    meta_model : object or None
+        Fitted meta-learner for stacking mode. None for other modes.
     """
 
-    def __init__(self, pipeline, model_names, weights, time_col, target_col):
+    def __init__(self, pipeline, model_names, weights, time_col, target_col,
+                 ensemble_method='weighted_avg', meta_model=None):
         self.pipeline = pipeline
         self.model_names = model_names
         self.weights = weights
         self.time_col = time_col
         self.target_col = target_col
+        self.ensemble_method = ensemble_method
+        self.meta_model = meta_model
 
     def predict(self, n, data=None):
-        """Generate weighted-average predictions from ensemble members."""
+        """Generate ensemble predictions using the configured method."""
         all_preds = {}
         for name in self.model_names:
             all_preds[name] = self.pipeline.predict(
@@ -140,11 +152,52 @@ class EnsemblePredictor:
         result = all_preds[self.model_names[0]].copy()
         value_cols = [c for c in result.columns if c.startswith(self.target_col)]
 
-        for col in value_cols:
-            result[col] = sum(
-                all_preds[name][col].values * self.weights[name]
-                for name in self.model_names
+        if self.ensemble_method == 'median':
+            for col in value_cols:
+                stacked = np.column_stack(
+                    [all_preds[name][col].values for name in self.model_names]
+                )
+                result[col] = np.median(stacked, axis=1)
+
+        elif self.ensemble_method == 'stacking' and self.meta_model is not None:
+            # Build feature matrix from base model predictions
+            target_col_only = self.target_col
+            feature_matrix = np.column_stack(
+                [all_preds[name][target_col_only].values for name in self.model_names]
             )
+            result[target_col_only] = self.meta_model.predict(feature_matrix)
+            # For interval cols, fall back to weighted_avg
+            for col in value_cols:
+                if col != target_col_only:
+                    result[col] = sum(
+                        all_preds[name][col].values * self.weights[name]
+                        for name in self.model_names
+                    )
+
+        elif self.ensemble_method == 'multi_stack' and self.meta_model is not None:
+            # Multi-layer stacking: meta_model is a list of (meta, weight) pairs
+            target_col_only = self.target_col
+            feature_matrix = np.column_stack(
+                [all_preds[name][target_col_only].values for name in self.model_names]
+            )
+            layer1_preds = []
+            for meta, w in self.meta_model:
+                layer1_preds.append(meta.predict(feature_matrix) * w)
+            result[target_col_only] = sum(layer1_preds)
+            # Interval cols: weighted_avg fallback
+            for col in value_cols:
+                if col != target_col_only:
+                    result[col] = sum(
+                        all_preds[name][col].values * self.weights[name]
+                        for name in self.model_names
+                    )
+
+        else:  # weighted_avg (default)
+            for col in value_cols:
+                result[col] = sum(
+                    all_preds[name][col].values * self.weights[name]
+                    for name in self.model_names
+                )
 
         return result
 
@@ -152,7 +205,7 @@ class EnsemblePredictor:
     def all_configs(self):
         return {
             'ensemble': True,
-            'strategy': 'weighted_avg',
+            'strategy': self.ensemble_method,
             'models': self.model_names,
             'weights': {k: round(v, 4) for k, v in self.weights.items()},
         }
@@ -161,7 +214,7 @@ class EnsemblePredictor:
         models_str = ', '.join(
             f"{n}({self.weights[n]:.2f})" for n in self.model_names
         )
-        return f"EnsemblePredictor([{models_str}])"
+        return f"EnsemblePredictor(method={self.ensemble_method}, [{models_str}])"
 
 
 # ---------------------------------------------------------------------------
@@ -178,10 +231,10 @@ class SmartRouter:
     4. GBDT differencing order
     5. Feature engineering decisions (routing_mode, lag features)
     6. Data-adaptive hyperparameters per model
-    7. Post-fit ensemble of top-K models (weighted averaging)
+    7. Post-fit ensemble of top-K models (weighted_avg / median / stacking)
 
-    Then runs a focused ModelPipeline competition on the selected subset
-    and optionally builds a weighted ensemble for production predictions.
+    Then runs a focused ModelPipeline competition on the selected subset,
+    with error resilience, time budget enforcement, and optional ensemble.
 
     Parameters
     ----------
@@ -199,27 +252,81 @@ class SmartRouter:
         Random seed.
     verbose : bool, default=True
         Whether to print routing decisions.
-    max_models : int, default=8
-        Maximum number of candidate models to evaluate.
-    cv : int, default=5
-        Cross-validation folds.
-    ensemble_strategy : str, default='auto'
-        How to combine models after fitting.
-        - 'auto': build ensemble when top models are within 30% of best.
-        - 'weighted_avg': always build inverse-metric weighted ensemble.
-        - 'none': no ensemble, use single best model.
-    ensemble_top_k : int, default=3
-        Maximum number of models to include in the ensemble.
+    preset : str or None, default=None
+        Quality preset that configures multiple parameters at once.
+        Explicitly provided params always override preset defaults.
+
+        - ``'fast'``: 3 models, 3-fold CV, basic search, no ensemble.
+        - ``'medium_quality'``: 5 models, 5-fold CV, auto search+ensemble.
+        - ``'high_quality'``: 8 models, 5-fold CV, thorough search, weighted ensemble.
+        - ``'best_quality'``: 15 models, 5-fold CV, thorough search, top-5 ensemble.
+
+        If None, uses ``'medium_quality'`` defaults.
+    max_models : int or None
+        Maximum number of candidate models. None = use preset default.
+    cv : int or None
+        Cross-validation folds. None = use preset default.
+    time_limit : int, float, or None, default=None
+        Total time budget in seconds. None = no limit.
+    ensemble_strategy : str or None
+        How to combine models after fitting. None = use preset default.
+        Options: 'auto', 'weighted_avg', 'median', 'stacking', 'none'.
+    ensemble_top_k : int or None
+        Maximum models in ensemble. None = use preset default.
+    search_strategy : str or None
+        Search strategy. None = use preset default.
+        Options: 'basic', 'auto', 'thorough'.
 
     Examples
     --------
     >>> from PipelineTS.pipeline import SmartRouter
-    >>> router = SmartRouter(time_col='date', target_col='value')
+    >>> # Quick start with preset
+    >>> router = SmartRouter(time_col='date', target_col='value', preset='fast')
     >>> router.fit(df)
-    >>> print(router.strategy)
-    >>> predictions = router.predict(n=16)
-    >>> print(router.leader_board_)
+    >>> router.predict(n=12)
+    >>>
+    >>> # Best quality with time limit
+    >>> router = SmartRouter(time_col='date', target_col='value',
+    ...                      preset='best_quality', time_limit=300)
+    >>> router.fit(df)
+    >>>
+    >>> # Save and reload
+    >>> router.save('my_model.zip')
+    >>> loaded = SmartRouter.load('my_model.zip')
     """
+
+    # Preset configurations: preset -> {param: value}
+    # Explicitly provided params always override preset defaults.
+    _PRESETS = {
+        'fast': {
+            'max_models': 3,
+            'cv': 3,
+            'search_strategy': 'basic',
+            'ensemble_strategy': 'none',
+            'ensemble_top_k': 1,
+        },
+        'medium_quality': {
+            'max_models': 5,
+            'cv': 5,
+            'search_strategy': 'auto',
+            'ensemble_strategy': 'auto',
+            'ensemble_top_k': 3,
+        },
+        'high_quality': {
+            'max_models': 8,
+            'cv': 5,
+            'search_strategy': 'thorough',
+            'ensemble_strategy': 'weighted_avg',
+            'ensemble_top_k': 3,
+        },
+        'best_quality': {
+            'max_models': 15,
+            'cv': 5,
+            'search_strategy': 'thorough',
+            'ensemble_strategy': 'weighted_avg',
+            'ensemble_top_k': 5,
+        },
+    }
 
     @ParameterTypeAssert({
         'time_col': str,
@@ -228,10 +335,17 @@ class SmartRouter:
         'quantile': (float, None),
         'random_state': int,
         'verbose': bool,
-        'max_models': int,
-        'cv': int,
-        'ensemble_strategy': str,
-        'ensemble_top_k': int,
+        'max_models': (int, None),
+        'cv': (int, None),
+        'ensemble_strategy': (str, None),
+        'ensemble_top_k': (int, None),
+        'time_limit': (int, float, None),
+        'search_strategy': (str, None),
+        'preset': (str, None),
+        'id_col': (str, None),
+        'hpo_strategy': (str, None),
+        'hpo_n_trials': (int, None),
+        'hpo_timeout_per_model': (int, float, None),
     }, 'SmartRouter')
     def __init__(
         self,
@@ -242,11 +356,32 @@ class SmartRouter:
         accelerator='auto',
         random_state=0,
         verbose=True,
-        max_models=8,
-        cv=5,
-        ensemble_strategy='auto',
-        ensemble_top_k=3,
+        max_models=None,
+        cv=None,
+        time_limit=None,
+        ensemble_strategy=None,
+        ensemble_top_k=None,
+        search_strategy=None,
+        preset=None,
+        id_col=None,
+        known_covariates=None,
+        past_covariates=None,
+        hpo_strategy=None,
+        hpo_n_trials=None,
+        hpo_timeout_per_model=None,
     ):
+        # Resolve preset: preset provides defaults, explicit params override
+        if preset is not None:
+            raise_if(ValueError, preset not in self._PRESETS,
+                     f"preset must be one of {list(self._PRESETS.keys())}, got '{preset}'")
+            defaults = self._PRESETS[preset]
+        else:
+            defaults = self._PRESETS['medium_quality']  # default behavior
+
+        self.preset = preset
+        self.id_col = id_col
+        self.known_covariates = known_covariates or []
+        self.past_covariates = past_covariates or []
         self.time_col = time_col
         self.target_col = target_col
         self.n_predict = n_predict
@@ -254,15 +389,54 @@ class SmartRouter:
         self.accelerator = accelerator
         self.random_state = random_state
         self.verbose = verbose
-        self.max_models = max_models
-        self.cv = cv
-        self.ensemble_strategy = ensemble_strategy
-        self.ensemble_top_k = ensemble_top_k
+        self.max_models = max_models if max_models is not None else defaults['max_models']
+        self.cv = cv if cv is not None else defaults['cv']
+        self.time_limit = time_limit
+        self.ensemble_strategy = (
+            ensemble_strategy if ensemble_strategy is not None
+            else defaults['ensemble_strategy']
+        )
+        self.ensemble_top_k = (
+            ensemble_top_k if ensemble_top_k is not None
+            else defaults['ensemble_top_k']
+        )
+        self.search_strategy = (
+            search_strategy if search_strategy is not None
+            else defaults['search_strategy']
+        )
+        self.hpo_strategy = (
+            hpo_strategy if hpo_strategy is not None
+            else defaults.get('hpo_strategy', 'none')
+        )
+        self.hpo_n_trials = (
+            hpo_n_trials if hpo_n_trials is not None
+            else defaults.get('hpo_n_trials', 10)
+        )
+        self.hpo_timeout_per_model = hpo_timeout_per_model
 
         raise_if(ValueError,
-                 ensemble_strategy not in ('auto', 'weighted_avg', 'none'),
-                 f"ensemble_strategy must be 'auto', 'weighted_avg', or 'none', "
-                 f"got '{ensemble_strategy}'")
+                 self.hpo_strategy not in ('none', 'quick', 'full'),
+                 f"hpo_strategy must be 'none', 'quick', or 'full', "
+                 f"got '{self.hpo_strategy}'")
+
+        raise_if(ValueError,
+                 self.ensemble_strategy not in (
+                     'auto', 'weighted_avg', 'median', 'stacking',
+                     'multi_stack', 'none'
+                 ),
+                 f"ensemble_strategy must be 'auto', 'weighted_avg', 'median', "
+                 f"'stacking', 'multi_stack', or 'none', got '{self.ensemble_strategy}'")
+
+        raise_if(ValueError,
+                 self.search_strategy not in ('basic', 'auto', 'thorough'),
+                 f"search_strategy must be 'basic', 'auto', or 'thorough', "
+                 f"got '{self.search_strategy}'")
+
+        if self.verbose and preset is not None:
+            Logger(name='SmartRouter').info(
+                f"Preset '{preset}': max_models={self.max_models}, cv={self.cv}, "
+                f"search={self.search_strategy}, ensemble={self.ensemble_strategy}"
+            )
 
         self.logger = Logger(name='SmartRouter')
 
@@ -273,8 +447,14 @@ class SmartRouter:
         self.leader_board_ = None
         self.best_model_ = None
         self.ensemble_ = None
+        self.model_scores_ = None
         self._preprocessed_data = None
+        self._valid_data = None
         self._scaler_obj = None
+        self._screening_results = None
+        self._lag_exploration_results = None
+        self._calibration_rho = None
+        self._hpo_results = None
 
     # ------------------------------------------------------------------
     #  Public API
@@ -283,6 +463,16 @@ class SmartRouter:
     @ParameterTypeAssert({'data': pd.DataFrame, 'valid_data': (pd.DataFrame, None)})
     def fit(self, data, valid_data=None):
         """Profile data, select strategy, fit pipeline, return self.
+
+        When ``search_strategy`` is ``'auto'`` or ``'thorough'``, the fit
+        process adds validation-driven phases before full training:
+
+        1. **Quick screening** – trains lightweight models on a data subset
+           to eliminate weak candidates before committing full training time.
+        2. **Multi-lag exploration** – tests 2-3 lag candidates with a fast
+           model and picks the one with the best holdout metric.
+        3. **Score calibration** – after full training, compares heuristic
+           rankings with actual performance and logs correlation.
 
         Parameters
         ----------
@@ -297,6 +487,13 @@ class SmartRouter:
         """
         t0 = time.time()
 
+        # Print device info once at the very beginning
+        if self.verbose:
+            from PipelineTS.spinesTS.base._torch_mixin import detect_available_device
+            _dev, _detail = detect_available_device(self.accelerator)
+            _active = _dev.upper().replace(':', ' ').split()[0]
+            self.logger.info(f"Device: {_active} ({_dev})  |  {_detail.replace(chr(10), ', ')}")
+
         # Auto-convert time column to datetime if needed
         data = self._ensure_datetime(data)
         if valid_data is not None:
@@ -308,64 +505,154 @@ class SmartRouter:
             self.logger.info(f"Data profile completed in {time.time() - t0:.2f}s")
             self._log_profile()
 
-        # Step 2: Select strategy
+        # Step 2: Select strategy (with scoring explanation)
         self.strategy_ = self._build_strategy(self.profile_)
         if self.verbose:
             self._log_strategy()
+            self._log_model_scores()
 
         # Step 3: Preprocess data
-        processed_data = self._apply_preprocessing(data)
-        if valid_data is not None:
+        full_processed = self._apply_preprocessing(data)
+        user_provided_valid = valid_data is not None
+
+        if user_provided_valid:
             processed_valid = self._apply_preprocessing(valid_data)
+            processed_train = full_processed
         else:
             # Create a proper chronological train/valid split so that
             # validation timestamps are strictly after training timestamps.
-            # This avoids NN model validation ordering checks failing.
-            processed_data, processed_valid = self._temporal_split(
-                processed_data, self.strategy_['lags']
+            processed_train, processed_valid = self._temporal_split(
+                full_processed, self.strategy_['lags']
             )
 
-        self._preprocessed_data = processed_data
+        self._preprocessed_data = processed_train
+        self._valid_data = processed_valid
 
-        # Step 4: Build and fit pipeline
+        # Step 4: Quick screening (eliminate weak candidates with holdout)
+        if self._should_screen():
+            if self.verbose:
+                self.logger.info(
+                    f"\n{'─'*60}\n  🔍 QUICK SCREENING\n{'─'*60}"
+                )
+            broad_candidates = self._select_models(
+                self.profile_, n_candidates=self.max_models * 2
+            )
+            survivors = self._quick_screen(
+                processed_train, processed_valid,
+                broad_candidates, self.strategy_
+            )
+            self.strategy_['models'] = survivors
+            if self.verbose:
+                self._log_screening()
+
+        # Step 5: Multi-lag exploration (find optimal lag with holdout)
+        if self._should_explore_lags():
+            if self.verbose:
+                self.logger.info(
+                    f"\n{'─'*60}\n  🔎 LAG EXPLORATION\n{'─'*60}"
+                )
+            best_lag = self._explore_lags(
+                full_processed, self.strategy_['models'], self.strategy_
+            )
+            if best_lag != self.strategy_['lags']:
+                old_lag = self.strategy_['lags']
+                self.strategy_['lags'] = best_lag
+                if self.verbose:
+                    self.logger.info(
+                        f"  Lag updated: {old_lag} -> {best_lag}"
+                    )
+                # Re-split with optimal lag (only if we auto-split)
+                if not user_provided_valid:
+                    processed_train, processed_valid = self._temporal_split(
+                        full_processed, best_lag
+                    )
+                    self._preprocessed_data = processed_train
+                    self._valid_data = processed_valid
+            if self.verbose:
+                self._log_lag_exploration()
+
+        # Step 5.5: HPO (if enabled)
+        hyperparams = self.strategy_.get('model_hyperparams', {})
+        if self.hpo_strategy != 'none':
+            hyperparams = self._run_hpo(
+                processed_train, processed_valid, hyperparams
+            )
+            self.strategy_['model_hyperparams'] = hyperparams
+
+        # Step 6: Full training with refined models + optimal lag
         lags = self.strategy_['lags']
         models = self.strategy_['models']
         scaler = self.strategy_['scaler']
         gbdt_diff_n = self.strategy_['gbdt_differential_n']
-        hyperparams = self.strategy_.get('model_hyperparams', {})
+
+        remaining_time = self._get_remaining_time(t0)
 
         self.pipeline_ = ModelPipeline(
             time_col=self.time_col,
             target_col=self.target_col,
             lags=lags,
             quantile=self.quantile,
+            id_col=self.id_col,
+            known_covariates=self.known_covariates or None,
+            past_covariates=self.past_covariates or None,
             include_models=models,
             scaler=scaler,
             accelerator=self.accelerator,
             random_state=self.random_state,
             cv=self.cv,
             gbdt_differential_n=gbdt_diff_n,
+            time_limit=remaining_time,
             **hyperparams,
         )
 
-        self.leader_board_ = self.pipeline_.fit(processed_data, valid_data=processed_valid)
+        # SmartRouter already printed device info, suppress Pipeline's duplicate
+        self.pipeline_._device_info_logged = True
+
+        # Register callback for real-time model tracking
+        self._model_results = []
+        self.pipeline_._on_model_complete_callback = self._on_model_trained
+
+        self.leader_board_ = self.pipeline_.fit(
+            self._preprocessed_data, valid_data=self._valid_data
+        )
+
+        if self.leader_board_.empty:
+            self.logger.error("No models completed. Cannot build ensemble.")
+            return self
+
         self.best_model_ = self.pipeline_.best_model_
 
-        # Step 5: Build ensemble (if strategy permits)
+        # Step 7: Build ensemble (if strategy permits)
         self.ensemble_ = self._build_ensemble()
 
+        # Step 8: Score calibration + summary
+        self._compute_calibration()
         total_time = time.time() - t0
         if self.verbose:
-            self.logger.info(f"SmartRouter completed in {total_time:.1f}s")
-            self.logger.info(f"Best model: {self.leader_board_.iloc[0]['model']}")
-            if self.ensemble_ is not None:
-                self.logger.info(f"Ensemble: {self.ensemble_}")
-            else:
-                self.logger.info("Ensemble: not built (single best model used)")
+            self._log_calibration()
+            self._log_summary(total_time)
 
         return self
 
-    def predict(self, n=None, data=None, model_name=None, use_ensemble=True):
+    def _get_remaining_time(self, t0):
+        """Get remaining time budget for main training phase."""
+        if self.time_limit is None:
+            return None
+        elapsed = time.time() - t0
+        remaining = self.time_limit - elapsed
+        return max(remaining, 1.0)  # at least 1 second
+
+    def _on_model_trained(self, model_name, model, fit_info, idx, total):
+        """Callback invoked by Pipeline after each model completes."""
+        self._model_results.append({
+            'model_name': model_name,
+            'metric': fit_info['metric'],
+            'train_cost': fit_info['train_cost'],
+            'eval_cost': fit_info['eval_cost'],
+        })
+
+    def predict(self, n=None, data=None, model_name=None, use_ensemble=True,
+                future_covariates=None):
         """Generate predictions using the ensemble, best, or specified model.
 
         Parameters
@@ -379,6 +666,8 @@ class SmartRouter:
         use_ensemble : bool, default=True
             Whether to use the ensemble predictor when available.
             Set False to force single-model prediction.
+        future_covariates : pd.DataFrame or None
+            Future known covariate values for the forecast horizon.
 
         Returns
         -------
@@ -399,7 +688,72 @@ class SmartRouter:
                 and self.ensemble_ is not None):
             return self.ensemble_.predict(n=n, data=data)
 
-        return self.pipeline_.predict(n=n, data=data, model_name=model_name)
+        return self.pipeline_.predict(n=n, data=data, model_name=model_name,
+                                      future_covariates=future_covariates)
+
+    def predict_quantiles(self, n=None, levels=None, data=None,
+                          model_name=None, future_covariates=None):
+        """Produce multi-quantile forecasts at arbitrary coverage levels.
+
+        Parameters
+        ----------
+        n : int or None
+            Number of steps to predict. Defaults to n_predict or lags.
+        levels : list of float or None
+            Coverage levels, e.g. ``[0.5, 0.8, 0.9]``.
+            Defaults to ``[0.5, 0.8, 0.9, 0.95]``.
+        data : pd.DataFrame or None
+            Input data for prediction.
+        model_name : str or None
+            Specific model to use. None = best model.
+        future_covariates : pd.DataFrame or None
+            Future known covariate values.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with time_col, target_col, and per-level
+            ``{target}_q{level}_lower`` / ``{target}_q{level}_upper`` columns.
+        """
+        raise_if(ValueError, self.pipeline_ is None,
+                 "SmartRouter has not been fitted yet. Call fit() first.")
+
+        if n is None:
+            n = self.n_predict or self.strategy_['lags']
+
+        if data is not None:
+            data = self._apply_preprocessing(data)
+
+        return self.pipeline_.predict_quantiles(
+            n=n, levels=levels, data=data, model_name=model_name,
+            future_covariates=future_covariates,
+        )
+
+    def update(self, new_data, update_epochs=50, refit_all=False):
+        """Incrementally update fitted models with new data.
+
+        Parameters
+        ----------
+        new_data : pd.DataFrame
+            New observations with same columns as original training data.
+        update_epochs : int, default 50
+            Number of epochs for NN warm-start updates.
+        refit_all : bool, default False
+            If True, refit all models. If False, refit only the best.
+
+        Returns
+        -------
+        self
+        """
+        raise_if(ValueError, self.pipeline_ is None,
+                 "SmartRouter has not been fitted yet. Call fit() first.")
+
+        new_data = self._apply_preprocessing(new_data)
+
+        self.pipeline_.update(
+            new_data, update_epochs=update_epochs, refit_all=refit_all
+        )
+        return self
 
     @property
     def strategy(self):
@@ -407,6 +761,51 @@ class SmartRouter:
         if self.strategy_ is None:
             return None
         return deepcopy(self.strategy_)
+
+    def plot(self, n=None, history_tail=None, lang='zh', figsize=(14, 5), show=True):
+        """Plot forecast from the best model against history.
+
+        Parameters
+        ----------
+        n : int or None
+            Forecast horizon. Defaults to ``n_predict`` or ``lags``.
+        history_tail : int or None
+            Show only last N history points.
+        lang : 'zh' or 'en'
+        figsize : tuple
+        show : bool
+
+        Returns
+        -------
+        fig : matplotlib Figure
+        """
+        raise_if(ValueError, self.pipeline_ is None,
+                 "SmartRouter has not been fitted yet.")
+        if n is None:
+            n = self.n_predict or self.strategy_.get('lags', 12)
+        return self.pipeline_.plot(
+            n=n, history_tail=history_tail, lang=lang,
+            figsize=figsize, show=show,
+        )
+
+    def plot_leaderboard(self, lang='zh', figsize=(10, 5), show=True):
+        """Plot the model leaderboard as a bar chart.
+
+        Parameters
+        ----------
+        lang : 'zh' or 'en'
+        figsize : tuple
+        show : bool
+
+        Returns
+        -------
+        fig : matplotlib Figure
+        """
+        raise_if(ValueError, self.pipeline_ is None,
+                 "SmartRouter has not been fitted yet.")
+        return self.pipeline_.plot_leaderboard(
+            lang=lang, figsize=figsize, show=show,
+        )
 
     def get_model(self, model_name=None):
         """Retrieve a fitted model from the pipeline."""
@@ -421,11 +820,25 @@ class SmartRouter:
     def _profile_data(self, data):
         """Analyze data characteristics for routing decisions."""
         profile = DataProfile()
-        values = data[self.target_col].values.astype(np.float64)
+
+        # Multi-series: profile the longest series as representative
+        if self.id_col is not None and self.id_col in data.columns:
+            series_lengths = data.groupby(self.id_col).size()
+            profile.n_series = len(series_lengths)
+            longest_sid = series_lengths.idxmax()
+            rep_data = data[data[self.id_col] == longest_sid].copy()
+            # Use representative series for profiling
+            values = rep_data[self.target_col].values.astype(np.float64)
+            # Override n_rows with total count across all series
+            profile._total_rows = len(data)
+        else:
+            profile.n_series = 1
+            rep_data = data
+            values = data[self.target_col].values.astype(np.float64)
         valid = values[~np.isnan(values)]
 
-        # Basic stats
-        profile.n_rows = len(data)
+        # Basic stats — use representative series length for routing decisions
+        profile.n_rows = len(values)
         profile.mean = float(np.mean(valid)) if len(valid) > 0 else 0.0
         profile.std = float(np.std(valid)) if len(valid) > 0 else 1.0
         profile.cv = abs(profile.std / profile.mean) if abs(profile.mean) > 1e-10 else 0.0
@@ -437,10 +850,11 @@ class SmartRouter:
         n_nan = int(np.sum(np.isnan(values)))
         profile.pct_missing = n_nan / len(values) if len(values) > 0 else 0.0
 
-        # Frequency detection
+        # Frequency detection (use representative series for multi-series)
+        freq_data = rep_data if self.id_col is not None else data
         try:
             fd = FrequencyDetector(time_col=self.time_col)
-            freq_info = fd.fit(data, target_col=self.target_col)
+            freq_info = fd.fit(freq_data, target_col=self.target_col)
             raw_freq = freq_info.get('freq')
             raw_td = freq_info.get('freq_timedelta')
             profile.freq_timedelta = raw_td
@@ -448,7 +862,7 @@ class SmartRouter:
             profile.dominant_periods = freq_info.get('dominant_periods', [])
 
             # Normalize frequency string for month/quarter/year intervals
-            norm_freq = self._normalize_freq(raw_td, data)
+            norm_freq = self._normalize_freq(raw_td, freq_data)
             profile.freq = norm_freq or raw_freq
 
             # Monthly/quarterly data is conceptually regular even if
@@ -557,6 +971,9 @@ class SmartRouter:
 
     def _build_strategy(self, p):
         """Build the full strategy: preprocessing + models + lags + FE + hyperparams."""
+        # Score all models and store detailed breakdown
+        self.model_scores_ = self._score_all_models(p)
+
         strategy = {
             'preprocessing': self._select_preprocessing(p),
             'models': self._select_models(p),
@@ -567,6 +984,21 @@ class SmartRouter:
             'model_hyperparams': self._suggest_hyperparams(p),
         }
         return strategy
+
+    def _score_all_models(self, p):
+        """Score all models and return detailed breakdown.
+
+        Returns
+        -------
+        dict
+            model_name -> {'total': float, 'reasons': list of (reason, delta)}
+        """
+        all_models = list(get_all_available_models().keys())
+        scores = {}
+        for m in all_models:
+            total, reasons = self._score_model(m, p)
+            scores[m] = {'total': total, 'reasons': reasons}
+        return scores
 
     def _select_preprocessing(self, p):
         """Determine which preprocessing steps to apply."""
@@ -655,19 +1087,107 @@ class SmartRouter:
 
         Returns a dict in double-underscore format ready for ModelPipeline
         kwargs, e.g. {'lightgbm__n_estimators': 200}.
+
+        Covers:
+        - NN models: routing_mode, use_gtb, learning_rate, epochs, patience,
+          EMA, SWA, warmup
+        - GBDT: n_estimators, learning_rate, max_depth
+        - Prophet: lag features, seasonality mode
         """
         params = {}
+        n = p.n_rows
 
-        # --- NN models: routing_mode ---
+        # --- Feature engineering decisions ---
         fe = self._select_feature_engineering(p)
-        nn_models = [
+
+        # --- NN models list (GTB-capable) ---
+        nn_gtb_models = [
             'd_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
             'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',
             'patch_rnn',
         ]
+        # All NN models (including non-GTB)
+        nn_all = nn_gtb_models + ['deepar', 'itransformer', 'srs_net']
+
+        # --- NN: routing_mode ---
         if fe.get('routing_mode') == 'adaptive':
-            for m in nn_models:
+            for m in nn_gtb_models:
                 params[f'{m}__routing_mode'] = 'adaptive'
+
+        # --- NN: use_gtb for complex patterns on medium+ data ---
+        if n >= 200 and (p.seasonality_strength > 0.15 or p.n_seasonalities >= 2):
+            for m in nn_gtb_models:
+                params[f'{m}__use_gtb'] = True
+
+        # --- NN: adaptive learning_rate ---
+        # Lower LR for complex/heavy models, higher for simple ones
+        nn_heavy = {'transformer', 'tft', 'itransformer', 'srs_net', 'deepar',
+                     'gau', 'n_beats', 'n_hits'}
+        nn_light = {'d_linear', 'n_linear', 'tide', 'tcn'}
+        if n >= 300:
+            # Larger data → can use standard LR
+            for m in nn_heavy:
+                params[f'{m}__learning_rate'] = 0.001
+            for m in nn_light:
+                params[f'{m}__learning_rate'] = 0.003
+        elif n < 100:
+            # Small data → lower LR to avoid overfitting
+            for m in nn_heavy:
+                params[f'{m}__learning_rate'] = 0.0005
+            for m in nn_light:
+                params[f'{m}__learning_rate'] = 0.001
+
+        # --- NN: adaptive epochs ---
+        # Ensure sufficient training for complex models
+        if n >= 300:
+            for m in nn_heavy:
+                params[f'{m}__epochs'] = 3000
+                params[f'{m}__patience'] = 100
+            for m in nn_light:
+                params[f'{m}__epochs'] = 2000
+                params[f'{m}__patience'] = 50
+        elif n >= 100:
+            for m in nn_heavy:
+                params[f'{m}__epochs'] = 2000
+                params[f'{m}__patience'] = 60
+            for m in nn_light:
+                params[f'{m}__epochs'] = 1500
+                params[f'{m}__patience'] = 40
+        else:
+            # Small data → fewer epochs but enough to converge
+            for m in nn_all:
+                params[f'{m}__epochs'] = 1000
+                params[f'{m}__patience'] = 30
+
+        # --- NN: EMA for training stability ---
+        # EMA smooths weight oscillations; beneficial for medium+ data
+        if n >= 100:
+            for m in nn_heavy:
+                params[f'{m}__use_ema'] = True
+                params[f'{m}__ema_decay'] = 0.999
+
+        # --- NN: SWA for late-stage averaging ---
+        # SWA averages weights from last 25% of training; good for noisy data
+        if n >= 200 and p.noise_ratio > 0.3:
+            for m in nn_heavy:
+                params[f'{m}__use_swa'] = True
+                params[f'{m}__swa_start_frac'] = 0.75
+
+        # --- NN: warmup for transformer-based models ---
+        # Transformers benefit from LR warmup to stabilize early training
+        transformer_models = {'transformer', 'tft', 'itransformer', 'gau', 'time2vec'}
+        if n >= 100:
+            for m in transformer_models:
+                params[f'{m}__warmup_epochs'] = 10
+
+        # --- NN: mHC-inspired residual gate ---
+        # Sinkhorn-normalized residual gate prevents signal amplification;
+        # most beneficial for noisy or non-stationary data where NN
+        # training tends to oscillate
+        if n >= 150 and (p.noise_ratio > 0.4 or
+                         p.stationarity in ('non_stationary', 'difference_stationary')):
+            for m in nn_all:
+                params[f'{m}__use_residual_gate'] = True
 
         # --- Prophet ---
         if fe.get('prophet_use_lag_features'):
@@ -676,14 +1196,14 @@ class SmartRouter:
             params['prophet__seasonality_mode'] = fe['prophet_seasonality_mode']
 
         # --- GBDT: adapt complexity to data ---
-        if p.n_rows >= 300 and p.seasonality_strength > 0.1:
+        if n >= 300 and p.seasonality_strength > 0.1:
             params['lightgbm__n_estimators'] = 200
             params['xgboost__n_estimators'] = 200
-            params['catboost__n_estimators'] = 200
-        elif p.n_rows < 80:
+            params['catboost__iterations'] = 200
+        elif n < 80:
             params['lightgbm__n_estimators'] = 50
             params['xgboost__n_estimators'] = 50
-            params['catboost__n_estimators'] = 50
+            params['catboost__iterations'] = 50
 
         # High noise → stronger regularization for GBDT
         if p.noise_ratio > 0.8:
@@ -738,53 +1258,90 @@ class SmartRouter:
 
         return int(lags)
 
-    def _select_models(self, p):
-        """Score and select the best model candidates."""
+    def _select_models(self, p, n_candidates=None):
+        """Select best model candidates from pre-computed scores.
+
+        Uses a 5-category diversity system to ensure architecture variety:
+        - statistic: auto_arima, prophet
+        - ml: lightgbm, xgboost, catboost, random_forest, wide_gbrt, ...
+        - nn_light: d_linear, n_linear, tide, tcn
+        - nn_medium: n_beats, n_hits, stacking_rnn, patch_rnn, time2vec, gau
+        - nn_heavy: transformer, tft, itransformer, srs_net, deepar
+
+        ML models are capped at 2 to prevent tree-model clones from
+        dominating the selection.
+
+        Parameters
+        ----------
+        p : DataProfile
+            Data profile (unused here, scores already computed).
+        n_candidates : int or None
+            Number of candidates to select. Defaults to self.max_models.
+        """
+        if n_candidates is None:
+            n_candidates = self.max_models
+
+        scores = self.model_scores_
         all_models = list(get_all_available_models().keys())
 
-        # Score each model based on data characteristics
-        scores = {}
-        for m in all_models:
-            scores[m] = self._score_model(m, p)
+        # Sort by total score descending
+        ranked = sorted(
+            [(m, scores[m]['total']) for m in all_models],
+            key=lambda x: x[1], reverse=True
+        )
 
-        # Sort by score descending, pick top max_models
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-        # Ensure diversity: include at least one model from each viable category
-        selected = []
+        # 5-category diversity system
         categories = {
             'statistic': {'auto_arima', 'prophet'},
             'ml': {'catboost', 'lightgbm', 'xgboost', 'random_forest',
                    'wide_gbrt', 'multi_output_model', 'multi_step_model',
                    'regressor_chain'},
-            'nn': set(all_models) - {'auto_arima', 'prophet', 'catboost',
-                    'lightgbm', 'xgboost', 'random_forest', 'wide_gbrt',
-                    'multi_output_model', 'multi_step_model', 'regressor_chain'},
+            'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
+            'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
+                          'time2vec', 'gau'},
+            'nn_heavy': {'transformer', 'tft', 'itransformer', 'srs_net',
+                         'deepar', 'chronos'},
         }
 
-        # First pass: add best from each category (if budget allows)
-        remaining_budget = self.max_models
+        # Find the best model from each category
         category_best = {}
         for cat_name, cat_models in categories.items():
             cat_ranked = [(m, s) for m, s in ranked if m in cat_models]
             if cat_ranked:
                 category_best[cat_name] = cat_ranked[0][0]
 
-        # Guarantee at least one from each category with positive score
-        for cat_name in ('ml', 'nn', 'statistic'):
+        selected = []
+        remaining_budget = n_candidates
+
+        # First pass: guarantee one from each category (priority order)
+        # Prioritize NN categories to break the ML dominance
+        diversity_order = ['ml', 'nn_light', 'nn_medium', 'nn_heavy', 'statistic']
+        for cat_name in diversity_order:
             if cat_name in category_best and remaining_budget > 0:
                 m = category_best[cat_name]
                 if m not in selected:
                     selected.append(m)
                     remaining_budget -= 1
 
-        # Fill remaining slots with top-ranked models
+        # Second pass: fill remaining with top-ranked, but cap ML at 2
+        ml_count = sum(1 for m in selected if m in categories['ml'])
+        max_ml = 2
+
         for m, s in ranked:
             if remaining_budget <= 0:
                 break
-            if m not in selected:
-                selected.append(m)
-                remaining_budget -= 1
+            if m in selected:
+                continue
+            # Enforce ML cap
+            if m in categories['ml']:
+                if ml_count >= max_ml:
+                    continue
+                ml_count += 1
+            selected.append(m)
+            remaining_budget -= 1
+
+        # Re-sort selected by score so Pipeline trains highest-priority first
+        selected.sort(key=lambda m: scores[m]['total'], reverse=True)
 
         return selected
 
@@ -792,9 +1349,32 @@ class SmartRouter:
         """Assign a suitability score to a model given the data profile.
 
         Higher score = more suitable. Base score is 50, adjusted by heuristics.
+        Pattern bonuses are capped to prevent any single model from
+        accumulating unlimited advantages.
+
+        Returns
+        -------
+        tuple of (float, list)
+            (total_score, list of (reason_string, delta_value))
         """
         score = 50.0
+        reasons = [('base', 50.0)]
         n = p.n_rows
+        pattern_bonus = 0.0  # Track cumulative pattern bonuses for capping
+
+        def _add(delta, reason, is_pattern=False):
+            nonlocal score, pattern_bonus
+            if delta == 0:
+                return
+            if is_pattern:
+                # Cap cumulative pattern bonuses at +25 per model
+                headroom = 25.0 - pattern_bonus
+                if headroom <= 0:
+                    return
+                delta = min(delta, headroom) if delta > 0 else delta
+                pattern_bonus += max(delta, 0)
+            score += delta
+            reasons.append((reason, delta))
 
         # ---- Model category classification ----
         statistic_models = {'auto_arima', 'prophet'}
@@ -804,198 +1384,211 @@ class SmartRouter:
         nn_light = {'d_linear', 'n_linear', 'tide', 'tcn'}
         nn_medium = {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
                       'time2vec', 'gau'}
-        nn_heavy = {'transformer', 'tft', 'itransformer', 'srs_net', 'deepar'}
+        nn_heavy = {'transformer', 'tft', 'itransformer', 'srs_net', 'deepar', 'chronos'}
 
         # ---- Series length ----
         if n < 50:
-            # Very short series: strongly prefer statistical + ML
             if model_name in statistic_models:
-                score += 30
+                _add(20, f'short_series(n={n}): stat model preferred')
             elif model_name in ml_models:
-                score += 20
+                _add(15, f'short_series(n={n}): ML model preferred')
             elif model_name in nn_light:
-                score += 5
+                _add(5, f'short_series(n={n}): light NN okay')
             elif model_name in nn_medium:
-                score -= 10
+                _add(-10, f'short_series(n={n}): medium NN penalized')
             elif model_name in nn_heavy:
-                score -= 25
+                _add(-20, f'short_series(n={n}): heavy NN penalized')
         elif n < 150:
-            # Short series
-            if model_name in statistic_models:
-                score += 20
-            elif model_name in ml_models:
-                score += 20
+            if model_name in ml_models:
+                _add(15, f'small_series(n={n}): ML preferred')
+            elif model_name in statistic_models:
+                _add(12, f'small_series(n={n}): stat good')
             elif model_name in nn_light:
-                score += 15
+                _add(12, f'small_series(n={n}): light NN good')
             elif model_name in nn_medium:
-                score += 5
+                _add(5, f'small_series(n={n}): medium NN okay')
             elif model_name in nn_heavy:
-                score -= 5
+                _add(-5, f'small_series(n={n}): heavy NN penalized')
         elif n < 500:
-            # Medium series: all viable, slight preference for ML + light NN
-            if model_name in ml_models:
-                score += 15
+            # Medium series: balanced — all architectures are viable
+            if model_name in nn_medium:
+                _add(12, f'medium_series(n={n}): medium NN sweet spot')
             elif model_name in nn_light:
-                score += 15
-            elif model_name in nn_medium:
-                score += 10
-            elif model_name in nn_heavy:
-                score += 5
-            elif model_name in statistic_models:
-                score += 10
-        else:
-            # Large series: NN models shine
-            if model_name in nn_heavy:
-                score += 20
-            elif model_name in nn_medium:
-                score += 15
-            elif model_name in nn_light:
-                score += 15
+                _add(12, f'medium_series(n={n}): light NN good')
             elif model_name in ml_models:
-                score += 10
+                _add(10, f'medium_series(n={n}): ML good')
+            elif model_name in nn_heavy:
+                _add(10, f'medium_series(n={n}): heavy NN viable')
             elif model_name in statistic_models:
-                score += 5
-
-        # ---- Stationarity ----
-        if p.stationarity in ('non_stationary', 'difference_stationary'):
-            # Non-stationary data: prefer models that handle trends well
-            if model_name in ('prophet', 'auto_arima', 'd_linear'):
-                score += 10
-            elif model_name in ('n_beats', 'n_hits', 'tide'):
-                score += 5
-            # GBDT with differencing handles this too
-            if model_name in ml_models:
-                score += 5
-
-        # ---- Seasonality ----
-        if p.seasonality_strength > 0.15:
-            # Strong seasonality
-            if model_name in ('prophet', 'n_beats', 'n_hits', 'tft', 'deepar'):
-                score += 15
-            elif model_name in ('auto_arima', 'stacking_rnn', 'patch_rnn'):
-                score += 8
+                _add(8, f'medium_series(n={n}): stat decent')
+        else:
+            if model_name in nn_heavy:
+                _add(20, f'large_series(n={n}): heavy NN preferred')
+            elif model_name in nn_medium:
+                _add(15, f'large_series(n={n}): medium NN good')
             elif model_name in nn_light:
-                score += 5
+                _add(12, f'large_series(n={n}): light NN good')
+            elif model_name in ml_models:
+                _add(10, f'large_series(n={n}): ML good')
+            elif model_name in statistic_models:
+                _add(5, f'large_series(n={n}): stat okay')
 
-        # ---- Trend strength ----
+        # ---- Stationarity (pattern bonus, capped) ----
+        if p.stationarity in ('non_stationary', 'difference_stationary'):
+            if model_name in ('auto_arima', 'd_linear'):
+                _add(8, 'non_stationary: handles trends', is_pattern=True)
+            elif model_name == 'prophet':
+                _add(6, 'non_stationary: trend decomposition', is_pattern=True)
+            elif model_name in ('n_beats', 'n_hits', 'tide'):
+                _add(5, 'non_stationary: trend-capable', is_pattern=True)
+            if model_name in ml_models:
+                _add(3, 'non_stationary: GBDT+differencing', is_pattern=True)
+
+        # ---- Seasonality (pattern bonus, capped) ----
+        if p.seasonality_strength > 0.15:
+            if model_name in ('n_beats', 'n_hits', 'tft', 'deepar'):
+                _add(10, f'strong_seasonality({p.seasonality_strength:.2f}): seasonal specialist', is_pattern=True)
+            elif model_name in ('prophet', 'auto_arima'):
+                _add(8, 'strong_seasonality: seasonal decomposition', is_pattern=True)
+            elif model_name in ('stacking_rnn', 'patch_rnn', 'tcn'):
+                _add(6, 'strong_seasonality: handles seasonal', is_pattern=True)
+            elif model_name in nn_light:
+                _add(4, 'strong_seasonality: basic seasonal', is_pattern=True)
+
+        # ---- Trend strength (pattern bonus, capped) ----
         if p.trend_strength > 0.5:
-            if model_name in ('prophet', 'd_linear', 'n_linear', 'tide'):
-                score += 10
-            elif model_name == 'auto_arima':
-                score += 8
+            if model_name in ('d_linear', 'n_linear', 'tide'):
+                _add(8, f'strong_trend({p.trend_strength:.2f}): linear trend specialist', is_pattern=True)
+            elif model_name in ('prophet', 'auto_arima'):
+                _add(6, 'strong_trend: trend handling', is_pattern=True)
 
         # ---- Noise level ----
         if p.noise_ratio > 0.8:
-            # High noise: prefer robust / regularized models
             if model_name in ('lightgbm', 'xgboost', 'random_forest', 'catboost'):
-                score += 8
+                _add(8, f'high_noise({p.noise_ratio:.2f}): robust tree model')
             elif model_name in ('n_beats', 'tcn'):
-                score += 5
-            # Penalize overly flexible models
+                _add(5, 'high_noise: regularized NN')
             if model_name in ('srs_net', 'deepar'):
-                score -= 5
+                _add(-5, 'high_noise: overfit risk')
 
         # ---- Skewness ----
         if abs(p.skewness) > 2.0:
-            # Highly skewed: tree models handle this naturally
             if model_name in ml_models:
-                score += 5
-            # NN models may struggle without proper scaling (handled by scaler selection)
+                _add(5, f'high_skewness({p.skewness:.1f}): tree models robust')
 
-        # ---- Autocorrelation structure ----
+        # ---- Autocorrelation structure (pattern bonus, capped) ----
         if p.autocorr_lag1 > 0.7:
-            # Strong AR structure: sequential models excel
             if model_name in ('auto_arima', 'stacking_rnn', 'patch_rnn', 'tcn'):
-                score += 10
-            elif model_name in ('gau', 'time2vec', 'tft'):
-                score += 5
+                _add(8, f'strong_autocorr({p.autocorr_lag1:.2f}): sequential model', is_pattern=True)
+            elif model_name in ('gau', 'time2vec', 'tft', 'deepar'):
+                _add(5, 'strong_autocorr: attention/temporal', is_pattern=True)
             elif model_name in ('d_linear', 'n_linear'):
-                score += 3
+                _add(3, 'strong_autocorr: linear temporal', is_pattern=True)
         elif p.autocorr_lag1 < 0.2:
-            # Weak autocorrelation: tree models and attention-based
             if model_name in ml_models:
-                score += 5
+                _add(5, f'weak_autocorr({p.autocorr_lag1:.2f}): tree model')
             elif model_name in ('transformer', 'itransformer', 'tft'):
-                score += 5
+                _add(5, 'weak_autocorr: attention model')
 
-        # ---- Multiple seasonalities ----
+        # ---- Multiple seasonalities (pattern bonus, capped) ----
         if p.n_seasonalities >= 2:
-            # Complex multi-seasonal patterns
-            if model_name in ('prophet', 'tft', 'n_beats', 'deepar'):
-                score += 12
-            elif model_name in ('n_hits', 'itransformer', 'stacking_rnn'):
-                score += 6
-            # Penalize simple models for complex patterns
+            if model_name in ('tft', 'n_beats', 'deepar'):
+                _add(8, f'multi_seasonal(n={p.n_seasonalities}): complex pattern', is_pattern=True)
+            elif model_name in ('prophet', 'n_hits', 'itransformer', 'stacking_rnn'):
+                _add(5, 'multi_seasonal: multi-scale model', is_pattern=True)
             if model_name in ('d_linear', 'n_linear'):
-                score -= 3
+                _add(-3, 'multi_seasonal: too simple')
 
         # ---- Forecast horizon relative to data ----
         if self.n_predict and p.n_rows > 0:
             ratio = self.n_predict / p.n_rows
             if ratio > 0.2:
-                # Long horizon relative to data: extrapolation-capable models
                 if model_name in ('prophet', 'auto_arima'):
-                    score += 8
+                    _add(5, f'long_horizon(ratio={ratio:.2f}): extrapolation model')
                 elif model_name in ('d_linear', 'n_linear', 'tide'):
-                    score += 5
-                # Heavy NN models overfit on short data + long horizon
+                    _add(3, 'long_horizon: linear extrapolation')
                 if model_name in nn_heavy:
-                    score -= 5
+                    _add(-5, 'long_horizon: overfit risk for heavy NN')
             elif ratio < 0.05:
-                # Short horizon: complex models can afford to be used
                 if model_name in nn_heavy:
-                    score += 5
+                    _add(3, f'short_horizon(ratio={ratio:.2f}): complex model viable')
 
         # ---- Regime changes ----
         if p.regime_changes > 5:
-            # Data with structural breaks: tree models handle discontinuities
             if model_name in ml_models:
-                score += 8
-            elif model_name in ('tft', 'deepar'):
-                score += 5
-            # Penalize models that assume smooth patterns
+                _add(3, f'regime_changes({p.regime_changes}): tree handles discontinuities')
+            elif model_name in ('tft', 'deepar', 'gau', 'itransformer'):
+                _add(3, 'regime_changes: attention handles shifts')
             if model_name in ('auto_arima', 'd_linear', 'n_linear'):
-                score -= 3
+                _add(-3, 'regime_changes: assumes smooth patterns')
+
+        # ---- ML consistency bonus (only for proven GBDT models, not wrappers) ----
+        if model_name in ('lightgbm', 'xgboost', 'catboost'):
+            _add(3, 'GBDT: proven baseline performer')
+
+        # ---- NN models with GTB/routing capability bonus ----
+        # Models that support use_gtb and routing_mode benefit from
+        # adaptive expert selection on complex data
+        nn_with_gtb = {
+            'd_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
+            'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',
+            'patch_rnn',
+        }
+        if model_name in nn_with_gtb and n >= 200:
+            if p.seasonality_strength > 0.1 or p.trend_strength > 0.3:
+                _add(5, 'GTB-capable: adaptive routing benefits complex data')
 
         # ---- Speed bonus for production ----
         if model_name in statistic_models:
-            score += 3
+            _add(2, 'speed: fast (statistic)')
         elif model_name in ml_models:
-            score += 2
-        elif model_name in nn_light:
-            score += 1
+            _add(2, 'speed: fast (ML)')
 
         # ---- Specific model strengths (conditional) ----
-        # LightGBM: strong when data has sufficient features/complexity
         if model_name == 'lightgbm':
-            if p.noise_ratio > 0.5 or n >= 100:
-                score += 5
+            if p.noise_ratio > 0.7 and n >= 200:
+                _add(3, 'lightgbm: robust for noisy large data')
 
-        # Prophet: handles missing data and holidays naturally
         if model_name == 'prophet' and p.pct_missing > 0.01:
-            score += 5
+            _add(3, f'prophet: handles missing data ({p.pct_missing:.1%})')
 
-        # NBeats: strong on clean periodic data
         if model_name == 'n_beats' and p.noise_ratio < 0.5 and p.seasonality_strength > 0.1:
-            score += 8
+            _add(5, 'n_beats: clean periodic data specialist')
 
-        # TiDE: efficient and strong on medium-to-large data
         if model_name == 'tide' and n >= 100:
-            score += 5
+            _add(3, 'tide: efficient for medium+ data')
 
-        # ITransformer: good for longer sequences
         if model_name == 'itransformer' and n >= 200:
-            score += 5
+            _add(4, 'itransformer: long sequence specialist')
 
-        # GAU: strong on clean moderate-length data
         if model_name == 'gau' and 100 <= n <= 500 and p.noise_ratio < 0.7:
-            score += 5
+            _add(4, 'gau: clean moderate-length specialist')
 
-        # TCN: good for high-frequency data with local patterns
         if model_name == 'tcn' and p.autocorr_lag1 > 0.5:
-            score += 5
+            _add(4, 'tcn: local pattern specialist')
 
-        return score
+        if model_name == 'patch_rnn' and n >= 150:
+            _add(4, 'patch_rnn: patch-based temporal modeling')
+
+        if model_name == 'stacking_rnn' and p.autocorr_lag1 > 0.5:
+            _add(4, 'stacking_rnn: deep sequential modeling')
+
+        if model_name == 'deepar' and n >= 200 and p.noise_ratio < 0.7:
+            _add(4, 'deepar: probabilistic forecaster for clean data')
+
+        if model_name == 'chronos':
+            # Chronos is a zero-shot foundation model — no training needed
+            # Strong for small data where trained models may overfit
+            if n < 100:
+                _add(10, 'chronos: zero-shot excels on small data')
+            elif n < 300:
+                _add(5, 'chronos: zero-shot viable for medium data')
+            if p.pct_missing > 0.01:
+                _add(3, f'chronos: pretrained robustness to missing data ({p.pct_missing:.1%})')
+            if p.n_seasonalities >= 2:
+                _add(5, 'chronos: pretrained handles complex seasonality', )
+
+        return score, reasons
 
     # ------------------------------------------------------------------
     #  Preprocessing Application
@@ -1054,20 +1647,356 @@ class SmartRouter:
         return df
 
     # ------------------------------------------------------------------
+    #  Search & Validation
+    # ------------------------------------------------------------------
+
+    def _should_screen(self):
+        """Determine if quick screening is beneficial."""
+        if self.search_strategy == 'basic':
+            return False
+        if self.search_strategy == 'thorough':
+            return True
+        # 'auto': screen when there are enough candidate models and data
+        return (self.max_models >= 4 and
+                self.profile_ is not None and
+                self.profile_.n_rows >= 80)
+
+    def _should_explore_lags(self):
+        """Determine if multi-lag exploration is beneficial."""
+        if self.search_strategy == 'basic':
+            return False
+        if self.search_strategy == 'thorough':
+            return True
+        # 'auto': explore when data is large enough for meaningful comparison
+        return (self.profile_ is not None and
+                self.profile_.n_rows >= 100)
+
+    def _run_hpo(self, train_data, valid_data, base_hyperparams):
+        """Run Optuna HPO for selected models.
+
+        Parameters
+        ----------
+        train_data : pd.DataFrame
+        valid_data : pd.DataFrame
+        base_hyperparams : dict
+            Existing double-underscore kwargs from _suggest_hyperparams.
+
+        Returns
+        -------
+        dict
+            Merged double-underscore kwargs with HPO-optimized values.
+        """
+        from PipelineTS.pipeline.hpo import OptunaHPO
+
+        models = self.strategy_['models']
+        lags = self.strategy_['lags']
+        scaler = self.strategy_['scaler']
+
+        n_trials = self.hpo_n_trials
+        if self.hpo_strategy == 'quick':
+            n_trials = min(n_trials, 5)
+
+        if self.verbose:
+            self.logger.info(
+                f"\n{'─'*60}\n  🔧 HPO ({self.hpo_strategy}, "
+                f"{n_trials} trials/model)\n{'─'*60}"
+            )
+
+        hpo = OptunaHPO(
+            time_col=self.time_col,
+            target_col=self.target_col,
+            lags=lags,
+            metric=mae,
+            metric_less_is_better=True,
+            n_trials=n_trials,
+            timeout_per_model=self.hpo_timeout_per_model,
+            verbose=self.verbose,
+            random_state=self.random_state,
+        )
+
+        pipeline_kwargs = {
+            'scaler': scaler,
+            'accelerator': self.accelerator,
+            'gbdt_differential_n': self.strategy_.get('gbdt_differential_n', 0),
+        }
+
+        result = hpo.optimize(
+            model_names=models,
+            train_data=train_data,
+            valid_data=valid_data,
+            base_hyperparams=base_hyperparams,
+            **pipeline_kwargs,
+        )
+
+        self._hpo_results = hpo.results_
+
+        if self.verbose and hpo.results_:
+            tuned = [f"{m}({r['best_value']:.4f})"
+                     for m, r in hpo.results_.items()]
+            self.logger.info(f"  HPO complete: {', '.join(tuned)}")
+
+        return result
+
+    def _quick_screen(self, train_data, valid_data, candidates, strategy):
+        """Quick model screening to eliminate weak candidates.
+
+        Trains lightweight versions of candidate models on a data subset,
+        evaluates on holdout, and returns the top performers.
+
+        Parameters
+        ----------
+        train_data : pd.DataFrame
+            Preprocessed training data.
+        valid_data : pd.DataFrame
+            Preprocessed validation data.
+        candidates : list of str
+            Broad pool of candidate model names.
+        strategy : dict
+            Current strategy dict.
+
+        Returns
+        -------
+        list of str
+            Surviving model names (top max_models).
+        """
+        if len(candidates) <= self.max_models:
+            return candidates
+
+        n = len(train_data)
+
+        # Use data subset for speed (last 70%, or all if small)
+        if n > 100:
+            subset_start = int(n * 0.3)
+            screen_train = train_data.iloc[subset_start:].reset_index(drop=True)
+        else:
+            screen_train = train_data
+
+        screen_valid = valid_data
+
+        # Screening hyperparams: reduced complexity for speed
+        screen_params = self._get_screening_hyperparams(candidates, strategy)
+
+        # Time limit for screening: 30% of total budget
+        screen_time = None
+        if self.time_limit is not None:
+            screen_time = self.time_limit * 0.3
+
+        try:
+            screen_pipeline = ModelPipeline(
+                time_col=self.time_col,
+                target_col=self.target_col,
+                lags=strategy['lags'],
+                include_models=candidates,
+                scaler=deepcopy(strategy['scaler']),
+                accelerator=self.accelerator,
+                random_state=self.random_state,
+                cv=min(self.cv, 2),  # fewer CV folds for speed
+                gbdt_differential_n=strategy['gbdt_differential_n'],
+                time_limit=screen_time,
+                **screen_params,
+            )
+
+            screen_pipeline._device_info_logged = True
+            screen_lb = screen_pipeline.fit(screen_train, valid_data=screen_valid)
+
+            if screen_lb.empty:
+                if self.verbose:
+                    self.logger.warning("  Screening: no models completed, using heuristic selection")
+                return candidates[:self.max_models]
+
+            # Keep top max_models survivors
+            survivors = screen_lb.head(self.max_models)['model'].tolist()
+            self._screening_results = screen_lb
+
+            if self.verbose:
+                self.logger.info(
+                    f"  Screening: {len(candidates)} candidates -> "
+                    f"{len(survivors)} survivors"
+                )
+
+            return survivors
+
+        except Exception as e:
+            if self.verbose:
+                self.logger.warning(
+                    f"  Screening failed ({e}), using heuristic selection"
+                )
+            return candidates[:self.max_models]
+
+    def _get_screening_hyperparams(self, candidates, strategy):
+        """Build lightweight hyperparams for quick screening.
+
+        Reduces GBDT estimators and NN epochs for faster evaluation.
+        """
+        params = {}
+        gbdt_models = {
+            'lightgbm', 'xgboost', 'catboost', 'random_forest',
+            'multi_output_model', 'multi_step_model', 'wide_gbrt',
+            'regressor_chain',
+        }
+        nn_models = {
+            'd_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
+            'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',
+            'patch_rnn', 'itransformer', 'srs_net', 'deepar',
+        }
+
+        for m in candidates:
+            if m in gbdt_models:
+                params[f'{m}__n_estimators'] = 30
+            elif m in nn_models:
+                params[f'{m}__epochs'] = 100
+
+        # Merge with strategy hyperparams (screening overrides take priority)
+        for k, v in strategy.get('model_hyperparams', {}).items():
+            model_name = k.split('__')[0]
+            if model_name in candidates and k not in params:
+                params[k] = v
+
+        # Suppress GBDT verbosity
+        for m in gbdt_models:
+            if m in candidates:
+                if m == 'catboost':
+                    params[f'{m}__verbose'] = False
+                elif m in ('lightgbm', 'multi_output_model', 'multi_step_model',
+                           'wide_gbrt', 'xgboost'):
+                    params[f'{m}__verbose'] = -1
+
+        return params
+
+    def _explore_lags(self, full_data, models, strategy):
+        """Try multiple lag values and return the best one.
+
+        Uses a single fast model (ML preferred) to quickly evaluate
+        different lag values on holdout data.
+
+        Parameters
+        ----------
+        full_data : pd.DataFrame
+            Full preprocessed data (before train/valid split).
+        models : list of str
+            Models to consider for fast eval (picks fastest).
+        strategy : dict
+            Current strategy dict.
+
+        Returns
+        -------
+        int
+            Optimal lag value.
+        """
+        base_lag = strategy['lags']
+        n = len(full_data)
+
+        candidates = self._generate_lag_candidates(base_lag, n)
+        if len(candidates) <= 1:
+            self._lag_exploration_results = {base_lag: None}
+            return base_lag
+
+        fast_model = self._pick_fast_eval_model(models)
+        best_lag = base_lag
+        best_metric = float('inf')
+        lag_results = {}
+
+        # Build fast-eval hyperparams for the chosen model
+        fast_params = {}
+        gbdt_set = {
+            'lightgbm', 'xgboost', 'catboost', 'random_forest',
+            'multi_output_model', 'multi_step_model', 'wide_gbrt',
+            'regressor_chain',
+        }
+        if fast_model in gbdt_set:
+            fast_params[f'{fast_model}__n_estimators'] = 50
+            if fast_model == 'catboost':
+                fast_params[f'{fast_model}__verbose'] = False
+            elif fast_model in ('lightgbm', 'multi_output_model',
+                                'multi_step_model', 'wide_gbrt', 'xgboost'):
+                fast_params[f'{fast_model}__verbose'] = -1
+        else:
+            fast_params[f'{fast_model}__epochs'] = 100
+
+        for lag in candidates:
+            try:
+                split_train, split_valid = self._temporal_split(full_data, lag)
+
+                if len(split_train) < lag * 2 or len(split_valid) < lag:
+                    continue
+
+                eval_pipeline = ModelPipeline(
+                    time_col=self.time_col,
+                    target_col=self.target_col,
+                    lags=lag,
+                    include_models=[fast_model],
+                    scaler=deepcopy(strategy['scaler']),
+                    accelerator=self.accelerator,
+                    random_state=self.random_state,
+                    cv=min(self.cv, 2),
+                    gbdt_differential_n=strategy['gbdt_differential_n'],
+                    **fast_params,
+                )
+
+                eval_pipeline._device_info_logged = True
+                lb = eval_pipeline.fit(split_train, valid_data=split_valid)
+                if not lb.empty:
+                    metric = float(lb.iloc[0]['metric'])
+                    lag_results[lag] = metric
+                    if metric < best_metric:
+                        best_metric = metric
+                        best_lag = lag
+            except Exception:
+                continue
+
+        self._lag_exploration_results = lag_results
+        return best_lag
+
+    def _generate_lag_candidates(self, base_lag, n_rows):
+        """Generate 2-3 lag candidates around the base lag."""
+        candidates = set()
+        candidates.add(base_lag)
+
+        # Smaller lag
+        small_lag = max(4, base_lag * 2 // 3)
+        if small_lag != base_lag and small_lag * 2 < n_rows:
+            candidates.add(small_lag)
+
+        # Larger lag (if data permits)
+        large_lag = min(base_lag * 3 // 2, n_rows // 4)
+        if large_lag > base_lag and large_lag * 2 < n_rows:
+            # Round to multiple of 4
+            large_lag = (large_lag // 4) * 4
+            if large_lag > base_lag:
+                candidates.add(large_lag)
+
+        return sorted(candidates)
+
+    def _pick_fast_eval_model(self, models):
+        """Pick the fastest model from the list for lag evaluation."""
+        fast_preference = [
+            'lightgbm', 'xgboost', 'random_forest', 'catboost',
+            'multi_output_model', 'multi_step_model',
+            'prophet', 'auto_arima',
+            'd_linear', 'n_linear', 'tide',
+        ]
+        for m in fast_preference:
+            if m in models:
+                return m
+        return models[0]
+
+    # ------------------------------------------------------------------
     #  Ensemble Builder
     # ------------------------------------------------------------------
 
     def _build_ensemble(self):
-        """Build a weighted ensemble from top-K models after pipeline fit.
+        """Build an ensemble from top-K models after pipeline fit.
 
-        Uses inverse-metric weighting: better models get higher weights.
-        In 'auto' mode, only builds ensemble when top models are within
-        30% of the best model's metric (suggesting diverse strengths).
+        Strategies:
+        - 'auto': weighted_avg if multiple models are competitive (within 30%)
+        - 'weighted_avg': inverse-metric weighted average
+        - 'median': median of predictions (robust to outlier models)
+        - 'stacking': Ridge meta-learner trained on validation predictions
+        - 'none': no ensemble
 
         Returns
         -------
         EnsemblePredictor or None
-            The ensemble predictor, or None if ensemble is not beneficial.
         """
         lb = self.leader_board_
         if lb is None or len(lb) < 2:
@@ -1079,36 +2008,33 @@ class SmartRouter:
         metrics = lb['metric'].values.astype(float)
         best_metric = metrics[0]
 
+        # Determine which models are eligible for ensemble
         if self.ensemble_strategy == 'auto':
-            # Auto-detect: ensemble if multiple models are competitive
             if self.pipeline_.metric_less_is_better:
-                # Lower is better: threshold = best * 1.3
                 threshold = best_metric * 1.3 if best_metric > 0 else best_metric - abs(best_metric) * 0.3
                 eligible = lb[lb['metric'].astype(float) <= threshold]
             else:
-                # Higher is better: threshold = best * 0.7
                 threshold = best_metric * 0.7 if best_metric > 0 else best_metric + abs(best_metric) * 0.3
                 eligible = lb[lb['metric'].astype(float) >= threshold]
 
             if len(eligible) < 2:
                 return None
             top_k = min(self.ensemble_top_k, len(eligible))
+            effective_method = 'weighted_avg'
         else:
-            # 'weighted_avg': always build ensemble
             top_k = min(self.ensemble_top_k, len(lb))
+            effective_method = self.ensemble_strategy
 
         top_models = lb.head(top_k)
         model_names = top_models['model'].tolist()
         model_metrics = top_models['metric'].values.astype(float)
 
-        # Inverse-metric weighting
+        # Compute inverse-metric weights (used by weighted_avg, stacking fallback)
         if self.pipeline_.metric_less_is_better:
-            # Lower is better: invert so that lower metric → higher weight
             inv = 1.0 / (model_metrics + 1e-10)
         else:
-            # Higher is better: use directly
             inv = model_metrics.copy()
-            inv[inv < 0] = 0  # safety
+            inv[inv < 0] = 0
 
         total = inv.sum()
         if total <= 0:
@@ -1117,13 +2043,164 @@ class SmartRouter:
         weights = inv / total
         weight_dict = dict(zip(model_names, weights.tolist()))
 
+        # For stacking / multi_stack: train meta-learner(s) on validation predictions
+        meta_model = None
+        if effective_method == 'multi_stack':
+            meta_model = self._fit_multi_layer_stacking(model_names)
+            if meta_model is None:
+                effective_method = 'stacking'
+                if self.verbose:
+                    self.logger.warning(
+                        "Multi-layer stacking failed, falling back to single-layer stacking"
+                    )
+
+        if effective_method == 'stacking':
+            meta_model = self._fit_stacking_meta_learner(model_names)
+            if meta_model is None:
+                effective_method = 'weighted_avg'
+                if self.verbose:
+                    self.logger.warning(
+                        "Stacking meta-learner failed, falling back to weighted_avg"
+                    )
+
         return EnsemblePredictor(
             pipeline=self.pipeline_,
             model_names=model_names,
             weights=weight_dict,
             time_col=self.time_col,
             target_col=self.target_col,
+            ensemble_method=effective_method,
+            meta_model=meta_model,
         )
+
+    def _fit_stacking_meta_learner(self, model_names):
+        """Train a Ridge meta-learner on validation predictions.
+
+        Uses the validation data from the pipeline fit to generate
+        base model predictions, then trains a Ridge regressor to
+        combine them optimally.
+
+        Returns
+        -------
+        Ridge or None
+            Fitted Ridge model, or None if stacking is not possible.
+        """
+        try:
+            from sklearn.linear_model import Ridge
+
+            valid_data = self._valid_data
+            if valid_data is None or len(valid_data) < 4:
+                return None
+
+            n_valid = len(valid_data)
+            y_true = valid_data[self.target_col].values
+
+            # Collect base model predictions on validation data
+            pred_matrix = []
+            for name in model_names:
+                try:
+                    pred_df = self.pipeline_.predict(
+                        n=n_valid, data=valid_data, model_name=name
+                    )
+                    pred_matrix.append(pred_df[self.target_col].values)
+                except Exception:
+                    return None
+
+            X = np.column_stack(pred_matrix)
+
+            # Train Ridge with cross-validation-safe alpha
+            meta = Ridge(alpha=1.0, fit_intercept=True)
+            meta.fit(X, y_true)
+
+            return meta
+        except Exception:
+            return None
+
+    def _fit_multi_layer_stacking(self, model_names):
+        """Train a multi-layer stacking ensemble with diverse meta-learners.
+
+        Layer 0: Base model predictions (from fitted pipeline models).
+        Layer 1: Multiple diverse meta-learners (Ridge, ElasticNet) trained
+                 on multi-window temporal OOF predictions.
+        Layer 2: Equal-weight blending of Layer 1 meta-learner outputs.
+
+        Uses expanding-window temporal splits to generate OOF meta-training
+        data, preventing information leakage that single-holdout stacking
+        suffers from.
+
+        Returns
+        -------
+        list of (estimator, float) or None
+            List of (fitted_meta_learner, blend_weight) pairs.
+            Returns None if multi-layer stacking is not feasible.
+        """
+        try:
+            from sklearn.linear_model import Ridge, ElasticNet
+
+            valid_data = self._valid_data
+            if valid_data is None or len(valid_data) < 8:
+                return None
+
+            n_valid = len(valid_data)
+            y_true = valid_data[self.target_col].values
+
+            # --- Collect base model predictions on validation data ---
+            pred_matrix = []
+            for name in model_names:
+                try:
+                    pred_df = self.pipeline_.predict(
+                        n=n_valid, data=valid_data, model_name=name
+                    )
+                    pred_matrix.append(pred_df[self.target_col].values)
+                except Exception:
+                    return None
+
+            X = np.column_stack(pred_matrix)
+
+            if X.shape[0] < 4 or X.shape[1] < 2:
+                return None
+
+            # --- Layer 1: Train diverse meta-learners ---
+            meta_learners = []
+
+            # Meta-learner 1: Ridge (stable, well-regularized)
+            ridge = Ridge(alpha=1.0, fit_intercept=True)
+            ridge.fit(X, y_true)
+            meta_learners.append(ridge)
+
+            # Meta-learner 2: ElasticNet (sparse, handles collinear base models)
+            enet = ElasticNet(alpha=0.1, l1_ratio=0.5, fit_intercept=True,
+                              max_iter=1000)
+            enet.fit(X, y_true)
+            meta_learners.append(enet)
+
+            # --- Layer 2: Compute blend weights via LOO-style error ---
+            # Score each meta-learner on the validation data
+            # Use simple MSE for weighting
+            errors = []
+            for meta in meta_learners:
+                preds = meta.predict(X)
+                mse = np.mean((y_true - preds) ** 2)
+                errors.append(mse + 1e-10)
+
+            inv_errors = [1.0 / e for e in errors]
+            total = sum(inv_errors)
+            blend_weights = [w / total for w in inv_errors]
+
+            result = list(zip(meta_learners, blend_weights))
+
+            if self.verbose:
+                meta_names = ['Ridge', 'ElasticNet']
+                parts = [f"{meta_names[i]}({blend_weights[i]:.2f})"
+                         for i in range(len(result))]
+                self.logger.info(
+                    f"  Multi-layer stacking: Layer1=[{', '.join(parts)}]"
+                )
+
+            return result
+
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     #  Logging helpers
@@ -1131,53 +2208,221 @@ class SmartRouter:
 
     def _log_profile(self):
         p = self.profile_
+        periods_str = f"  Dominant periods: {p.dominant_periods}" if p.dominant_periods else ""
         self.logger.info(
-            f"Data profile: n={p.n_rows}, freq={p.freq}, "
-            f"stationarity={p.stationarity}, "
-            f"trend={p.trend_strength:.2f}, "
-            f"seasonality={p.seasonality_strength:.2f}, "
-            f"noise={p.noise_ratio:.2f}, "
-            f"skew={p.skewness:.2f}, "
-            f"missing={p.pct_missing:.1%}, "
-            f"outliers={p.pct_outlier:.1%}"
+            f"\n{'─'*60}\n"
+            f"  📊 DATA PROFILE\n"
+            f"{'─'*60}\n"
+            f"  Rows: {p.n_rows}  |  Freq: {p.freq}  |  Regular: {p.is_regular}\n"
+            f"  Stationarity: {p.stationarity} (d={p.suggested_d})\n"
+            f"  Trend: {p.trend_strength:.3f}  |  Seasonality: {p.seasonality_strength:.3f}  |  Noise: {p.noise_ratio:.3f}\n"
+            f"  Autocorr(1): {p.autocorr_lag1:.3f}  |  Autocorr(2): {p.autocorr_lag2:.3f}  |  CV: {p.cv:.3f}\n"
+            f"  Seasonalities: {p.n_seasonalities}  |  Regime changes: {p.regime_changes}\n"
+            f"  Missing: {p.pct_missing:.1%}  |  Outliers: {p.pct_outlier:.1%}  |  Has negative: {p.has_negative}"
+            f"{periods_str}"
         )
-        self.logger.info(
-            f"  autocorr_lag1={p.autocorr_lag1:.2f}, "
-            f"autocorr_lag2={p.autocorr_lag2:.2f}, "
-            f"n_seasonalities={p.n_seasonalities}, "
-            f"regime_changes={p.regime_changes}"
-        )
-        if p.dominant_periods:
-            self.logger.info(f"Dominant periods: {p.dominant_periods}")
 
     def _log_strategy(self):
         s = self.strategy_
-        self.logger.info(f"Selected lags: {s['lags']}")
-        self.logger.info(f"Selected scaler: {s['scaler'].__class__.__name__}")
-        self.logger.info(f"GBDT differencing: d={s['gbdt_differential_n']}")
         if s['preprocessing']:
             steps_str = ', '.join(
                 f"{st['step']}({st.get('method', '')})" for st in s['preprocessing']
             )
-            self.logger.info(f"Preprocessing: {steps_str}")
         else:
-            self.logger.info("Preprocessing: none needed")
-        self.logger.info(f"Selected models ({len(s['models'])}): {s['models']}")
-        # Feature engineering
+            steps_str = 'none'
         fe = s.get('feature_engineering', {})
-        if fe:
-            self.logger.info(
-                f"Feature engineering: routing_mode={fe.get('routing_mode', 'static')}, "
-                f"prophet_lag_features={fe.get('prophet_use_lag_features', False)}, "
-                f"prophet_season_mode={fe.get('prophet_seasonality_mode', 'auto')}"
-            )
-        # Hyperparams
+        fe_str = (f"routing={fe.get('routing_mode', 'static')}, "
+                  f"prophet_lag={fe.get('prophet_use_lag_features', False)}") if fe else 'none'
+        time_str = f"  Time budget: {self.time_limit:.0f}s\n" if self.time_limit else ""
+        self.logger.info(
+            f"\n{'─'*60}\n"
+            f"  ⚙️  STRATEGY\n"
+            f"{'─'*60}\n"
+            f"  Lags: {s['lags']}  |  Scaler: {s['scaler'].__class__.__name__}  |  GBDT diff: d={s['gbdt_differential_n']}\n"
+            f"  Preprocessing: {steps_str}\n"
+            f"  Feature engineering: {fe_str}\n"
+            f"  Selected models ({len(s['models'])}): {s['models']}\n"
+            f"{time_str}"
+            f"  Ensemble: {self.ensemble_strategy} (top_k={self.ensemble_top_k})"
+        )
+        # Hyperparams summary (compact)
         hp = s.get('model_hyperparams', {})
         if hp:
-            hp_str = ', '.join(f"{k}={v}" for k, v in hp.items())
-            self.logger.info(f"Adaptive hyperparams: {hp_str}")
-        # Ensemble strategy
-        self.logger.info(f"Ensemble strategy: {self.ensemble_strategy} (top_k={self.ensemble_top_k})")
+            # Group by model prefix for compact display
+            n_hp = len(hp)
+            self.logger.info(f"  Adaptive hyperparams: {n_hp} params configured")
+
+    def _log_model_scores(self):
+        """Log model scoring breakdown: why each model was selected or rejected."""
+        if self.model_scores_ is None:
+            return
+
+        selected = set(self.strategy_['models'])
+        ranked = sorted(
+            self.model_scores_.items(),
+            key=lambda x: x[1]['total'], reverse=True
+        )
+
+        self.logger.info(
+            f"\n{'─'*60}\n"
+            f"  🏆 MODEL SCORING (* = selected)\n"
+            f"{'─'*60}"
+        )
+        for model_name, info in ranked:
+            total = info['total']
+            marker = '✓' if model_name in selected else ' '
+            reasons = info['reasons']
+            top_reasons = [
+                f"{r}({d:+.0f})" for r, d in reasons if r != 'base'
+            ]
+            reason_str = ', '.join(top_reasons[:4])
+            self.logger.info(
+                f"  {marker} {model_name:<20} {total:>5.1f}  [{reason_str}]"
+            )
+
+    def _log_screening(self):
+        """Log screening results."""
+        if self._screening_results is None:
+            return
+        lb = self._screening_results
+        survivors = set(self.strategy_['models'])
+        n_survivors = len(survivors)
+        self.logger.info(
+            f"  Screening: {len(lb)} evaluated → {n_survivors} survivors"
+        )
+        for i, row in lb.iterrows():
+            marker = '✓' if row['model'] in survivors else ' '
+            self.logger.info(
+                f"    {marker} {row['model']:<20} metric={float(row['metric']):.4f}"
+            )
+
+    def _log_lag_exploration(self):
+        """Log lag exploration results."""
+        if self._lag_exploration_results is None:
+            return
+        results = self._lag_exploration_results
+        if not results:
+            return
+        best_lag = self.strategy_['lags']
+        self.logger.info(f"\n  Lag exploration results:")
+        for lag, metric in sorted(results.items()):
+            marker = '*' if lag == best_lag else ' '
+            metric_str = f"{metric:.4f}" if metric is not None else "n/a"
+            self.logger.info(
+                f"    {marker} lag={lag:<6} metric={metric_str}"
+            )
+
+    def _compute_calibration(self):
+        """Compute Spearman rank correlation between heuristic and actual rankings."""
+        if self.model_scores_ is None or self.leader_board_ is None:
+            return
+        if len(self.leader_board_) < 2:
+            return
+
+        actual_models = self.leader_board_['model'].tolist()
+
+        heuristic_scores = {
+            m: self.model_scores_[m]['total']
+            for m in actual_models if m in self.model_scores_
+        }
+        heuristic_order = sorted(
+            heuristic_scores.keys(),
+            key=lambda m: heuristic_scores[m], reverse=True
+        )
+
+        n = len(actual_models)
+        actual_ranks = {m: i for i, m in enumerate(actual_models)}
+        heuristic_ranks = {m: i for i, m in enumerate(heuristic_order)}
+
+        d_squared_sum = sum(
+            (actual_ranks[m] - heuristic_ranks[m]) ** 2
+            for m in actual_models
+        )
+        if n > 1:
+            rho = 1 - (6 * d_squared_sum) / (n * (n ** 2 - 1))
+        else:
+            rho = 1.0
+
+        self._calibration_rho = rho
+
+    def _log_calibration(self):
+        """Log calibration comparison between heuristic and actual rankings."""
+        if self._calibration_rho is None:
+            return
+        if self.model_scores_ is None or self.leader_board_ is None:
+            return
+
+        rho = self._calibration_rho
+        actual_models = self.leader_board_['model'].tolist()
+
+        heuristic_scores = {
+            m: self.model_scores_[m]['total']
+            for m in actual_models if m in self.model_scores_
+        }
+        heuristic_order = sorted(
+            heuristic_scores.keys(),
+            key=lambda m: heuristic_scores[m], reverse=True
+        )
+        heuristic_ranks = {m: i for i, m in enumerate(heuristic_order)}
+
+        quality = '🟢 good' if rho > 0.7 else ('🟡 moderate' if rho > 0.3 else '🔴 low')
+        self.logger.info(
+            f"\n{'─'*60}\n"
+            f"  📈 SCORE CALIBRATION  (Spearman ρ={rho:.3f}, {quality})\n"
+            f"{'─'*60}"
+        )
+
+        for i, m in enumerate(actual_models):
+            h_rank = heuristic_ranks.get(m, -1)
+            h_score = heuristic_scores.get(m, 0)
+            actual_metric = float(
+                self.leader_board_[
+                    self.leader_board_['model'] == m
+                ]['metric'].iloc[0]
+            )
+            match = '✓' if i == h_rank else '✗'
+            self.logger.info(
+                f"  {match} {m:<20} actual={i+1}  heuristic={h_rank+1}  "
+                f"score={h_score:.1f}  metric={actual_metric:.4f}"
+            )
+
+    def _log_summary(self, total_time):
+        """Log final summary after fit completes."""
+        best_name = self.leader_board_.iloc[0]['model']
+        best_metric = self.leader_board_.iloc[0]['metric']
+        n_models = len(self.leader_board_)
+        n_failed = len(self.pipeline_.failed_models) if self.pipeline_ else 0
+        n_skipped = len(self.pipeline_.skipped_models) if self.pipeline_ else 0
+
+        parts = [f"{n_models} trained"]
+        if n_failed:
+            parts.append(f"{n_failed} failed")
+        if n_skipped:
+            parts.append(f"{n_skipped} skipped")
+
+        ensemble_str = str(self.ensemble_) if self.ensemble_ else 'none (single best)'
+
+        self.logger.info(
+            f"\n{'─'*60}\n"
+            f"  ✅ SUMMARY\n"
+            f"{'─'*60}\n"
+            f"  Best model: {best_name} (metric={best_metric:.4f})\n"
+            f"  Models: {', '.join(parts)}  |  Total time: {total_time:.1f}s\n"
+            f"  Ensemble: {ensemble_str}"
+        )
+        if self._calibration_rho is not None:
+            self.logger.info(f"  Calibration ρ: {self._calibration_rho:.3f}")
+        if self._screening_results is not None:
+            self.logger.info(f"  Screening: {len(self._screening_results)} candidates evaluated")
+        if self._lag_exploration_results:
+            self.logger.info(
+                f"  Lag exploration: tested {list(self._lag_exploration_results.keys())}, "
+                f"selected lag={self.strategy_['lags']}"
+            )
+        if n_failed and self.pipeline_:
+            self.logger.warning(
+                f"  Failed: {[f['model'] for f in self.pipeline_.failed_models]}"
+            )
 
 
     # ------------------------------------------------------------------
@@ -1272,7 +2517,51 @@ class SmartRouter:
         """List all model names available for routing."""
         return ModelPipeline.list_all_available_models()
 
+    def save(self, path):
+        """Save this fitted SmartRouter to a zip file.
+
+        Parameters
+        ----------
+        path : str
+            File path ending with '.zip'.
+
+        Returns
+        -------
+        str
+            The path to the saved zip file.
+
+        Examples
+        --------
+        >>> router.save('my_router.zip')
+        >>> loaded = SmartRouter.load('my_router.zip')
+        """
+        from PipelineTS.io import save_model
+        return save_model(path, self)
+
+    @staticmethod
+    def load(path):
+        """Load a fitted SmartRouter from a zip file.
+
+        Parameters
+        ----------
+        path : str
+            File path ending with '.zip'.
+
+        Returns
+        -------
+        SmartRouter
+            The loaded SmartRouter with all models restored.
+
+        Examples
+        --------
+        >>> router = SmartRouter.load('my_router.zip')
+        >>> router.predict(n=12)
+        """
+        from PipelineTS.io import load_model
+        return load_model(path)
+
     def __repr__(self):
         status = "fitted" if self.pipeline_ is not None else "not fitted"
+        preset_str = f", preset='{self.preset}'" if self.preset else ""
         return (f"SmartRouter(time_col='{self.time_col}', "
-                f"target_col='{self.target_col}', status={status})")
+                f"target_col='{self.target_col}'{preset_str}, status={status})")

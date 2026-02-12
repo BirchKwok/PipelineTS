@@ -28,7 +28,13 @@ class TCNModel(SpinesNNModelMixin):
             loss_type='min',
             use_gtb=False,
             gtb_d_model=64,
-            routing_mode='static'
+            routing_mode='static',
+            use_ema=False,
+            ema_decay=0.999,
+            use_swa=False,
+            swa_start_frac=0.75,
+            warmup_epochs=0,
+            use_residual_gate=False
     ):
         """
         TCNModel: A wrapper for the TCN model from the spinesTS library with additional features.
@@ -114,7 +120,13 @@ class TCNModel(SpinesNNModelMixin):
                 'lr_scheduler_patience': lr_scheduler_patience,
                 'lr_factor': lr_factor,
                 'restore_best_weights': restore_best_weights,
-                'loss_type': loss_type
+                'loss_type': loss_type,
+                'use_ema': use_ema,
+                'ema_decay': ema_decay,
+                'use_swa': use_swa,
+                'swa_start_frac': swa_start_frac,
+                'warmup_epochs': warmup_epochs,
+                'use_residual_gate': use_residual_gate
             }
         )
 
