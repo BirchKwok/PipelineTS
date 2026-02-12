@@ -68,3 +68,8 @@ For hands-on learning, check out the [tutorials/](../tutorials/) directory which
 | 05 | [Preprocessing & Data](../tutorials/05_Preprocessing_and_Data.ipynb) | Datasets, scalers, sequence splitting / 数据集、缩放器、序列分割 |
 | 06 | [Hyperparameter Tuning](../tutorials/06_Hyperparameter_Tuning.ipynb) | Optuna integration for tuning / 使用 Optuna 进行超参数调优 |
 | 07 | [Benchmarks](../tutorials/07_Benchmarks.ipynb) | Model benchmarking across datasets / 跨数据集的模型基准测试 |
+| 08 | [Visualization](../tutorials/08_Visualization.ipynb) | Full visualization toolkit with Chinese fonts / 全面可视化工具包（含中文字体） |
+| 09 | [Multi-Quantile Intervals](../tutorials/09_Multi_Quantile_Intervals.ipynb) | Multi-level prediction intervals / 多分位数预测区间 |
+| 10 | [Multi-Series & Covariates](../tutorials/10_Multi_Series_Covariates.ipynb) | Panel data and external covariates / 面板数据与外部协变量 |
+| 11 | [Incremental Learning](../tutorials/11_Incremental_Learning.ipynb) | Update models with new data / 增量学习更新模型 |
+| 12 | [SmartRouter & Pipeline](../tutorials/12_SmartRouter_and_Pipeline.ipynb) | Core engines: ModelPipeline & SmartRouter deep dive / 核心引擎深度指南 |

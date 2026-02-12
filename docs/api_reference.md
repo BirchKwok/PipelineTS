@@ -146,6 +146,7 @@ All located in `PipelineTS.nn_model`.
 | `ITransformerModel` | `from PipelineTS.nn_model import ITransformerModel` |
 | `SRSNetModel` | `from PipelineTS.nn_model import SRSNetModel` |
 | `DeepARModel` | `from PipelineTS.nn_model import DeepARModel` |
+| `ChronosModel` *(optional)* | `from PipelineTS.nn_model import ChronosModel` |
 
 **Common interface / 通用接口:**
 
@@ -169,6 +170,37 @@ model = SomeModel(
 model.fit(data, valid_data=None)  # Train / 训练
 model.predict(n, data=None)       # Predict / 预测
 ```
+
+### `PipelineTS.nn_model.ChronosModel` *(optional dependency / 可选依赖)*
+
+Zero-shot foundation model wrapping Amazon Chronos pretrained models.
+零样本基础模型，封装 Amazon Chronos 预训练模型。
+
+> Requires: `pip install chronos-forecasting`
+
+```python
+ChronosModel(
+    time_col: str,
+    target_col: str,
+    lags: int = 1,                   # API compatibility / API 兼容
+    quantile: float | None = 0.9,    # Conformal interval coverage / 共形区间覆盖率
+    model_name: str | None = None,   # Default: 'chronos-bolt-small'
+    device_map: str = 'auto',        # 'auto', 'cpu', 'cuda', 'mps'
+)
+
+model.fit(data, cv=5)                              # Store data + calibrate intervals / 存储数据 + 校准区间
+model.predict(n, future_covariates=None)            # Zero-shot predict / 零样本预测
+```
+
+**Available model names / 可用模型名称:**
+
+| Family / 家族 | Names / 名称 |
+|---|---|
+| Chronos-2 | `'chronos-2'` (supports covariates / 支持协变量) |
+| Chronos-Bolt | `'chronos-bolt-tiny'`, `'chronos-bolt-mini'`, `'chronos-bolt-small'`, `'chronos-bolt-base'` |
+| Chronos-T5 | `'chronos-t5-tiny'`, `'chronos-t5-mini'`, `'chronos-t5-small'`, `'chronos-t5-base'`, `'chronos-t5-large'` |
+
+**Features / 特点:** Zero-shot (no training), multi-series (`id_col`), covariates (Chronos-2 only), conformal intervals.
 
 ---
 
