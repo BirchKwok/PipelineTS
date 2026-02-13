@@ -49,7 +49,7 @@ class ModelPipeline:
         'gbdt_differential_n': int,
         'time_limit': (int, float, None),
         'id_col': (str, None),
-    }, 'Pipeline')
+    }, 'ModelPipeline')
     @ParameterValuesAssert({
         'metric': lambda s: check_obj_is_function(s),
         'scaler': lambda s: augmented_isinstance(s, (TransformerMixin, None, bool)),
@@ -64,7 +64,7 @@ class ModelPipeline:
                 augmented_isinstance(s, (None, list, str)) or
                 issubclass(s, IntervalEstimationMixin)
         )
-    }, 'Pipeline')
+    }, 'ModelPipeline')
     def __init__(
             self,
             time_col,
@@ -193,7 +193,7 @@ class ModelPipeline:
                 del self._available_models[em]
             self._available_models = frozendict(self._available_models)
 
-        self.logger = Logger(name='PipelineTS')
+        self.logger = Logger(name='ModelPipeline')
 
         self.target_col = target_col
         self.time_col = time_col
@@ -262,8 +262,16 @@ class ModelPipeline:
                 self._model_init_kwargs[k] = v
 
         # Build compact single-line device description
-        _device, _device_detail = detect_available_device(self.accelerator)
-        _active = _device.upper().replace(':', ' ').split()[0]  # 'mps', 'cuda:0' -> 'MPS', 'CUDA'
+        _cpu_only_models = {'auto_arima', 'prophet', 'catboost', 'lightgbm', 'xgboost',
+                            'wide_gbrt', 'multi_output_model', 'multi_step_model',
+                            'random_forest', 'regressor_chain'}
+        _effective = self._given_models or list(self._available_models.keys())
+        _all_cpu = all(isinstance(m, str) and m in _cpu_only_models for m in _effective)
+        if _all_cpu:
+            _active = 'CPU'
+        else:
+            _device, _device_detail = detect_available_device(self.accelerator)
+            _active = _device.upper().replace(':', ' ').split()[0]  # 'mps', 'cuda:0' -> 'MPS', 'CUDA'
         self._compute_device_msg = f"Accelerator: {_active}"
 
         self.gbdt_differential_n = gbdt_differential_n

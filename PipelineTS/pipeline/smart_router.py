@@ -1842,7 +1842,10 @@ class SmartRouter:
 
         for m in candidates:
             if m in gbdt_models:
-                params[f'{m}__n_estimators'] = 30
+                if m == 'catboost':
+                    params[f'{m}__iterations'] = 30
+                else:
+                    params[f'{m}__n_estimators'] = 30
             elif m in nn_models:
                 params[f'{m}__epochs'] = 100
 
@@ -1904,7 +1907,10 @@ class SmartRouter:
             'regressor_chain',
         }
         if fast_model in gbdt_set:
-            fast_params[f'{fast_model}__n_estimators'] = 50
+            if fast_model == 'catboost':
+                fast_params[f'{fast_model}__iterations'] = 50
+            else:
+                fast_params[f'{fast_model}__n_estimators'] = 50
             if fast_model == 'catboost':
                 fast_params[f'{fast_model}__verbose'] = False
             elif fast_model in ('lightgbm', 'multi_output_model',
