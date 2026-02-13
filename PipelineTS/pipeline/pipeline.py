@@ -264,7 +264,7 @@ class ModelPipeline:
         # Build compact single-line device description
         _device, _device_detail = detect_available_device(self.accelerator)
         _active = _device.upper().replace(':', ' ').split()[0]  # 'mps', 'cuda:0' -> 'MPS', 'CUDA'
-        self._compute_device_msg = f"Device: {_active} ({_device})  |  {_device_detail.replace(chr(10), ', ')}"
+        self._compute_device_msg = f"Accelerator: {_active}"
 
         self.gbdt_differential_n = gbdt_differential_n
 

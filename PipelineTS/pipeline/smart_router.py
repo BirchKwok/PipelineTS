@@ -492,7 +492,7 @@ class SmartRouter:
             from PipelineTS.spinesTS.base._torch_mixin import detect_available_device
             _dev, _detail = detect_available_device(self.accelerator)
             _active = _dev.upper().replace(':', ' ').split()[0]
-            self.logger.info(f"Device: {_active} ({_dev})  |  {_detail.replace(chr(10), ', ')}")
+            self.logger.info(f"Accelerator: {_active}")
 
         # Auto-convert time column to datetime if needed
         data = self._ensure_datetime(data)
