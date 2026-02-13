@@ -1,7 +1,11 @@
-"""ChronosModel: Zero-shot foundation model for time series forecasting.
+"""Chronos-2 family: Zero-shot foundation models for time series forecasting.
 
-Wraps Amazon's Chronos pretrained models (Chronos-2, Chronos-Bolt, Chronos-T5)
-for seamless integration with PipelineTS.
+Wraps Amazon/AutoGluon Chronos-2 pretrained models for seamless integration
+with PipelineTS.  Three model sizes are provided:
+
+- ``Chronos2Model``       — amazon/chronos-2           (120M params)
+- ``Chronos2SynthModel``  — autogluon/chronos-2-synth  (120M params)
+- ``Chronos2SmallModel``  — autogluon/chronos-2-small  (28M params)
 
 Requires: pip install chronos-forecasting
 """
@@ -16,27 +20,6 @@ from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
 from PipelineTS.utils import check_time_col_is_timestamp
 
 
-# Available model presets
-CHRONOS_MODELS = {
-    # Chronos-2 (latest, covariate support)
-    'chronos-2': 'amazon/chronos-2',
-    # Chronos-Bolt (fast, efficient)
-    'chronos-bolt-tiny': 'amazon/chronos-bolt-tiny',
-    'chronos-bolt-mini': 'amazon/chronos-bolt-mini',
-    'chronos-bolt-small': 'amazon/chronos-bolt-small',
-    'chronos-bolt-base': 'amazon/chronos-bolt-base',
-    # Chronos-T5 (original)
-    'chronos-t5-tiny': 'amazon/chronos-t5-tiny',
-    'chronos-t5-mini': 'amazon/chronos-t5-mini',
-    'chronos-t5-small': 'amazon/chronos-t5-small',
-    'chronos-t5-base': 'amazon/chronos-t5-base',
-    'chronos-t5-large': 'amazon/chronos-t5-large',
-}
-
-# Default model — good balance of speed and accuracy
-_DEFAULT_MODEL = 'chronos-bolt-small'
-
-
 def _import_chronos():
     """Lazy import of chronos package with helpful error message."""
     try:
@@ -44,61 +27,32 @@ def _import_chronos():
         return chronos
     except ImportError:
         raise ImportError(
-            "chronos-forecasting is required for ChronosModel. "
+            "chronos-forecasting is required for Chronos models. "
             "Install it with: pip install chronos-forecasting"
         )
 
 
-class ChronosModel(StatisticModelMixin, IntervalEstimationMixin):
+class _ChronosBase(StatisticModelMixin, IntervalEstimationMixin):
+    """Base class for all Chronos-2 family models.
+
+    Subclasses only need to set ``_HF_PATH`` to the HuggingFace model id.
+    """
+
+    # Subclasses override this
+    _HF_PATH: str = None
+
     def __init__(
             self,
             time_col,
             target_col,
             lags=1,
             quantile=0.9,
-            model_name=None,
             device_map='auto',
             **chronos_configs
     ):
-        """
-        ChronosModel: Zero-shot foundation model for time series forecasting.
-
-        Uses Amazon's Chronos pretrained models for zero-shot forecasting.
-        No training is needed — the model uses pretrained weights to generate
-        predictions directly from historical data.
-
-        Parameters
-        ----------
-        time_col : str
-            The column containing time information.
-        target_col : str
-            The column containing the target variable.
-        lags : int, optional, default: 1
-            Kept for API compatibility with PipelineTS.
-        quantile : float or None, optional, default: 0.9
-            Quantile level for prediction intervals. None for point prediction only.
-        model_name : str or None, optional, default: None
-            Chronos model to use. Options:
-            - 'chronos-2': Latest Chronos-2 (supports covariates)
-            - 'chronos-bolt-tiny/mini/small/base': Fast Chronos-Bolt models
-            - 'chronos-t5-tiny/mini/small/base/large': Original T5-based models
-            - Any HuggingFace model path
-            If None, defaults to 'chronos-bolt-small'.
-        device_map : str, optional, default: 'auto'
-            Device placement strategy. 'auto', 'cpu', 'cuda', 'mps', etc.
-        **chronos_configs
-            Additional keyword arguments passed to the Chronos pipeline.
-        """
         super().__init__(time_col=time_col, target_col=target_col)
 
-        if model_name is None:
-            model_name = _DEFAULT_MODEL
-
-        # Resolve model name to HuggingFace path
-        if model_name in CHRONOS_MODELS:
-            hf_path = CHRONOS_MODELS[model_name]
-        else:
-            hf_path = model_name
+        hf_path = self._HF_PATH
 
         self.all_configs.update({
             'lags': lags,
@@ -106,21 +60,19 @@ class ChronosModel(StatisticModelMixin, IntervalEstimationMixin):
             'time_col': time_col,
             'target_col': target_col,
             'quantile_error': (0, 0),
-            'model_name': model_name,
             'hf_path': hf_path,
             'device_map': device_map,
         })
 
         self._pipeline = None
         self._train_data = None
-        self._is_chronos2 = 'chronos-2' in hf_path
 
     def _define_model(self):
         """Not used — model is loaded from pretrained weights."""
         return None
 
     def _load_pipeline(self):
-        """Load the Chronos pipeline (lazy, on first use)."""
+        """Load the Chronos-2 pipeline (lazy, on first use)."""
         if self._pipeline is not None:
             return self._pipeline
 
@@ -128,17 +80,9 @@ class ChronosModel(StatisticModelMixin, IntervalEstimationMixin):
         hf_path = self.all_configs['hf_path']
         device_map = self.all_configs['device_map']
 
-        # Select the right pipeline class based on model type
-        if 'chronos-2' in hf_path:
-            pipeline_cls = chronos.Chronos2Pipeline
-        elif 'chronos-bolt' in hf_path:
-            pipeline_cls = chronos.ChronosBoltPipeline
-        else:
-            pipeline_cls = chronos.ChronosPipeline
-
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            self._pipeline = pipeline_cls.from_pretrained(
+            self._pipeline = chronos.Chronos2Pipeline.from_pretrained(
                 hf_path,
                 device_map=device_map,
             )
@@ -225,7 +169,7 @@ class ChronosModel(StatisticModelMixin, IntervalEstimationMixin):
         )
 
     def _raw_predict(self, context_data, n, id_col=None, future_covariates=None):
-        """Internal prediction using Chronos pipeline.
+        """Internal prediction using Chronos-2 predict_df API.
 
         Returns a DataFrame with time_col and target_col columns.
         """
@@ -234,120 +178,66 @@ class ChronosModel(StatisticModelMixin, IntervalEstimationMixin):
         target_col = self.all_configs['target_col']
         known_cols = getattr(self, '_known_cov_cols', [])
 
-        # Use predict_df for Chronos-2 and Chronos-Bolt (high-level API)
-        if hasattr(pipeline, 'predict_df'):
-            # Chronos predict_df requires an id column; add a synthetic one if missing
-            _synthetic_id = '__chronos_item_id__'
-            ctx = context_data.copy()
-            effective_id_col = id_col if (id_col and id_col in ctx.columns) else _synthetic_id
-            if effective_id_col == _synthetic_id:
-                ctx[_synthetic_id] = 'series_0'
+        # Chronos predict_df requires an id column; add a synthetic one if missing
+        _synthetic_id = '__chronos_item_id__'
+        ctx = context_data.copy()
+        effective_id_col = id_col if (id_col and id_col in ctx.columns) else _synthetic_id
+        if effective_id_col == _synthetic_id:
+            ctx[_synthetic_id] = 'series_0'
 
-            predict_kwargs = {
-                'prediction_length': n,
-                'timestamp_column': time_col,
-                'target': target_col,
-                'id_column': effective_id_col,
-            }
+        predict_kwargs = {
+            'prediction_length': n,
+            'timestamp_column': time_col,
+            'target': target_col,
+            'id_column': effective_id_col,
+        }
 
-            # Future covariates for Chronos-2
-            future_df = None
-            if self._is_chronos2 and known_cols and future_covariates is not None:
-                future_df = future_covariates.copy()
-                if effective_id_col == _synthetic_id and _synthetic_id not in future_df.columns:
-                    future_df[_synthetic_id] = 'series_0'
-                if time_col not in future_df.columns:
-                    last_dt = ctx[time_col].max()
-                    freq = getattr(self, '_freq', 'D')
-                    future_dates = pd.date_range(
-                        start=last_dt, periods=n + 1, freq=freq
-                    )[1:]
-                    future_df[time_col] = future_dates[:len(future_df)]
-
-            if future_df is not None:
-                predict_kwargs['future_df'] = future_df
-
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                pred_df = pipeline.predict_df(ctx, **predict_kwargs)
-
-            # Extract point predictions from the result
-            if 'predictions' in pred_df.columns:
-                pred_col = 'predictions'
-            elif '0.5' in pred_df.columns:
-                pred_col = '0.5'
-            elif 'mean' in pred_df.columns:
-                pred_col = 'mean'
-            else:
-                exclude = {time_col, effective_id_col, id_col, _synthetic_id}
-                remaining = [c for c in pred_df.columns if c not in exclude]
-                pred_col = remaining[0] if remaining else pred_df.columns[-1]
-
-            result = pd.DataFrame({
-                time_col: pred_df[time_col].values if time_col in pred_df.columns
-                else pd.date_range(
-                    start=context_data[time_col].max(),
-                    periods=n + 1, freq=getattr(self, '_freq', 'D')
-                )[1:],
-                target_col: pred_df[pred_col].values,
-            })
-
-            if id_col and id_col in pred_df.columns:
-                result[id_col] = pred_df[id_col].values
-
-            return result
-
-        else:
-            # Chronos-T5: lower-level tensor API
-            import torch
-
-            if id_col and id_col in context_data.columns:
-                # Multi-series: predict each series independently
-                all_results = []
-                for sid, sdf in context_data.groupby(id_col):
-                    values = torch.tensor(
-                        sdf[target_col].values, dtype=torch.float32
-                    ).unsqueeze(0)
-
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")
-                        forecast = pipeline.predict(values, prediction_length=n)
-
-                    # forecast shape: (1, num_samples, prediction_length)
-                    median = np.median(forecast[0].numpy(), axis=0)
-                    last_dt = sdf[time_col].max()
-                    freq = getattr(self, '_freq', 'D')
-                    future_dates = pd.date_range(
-                        start=last_dt, periods=n + 1, freq=freq
-                    )[1:]
-
-                    res = pd.DataFrame({
-                        time_col: future_dates,
-                        target_col: median,
-                    })
-                    res[id_col] = sid
-                    all_results.append(res)
-                return pd.concat(all_results, ignore_index=True)
-            else:
-                values = torch.tensor(
-                    context_data[target_col].values, dtype=torch.float32
-                ).unsqueeze(0)
-
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    forecast = pipeline.predict(values, prediction_length=n)
-
-                median = np.median(forecast[0].numpy(), axis=0)
-                last_dt = context_data[time_col].max()
+        # Future covariates (all Chronos-2 models support this)
+        future_df = None
+        if known_cols and future_covariates is not None:
+            future_df = future_covariates.copy()
+            if effective_id_col == _synthetic_id and _synthetic_id not in future_df.columns:
+                future_df[_synthetic_id] = 'series_0'
+            if time_col not in future_df.columns:
+                last_dt = ctx[time_col].max()
                 freq = getattr(self, '_freq', 'D')
                 future_dates = pd.date_range(
                     start=last_dt, periods=n + 1, freq=freq
                 )[1:]
+                future_df[time_col] = future_dates[:len(future_df)]
 
-                return pd.DataFrame({
-                    time_col: future_dates,
-                    target_col: median,
-                })
+        if future_df is not None:
+            predict_kwargs['future_df'] = future_df
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pred_df = pipeline.predict_df(ctx, **predict_kwargs)
+
+        # Extract point predictions from the result
+        if 'predictions' in pred_df.columns:
+            pred_col = 'predictions'
+        elif '0.5' in pred_df.columns:
+            pred_col = '0.5'
+        elif 'mean' in pred_df.columns:
+            pred_col = 'mean'
+        else:
+            exclude = {time_col, effective_id_col, id_col, _synthetic_id}
+            remaining = [c for c in pred_df.columns if c not in exclude]
+            pred_col = remaining[0] if remaining else pred_df.columns[-1]
+
+        result = pd.DataFrame({
+            time_col: pred_df[time_col].values if time_col in pred_df.columns
+            else pd.date_range(
+                start=context_data[time_col].max(),
+                periods=n + 1, freq=getattr(self, '_freq', 'D')
+            )[1:],
+            target_col: pred_df[pred_col].values,
+        })
+
+        if id_col and id_col in pred_df.columns:
+            result[id_col] = pred_df[id_col].values
+
+        return result
 
     def predict(self, n, future_covariates=None, **kwargs):
         """
@@ -405,3 +295,36 @@ class ChronosModel(StatisticModelMixin, IntervalEstimationMixin):
             res = self.interval_predict(res)
 
         return self.chosen_cols(res)
+
+
+# ── Concrete model classes ──────────────────────────────────────────
+
+class Chronos2Model(_ChronosBase):
+    """Chronos-2: amazon/chronos-2 (120M params).
+
+    The flagship Chronos-2 model with full covariate support.
+    Best accuracy among the three variants.
+    """
+    _HF_PATH = 'amazon/chronos-2'
+
+
+class Chronos2SynthModel(_ChronosBase):
+    """Chronos-2-Synth: autogluon/chronos-2-synth (120M params).
+
+    Trained on synthetic data. Same architecture as Chronos-2 but
+    with a different training corpus.
+    """
+    _HF_PATH = 'autogluon/chronos-2-synth'
+
+
+class Chronos2SmallModel(_ChronosBase):
+    """Chronos-2-Small: autogluon/chronos-2-small (28M params).
+
+    Lightweight variant of Chronos-2. Faster inference with smaller
+    memory footprint, suitable for resource-constrained environments.
+    """
+    _HF_PATH = 'autogluon/chronos-2-small'
+
+
+# Backward-compatible alias — defaults to Chronos2Model
+ChronosModel = Chronos2Model

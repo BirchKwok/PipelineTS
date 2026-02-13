@@ -1132,7 +1132,7 @@ def test_hpo_search_space():
     assert 'epochs' in tcn_space
 
     # Chronos has no tunable params
-    chronos_space = get_search_space('chronos')
+    chronos_space = get_search_space('chronos_2')
     assert len(chronos_space) == 0
 
     # Unknown model returns empty
@@ -1396,6 +1396,105 @@ def test_incremental_update_not_fitted():
     print("[PASS] test_incremental_update_not_fitted")
 
 
+def test_per_model_lags_pipeline():
+    """Test ModelPipeline with per_model_lags parameter."""
+    df = LoadElectricDataSets()
+    df['date'] = pd.to_datetime(df['date'])
+
+    # Test 1: per_model_lags overrides global lag for specific models
+    pipe = ModelPipeline(
+        time_col='date', target_col='value', lags=16,
+        include_models=['lightgbm', 'catboost'],
+        per_model_lags={'lightgbm': 12, 'catboost': 8},
+        random_state=42,
+    )
+    lb = pipe.fit(df)
+    assert not lb.empty
+    assert len(lb) == 2
+
+    # Verify models got their individual lags
+    lgb_model = pipe.get_model('lightgbm')
+    cat_model = pipe.get_model('catboost')
+    assert lgb_model.all_configs['lags'] == 12
+    assert cat_model.all_configs['lags'] == 8
+
+    print(f"[PASS] test_per_model_lags_pipeline: lgb_lag={lgb_model.all_configs['lags']}, cat_lag={cat_model.all_configs['lags']}")
+
+
+def test_per_model_lags_default_fallback():
+    """Test that models not in per_model_lags use global lag."""
+    df = LoadElectricDataSets()
+    df['date'] = pd.to_datetime(df['date'])
+
+    pipe = ModelPipeline(
+        time_col='date', target_col='value', lags=16,
+        include_models=['lightgbm', 'catboost'],
+        per_model_lags={'lightgbm': 10},  # catboost not specified
+        random_state=42,
+    )
+    lb = pipe.fit(df)
+    assert not lb.empty
+
+    lgb_model = pipe.get_model('lightgbm')
+    cat_model = pipe.get_model('catboost')
+    assert lgb_model.all_configs['lags'] == 10
+    assert cat_model.all_configs['lags'] == 16  # fallback to global
+
+    print(f"[PASS] test_per_model_lags_default_fallback")
+
+
+def test_per_model_lags_empty_dict():
+    """Test that empty per_model_lags behaves like no override."""
+    df = LoadElectricDataSets()
+    df['date'] = pd.to_datetime(df['date'])
+
+    pipe = ModelPipeline(
+        time_col='date', target_col='value', lags=16,
+        include_models=['lightgbm'],
+        per_model_lags={},
+        random_state=42,
+    )
+    lb = pipe.fit(df)
+    lgb_model = pipe.get_model('lightgbm')
+    assert lgb_model.all_configs['lags'] == 16
+
+    print("[PASS] test_per_model_lags_empty_dict")
+
+
+@pytest.mark.timeout(600)
+def test_explore_lags_per_model():
+    """Test _explore_lags returns per-model lag dict."""
+    df = LoadElectricDataSets()
+    r = SmartRouter(
+        time_col='date', target_col='value',
+        search_strategy='auto', max_models=3, random_state=42,
+    )
+    data = r._ensure_datetime(df)
+    r.profile_ = r._profile_data(data)
+    r.strategy_ = r._build_strategy(r.profile_)
+
+    models = ['lightgbm', 'catboost']
+    primary_lag = r._explore_lags(data, models, r.strategy_)
+
+    # Verify per-model lags stored
+    assert hasattr(r, '_per_model_lags')
+    assert isinstance(r._per_model_lags, dict)
+    for m in models:
+        assert m in r._per_model_lags
+        assert isinstance(r._per_model_lags[m], int)
+
+    # Primary lag should be max of per-model lags
+    assert primary_lag == max(r._per_model_lags.values())
+
+    # Lag exploration results should be {model: {lag: metric}}
+    assert isinstance(r._lag_exploration_results, dict)
+    for m in models:
+        assert m in r._lag_exploration_results
+        assert isinstance(r._lag_exploration_results[m], dict)
+
+    print(f"[PASS] test_explore_lags_per_model: {r._per_model_lags}")
+
+
 if __name__ == '__main__':
     # Fast tests first (no model training)
     test_data_profile()
@@ -1449,5 +1548,9 @@ if __name__ == '__main__':
     test_incremental_pipeline_update()
     test_incremental_smart_router_update()
     test_incremental_update_not_fitted()
+    test_per_model_lags_pipeline()
+    test_per_model_lags_default_fallback()
+    test_per_model_lags_empty_dict()
+    test_explore_lags_per_model()
 
     print("\n=== All SmartRouter tests passed! ===")

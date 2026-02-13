@@ -49,6 +49,7 @@ class ModelPipeline:
         'gbdt_differential_n': int,
         'time_limit': (int, float, None),
         'id_col': (str, None),
+        'per_model_lags': (dict, None),
     }, 'ModelPipeline')
     @ParameterValuesAssert({
         'metric': lambda s: check_obj_is_function(s),
@@ -87,6 +88,7 @@ class ModelPipeline:
             cv=5,
             gbdt_differential_n=0,
             time_limit=None,
+            per_model_lags=None,
             **model_init_kwargs
     ):
         """
@@ -274,6 +276,7 @@ class ModelPipeline:
             _active = _device.upper().replace(':', ' ').split()[0]  # 'mps', 'cuda:0' -> 'MPS', 'CUDA'
         self._compute_device_msg = f"Accelerator: {_active}"
 
+        self.per_model_lags = per_model_lags or {}
         self.gbdt_differential_n = gbdt_differential_n
 
     def _check_time_budget(self):
@@ -357,11 +360,13 @@ class ModelPipeline:
 
         # 模型训练顺序
         for (model_name, model) in ms:
+            # Use per-model lag if available, otherwise global lag
+            effective_lags = self.per_model_lags.get(model_name, self.lags)
             model_kwargs = self._fill_func_params(
                 func=model,
                 time_col=self.time_col,
                 target_col=self.target_col,
-                lags=self.lags,
+                lags=effective_lags,
                 random_state=self.random_state,
                 quantile=self.quantile,
                 accelerator=self.accelerator,
@@ -755,6 +760,10 @@ class ModelPipeline:
         n_models = len(models)
         model_names = [name for name, _ in models]
         self.logger.info(f"Training {n_models} models: {model_names}")
+        if self.per_model_lags:
+            lag_info = ', '.join(f"{m}={l}" for m, l in sorted(self.per_model_lags.items()) if m in model_names)
+            if lag_info:
+                self.logger.info(f"Per-model lags: {lag_info} (primary={self.lags})")
 
         for idx, (model_name_after_rename, model) in enumerate(models):
             # Check time budget before starting next model

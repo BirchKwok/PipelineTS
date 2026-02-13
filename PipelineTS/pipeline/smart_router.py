@@ -453,6 +453,7 @@ class SmartRouter:
         self._scaler_obj = None
         self._screening_results = None
         self._lag_exploration_results = None
+        self._per_model_lags = None
         self._calibration_rho = None
         self._hpo_results = None
 
@@ -545,29 +546,47 @@ class SmartRouter:
             if self.verbose:
                 self._log_screening()
 
-        # Step 5: Multi-lag exploration (find optimal lag with holdout)
+        # Step 5: Multi-lag exploration (find optimal lag per model)
+        per_model_lags = None
         if self._should_explore_lags():
             if self.verbose:
                 self.logger.info(
                     f"\n{'─'*60}\n  🔎 LAG EXPLORATION\n{'─'*60}"
                 )
-            best_lag = self._explore_lags(
+            primary_lag = self._explore_lags(
                 full_processed, self.strategy_['models'], self.strategy_
             )
-            if best_lag != self.strategy_['lags']:
+            per_model_lags = getattr(self, '_per_model_lags', None)
+
+            # Check if all models agree on the same lag
+            unique_lags = set(per_model_lags.values()) if per_model_lags else set()
+            all_same_lag = len(unique_lags) == 1
+
+            if primary_lag != self.strategy_['lags']:
                 old_lag = self.strategy_['lags']
-                self.strategy_['lags'] = best_lag
+                self.strategy_['lags'] = primary_lag
                 if self.verbose:
-                    self.logger.info(
-                        f"  Lag updated: {old_lag} -> {best_lag}"
-                    )
-                # Re-split with optimal lag (only if we auto-split)
+                    if all_same_lag:
+                        self.logger.info(
+                            f"  Lag updated: {old_lag} -> {primary_lag}"
+                        )
+                    else:
+                        self.logger.info(
+                            f"  Primary lag updated: {old_lag} -> {primary_lag} "
+                            f"(max of per-model lags)"
+                        )
+                # Re-split with primary lag (only if we auto-split)
                 if not user_provided_valid:
                     processed_train, processed_valid = self._temporal_split(
-                        full_processed, best_lag
+                        full_processed, primary_lag
                     )
                     self._preprocessed_data = processed_train
                     self._valid_data = processed_valid
+
+            # Store per-model lags in strategy (only if models differ)
+            if per_model_lags and not all_same_lag:
+                self.strategy_['per_model_lags'] = per_model_lags
+
             if self.verbose:
                 self._log_lag_exploration()
 
@@ -587,6 +606,9 @@ class SmartRouter:
 
         remaining_time = self._get_remaining_time(t0)
 
+        # Pass per-model lags if models have different optimal lags
+        effective_per_model_lags = self.strategy_.get('per_model_lags', None)
+
         self.pipeline_ = ModelPipeline(
             time_col=self.time_col,
             target_col=self.target_col,
@@ -602,6 +624,7 @@ class SmartRouter:
             cv=self.cv,
             gbdt_differential_n=gbdt_diff_n,
             time_limit=remaining_time,
+            per_model_lags=effective_per_model_lags,
             **hyperparams,
         )
 
@@ -1300,7 +1323,8 @@ class SmartRouter:
             'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
                           'time2vec', 'gau'},
             'nn_heavy': {'transformer', 'tft', 'itransformer', 'srs_net',
-                         'deepar', 'chronos'},
+                         'deepar', 'chronos_2', 'chronos_2_synth',
+                         'chronos_2_small'},
         }
 
         # Find the best model from each category
@@ -1384,7 +1408,8 @@ class SmartRouter:
         nn_light = {'d_linear', 'n_linear', 'tide', 'tcn'}
         nn_medium = {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
                       'time2vec', 'gau'}
-        nn_heavy = {'transformer', 'tft', 'itransformer', 'srs_net', 'deepar', 'chronos'}
+        nn_heavy = {'transformer', 'tft', 'itransformer', 'srs_net', 'deepar',
+                    'chronos_2', 'chronos_2_synth', 'chronos_2_small'}
 
         # ---- Series length ----
         if n < 50:
@@ -1576,17 +1601,20 @@ class SmartRouter:
         if model_name == 'deepar' and n >= 200 and p.noise_ratio < 0.7:
             _add(4, 'deepar: probabilistic forecaster for clean data')
 
-        if model_name == 'chronos':
-            # Chronos is a zero-shot foundation model — no training needed
+        if model_name in ('chronos_2', 'chronos_2_synth', 'chronos_2_small'):
+            # Chronos-2 family: zero-shot foundation models — no training needed
             # Strong for small data where trained models may overfit
             if n < 100:
-                _add(10, 'chronos: zero-shot excels on small data')
+                _add(10, f'{model_name}: zero-shot excels on small data')
             elif n < 300:
-                _add(5, 'chronos: zero-shot viable for medium data')
+                _add(5, f'{model_name}: zero-shot viable for medium data')
             if p.pct_missing > 0.01:
-                _add(3, f'chronos: pretrained robustness to missing data ({p.pct_missing:.1%})')
+                _add(3, f'{model_name}: pretrained robustness to missing data ({p.pct_missing:.1%})')
             if p.n_seasonalities >= 2:
-                _add(5, 'chronos: pretrained handles complex seasonality', )
+                _add(5, f'{model_name}: pretrained handles complex seasonality')
+            # Differentiate: chronos_2_small is lighter, give slight bonus for speed
+            if model_name == 'chronos_2_small' and n >= 200:
+                _add(2, 'chronos_2_small: lightweight variant for larger data')
 
         return score, reasons
 
@@ -1867,62 +1895,61 @@ class SmartRouter:
         return params
 
     def _explore_lags(self, full_data, models, strategy):
-        """Try multiple lag values and return the best one.
+        """Try multiple lag values for each survivor model individually.
 
-        Uses a single fast model (ML preferred) to quickly evaluate
-        different lag values on holdout data.
+        Tests all survivor models at each lag candidate with lightweight
+        params, then picks the optimal lag per model.  Returns a primary
+        lag (max of per-model lags, for data splitting) and a dict of
+        per-model best lags.
 
         Parameters
         ----------
         full_data : pd.DataFrame
             Full preprocessed data (before train/valid split).
         models : list of str
-            Models to consider for fast eval (picks fastest).
+            Survivor model names to evaluate.
         strategy : dict
             Current strategy dict.
 
         Returns
         -------
         int
-            Optimal lag value.
+            Primary lag (max of per-model best lags, for data splitting).
         """
         base_lag = strategy['lags']
         n = len(full_data)
 
         candidates = self._generate_lag_candidates(base_lag, n)
         if len(candidates) <= 1:
-            self._lag_exploration_results = {base_lag: None}
+            self._lag_exploration_results = {}
+            self._per_model_lags = {m: base_lag for m in models}
             return base_lag
 
-        fast_model = self._pick_fast_eval_model(models)
-        best_lag = base_lag
-        best_metric = float('inf')
-        lag_results = {}
+        # Build lightweight hyperparams for all models (like screening)
+        fast_params = self._get_screening_hyperparams(models, strategy)
 
-        # Build fast-eval hyperparams for the chosen model
-        fast_params = {}
-        gbdt_set = {
-            'lightgbm', 'xgboost', 'catboost', 'random_forest',
-            'multi_output_model', 'multi_step_model', 'wide_gbrt',
-            'regressor_chain',
-        }
-        if fast_model in gbdt_set:
-            if fast_model == 'catboost':
-                fast_params[f'{fast_model}__iterations'] = 50
-            else:
-                fast_params[f'{fast_model}__n_estimators'] = 50
-            if fast_model == 'catboost':
-                fast_params[f'{fast_model}__verbose'] = False
-            elif fast_model in ('lightgbm', 'multi_output_model',
-                                'multi_step_model', 'wide_gbrt', 'xgboost'):
-                fast_params[f'{fast_model}__verbose'] = -1
-        else:
-            fast_params[f'{fast_model}__epochs'] = 100
+        # Time budget for lag exploration: 15% of total if set
+        lag_time_limit = None
+        if self.time_limit is not None:
+            lag_time_limit = self.time_limit * 0.15
+        lag_t0 = time.time()
+
+        # {model_name: {lag: metric}}
+        model_lag_metrics = {m: {} for m in models}
 
         for lag in candidates:
+            # Check time budget
+            if lag_time_limit is not None:
+                if time.time() - lag_t0 > lag_time_limit:
+                    if self.verbose:
+                        self.logger.info(
+                            f"  Lag exploration time budget exhausted, "
+                            f"tested {len([l for l in candidates if l <= lag]) - 1}/{len(candidates)} lags"
+                        )
+                    break
+
             try:
                 split_train, split_valid = self._temporal_split(full_data, lag)
-
                 if len(split_train) < lag * 2 or len(split_valid) < lag:
                     continue
 
@@ -1930,7 +1957,7 @@ class SmartRouter:
                     time_col=self.time_col,
                     target_col=self.target_col,
                     lags=lag,
-                    include_models=[fast_model],
+                    include_models=models,
                     scaler=deepcopy(strategy['scaler']),
                     accelerator=self.accelerator,
                     random_state=self.random_state,
@@ -1938,20 +1965,33 @@ class SmartRouter:
                     gbdt_differential_n=strategy['gbdt_differential_n'],
                     **fast_params,
                 )
-
                 eval_pipeline._device_info_logged = True
                 lb = eval_pipeline.fit(split_train, valid_data=split_valid)
+
                 if not lb.empty:
-                    metric = float(lb.iloc[0]['metric'])
-                    lag_results[lag] = metric
-                    if metric < best_metric:
-                        best_metric = metric
-                        best_lag = lag
+                    for _, row in lb.iterrows():
+                        mname = row['model']
+                        metric = float(row['metric'])
+                        if mname in model_lag_metrics:
+                            model_lag_metrics[mname][lag] = metric
             except Exception:
                 continue
 
-        self._lag_exploration_results = lag_results
-        return best_lag
+        # Determine per-model best lag
+        per_model_lags = {}
+        for m in models:
+            lag_metrics = model_lag_metrics.get(m, {})
+            if lag_metrics:
+                per_model_lags[m] = min(lag_metrics, key=lag_metrics.get)
+            else:
+                per_model_lags[m] = base_lag
+
+        self._lag_exploration_results = model_lag_metrics
+        self._per_model_lags = per_model_lags
+
+        # Primary lag = max of per-model lags (for data splitting)
+        primary_lag = max(per_model_lags.values()) if per_model_lags else base_lag
+        return primary_lag
 
     def _generate_lag_candidates(self, base_lag, n_rows):
         """Generate 2-3 lag candidates around the base lag."""
@@ -2303,19 +2343,52 @@ class SmartRouter:
             )
 
     def _log_lag_exploration(self):
-        """Log lag exploration results."""
+        """Log per-model lag exploration results."""
         if self._lag_exploration_results is None:
             return
-        results = self._lag_exploration_results
-        if not results:
+        model_lag_metrics = self._lag_exploration_results
+        per_model_lags = getattr(self, '_per_model_lags', None) or {}
+        if not model_lag_metrics:
             return
-        best_lag = self.strategy_['lags']
-        self.logger.info(f"\n  Lag exploration results:")
-        for lag, metric in sorted(results.items()):
-            marker = '*' if lag == best_lag else ' '
-            metric_str = f"{metric:.4f}" if metric is not None else "n/a"
+
+        # Collect all tested lags
+        all_lags = sorted({
+            lag for metrics in model_lag_metrics.values() for lag in metrics
+        })
+        if not all_lags:
+            return
+
+        self.logger.info(f"\n  Per-model lag exploration results:")
+
+        # Header
+        lag_headers = ''.join(f"{'lag=' + str(l):>12}" for l in all_lags)
+        self.logger.info(f"    {'Model':<20}{lag_headers}  {'best':>6}")
+        self.logger.info(f"    {'─'*20}{'─'*12*len(all_lags)}{'─'*8}")
+
+        for m in sorted(model_lag_metrics.keys()):
+            lag_metrics = model_lag_metrics[m]
+            best_lag = per_model_lags.get(m)
+            cells = []
+            for lag in all_lags:
+                if lag in lag_metrics:
+                    val = lag_metrics[lag]
+                    marker = '*' if lag == best_lag else ' '
+                    cells.append(f"{marker}{val:>10.4f} ")
+                else:
+                    cells.append(f"{'n/a':>12}")
+            row = ''.join(cells)
+            self.logger.info(f"    {m:<20}{row}  {best_lag:>5}")
+
+        # Summary line
+        unique_lags = set(per_model_lags.values())
+        if len(unique_lags) > 1:
             self.logger.info(
-                f"    {marker} lag={lag:<6} metric={metric_str}"
+                f"  Per-model lags: {dict(sorted(per_model_lags.items()))}"
+            )
+        else:
+            the_lag = unique_lags.pop() if unique_lags else self.strategy_['lags']
+            self.logger.info(
+                f"  All models agree: lag={the_lag}"
             )
 
     def _compute_calibration(self):
@@ -2421,10 +2494,24 @@ class SmartRouter:
         if self._screening_results is not None:
             self.logger.info(f"  Screening: {len(self._screening_results)} candidates evaluated")
         if self._lag_exploration_results:
-            self.logger.info(
-                f"  Lag exploration: tested {list(self._lag_exploration_results.keys())}, "
-                f"selected lag={self.strategy_['lags']}"
-            )
+            per_model_lags = self.strategy_.get('per_model_lags', None)
+            if per_model_lags:
+                all_lags = sorted(set(per_model_lags.values()))
+                lag_str = ', '.join(
+                    f"{m}={l}" for m, l in sorted(per_model_lags.items())
+                )
+                self.logger.info(
+                    f"  Lag exploration: per-model lags ({lag_str})"
+                )
+            else:
+                tested_lags = sorted({
+                    lag for metrics in self._lag_exploration_results.values()
+                    for lag in metrics
+                })
+                self.logger.info(
+                    f"  Lag exploration: tested {tested_lags}, "
+                    f"selected lag={self.strategy_['lags']}"
+                )
         if n_failed and self.pipeline_:
             self.logger.warning(
                 f"  Failed: {[f['model'] for f in self.pipeline_.failed_models]}"

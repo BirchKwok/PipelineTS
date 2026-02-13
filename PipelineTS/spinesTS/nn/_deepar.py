@@ -306,6 +306,20 @@ class DeepAR(TorchModelMixin, ForecastingMixin):
         )
         return model, loss_fn, optimizer
 
+    def _enable_residual_gate(self, n_sinkhorn_iters=10, init_alpha=0.3):
+        """Enable residual gate: disable Gaussian output first.
+
+        The SinkhornResidualGate expects output dim = out_features, but
+        the Gaussian head outputs 2*out_features ([mu|sigma]). Switch to
+        point-prediction mode (mu only) and use MAE loss instead.
+        """
+        backbone = self._get_backbone()
+        backbone._return_distribution = False
+        self.loss_fn = torch.nn.L1Loss()
+        super()._enable_residual_gate(
+            n_sinkhorn_iters=n_sinkhorn_iters, init_alpha=init_alpha
+        )
+
     def _enable_cqr(self, alpha=0.1):
         """Enable CQR mode: disable Gaussian output, use CQR for intervals.
 
@@ -358,16 +372,18 @@ class DeepAR(TorchModelMixin, ForecastingMixin):
         return pred.cpu().numpy()
 
     def _get_backbone(self):
-        """Get the DeepARBlock backbone, handling MultivariateWrapper."""
-        if isinstance(self.model, MultivariateWrapper):
-            return self.model.backbone
-        elif isinstance(self.model, CQRWrapper):
-            base = self.model.base_model
-            if isinstance(base, MultivariateWrapper):
-                return base.backbone
-            return base
-        else:
-            return self.model
+        """Get the DeepARBlock backbone, unwrapping any wrappers."""
+        model = self.model
+        # Unwrap SinkhornResidualGate
+        if isinstance(model, SinkhornResidualGate):
+            model = model.base_model
+        # Unwrap CQRWrapper
+        if isinstance(model, CQRWrapper):
+            model = model.base_model
+        # Unwrap MultivariateWrapper
+        if isinstance(model, MultivariateWrapper):
+            model = model.backbone
+        return model
 
     def metric(self, y_true, y_pred):
         """Model metric: use MAE on the mu portion of the output."""
@@ -416,5 +432,5 @@ class DeepAR(TorchModelMixin, ForecastingMixin):
                            verbose=verbose, **kwargs)
 
 
-# Import CQRWrapper at module level for isinstance check in _get_backbone
-from PipelineTS.spinesTS.base._torch_mixin import CQRWrapper
+# Import wrappers at module level for isinstance checks in _get_backbone
+from PipelineTS.spinesTS.base._torch_mixin import CQRWrapper, SinkhornResidualGate

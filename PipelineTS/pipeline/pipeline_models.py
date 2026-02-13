@@ -49,10 +49,14 @@ def get_all_available_models():
         'deepar': DeepARModel,
     }
 
-    # Chronos is optional — only register if chronos-forecasting is installed
+    # Chronos-2 family is optional — only register if chronos-forecasting is installed
     try:
-        from PipelineTS.nn_model.chronos import ChronosModel
-        models['chronos'] = ChronosModel
+        from PipelineTS.nn_model.chronos import (
+            Chronos2Model, Chronos2SynthModel, Chronos2SmallModel,
+        )
+        models['chronos_2'] = Chronos2Model
+        models['chronos_2_synth'] = Chronos2SynthModel
+        models['chronos_2_small'] = Chronos2SmallModel
     except ImportError:
         pass
 

@@ -1,8 +1,8 @@
 # Model Reference
 # 模型参考
 
-PipelineTS includes 25 built-in time series forecasting models across three categories.
-PipelineTS 包含 25 个内置时间序列预测模型，分为三大类。
+PipelineTS includes 28 built-in time series forecasting models across four categories.
+PipelineTS 包含 28 个内置时间序列预测模型，分为四大类。
 
 All models share a unified API: `fit(data)` for training and `predict(n)` for forecasting.
 所有模型共享统一的 API：`fit(data)` 用于训练，`predict(n)` 用于预测。
@@ -460,6 +460,65 @@ model = AutoARIMAModel(
 model.fit(data, cv=2)
 result = model.predict(10)
 ```
+
+---
+
+## Foundation Models / 基础模型 (optional / 可选)
+
+Foundation models are large pretrained models that perform **zero-shot forecasting** — no training on your data is needed.
+基础模型是大型预训练模型，执行**零样本预测** —— 无需在您的数据上训练。
+
+> Requires: `pip install chronos-forecasting`
+
+### Chronos-2 Family / Chronos-2 家族
+
+Three Chronos-2 model classes are available, each wrapping a different pretrained checkpoint:
+提供三个 Chronos-2 模型类，分别封装不同的预训练检查点：
+
+| Class / 类 | Pipeline Key / 管道键名 | HuggingFace Path | Size / 大小 |
+|---|---|---|---|
+| `Chronos2Model` | `chronos_2` | `amazon/chronos-2` | 120M |
+| `Chronos2SynthModel` | `chronos_2_synth` | `autogluon/chronos-2-synth` | 120M |
+| `Chronos2SmallModel` | `chronos_2_small` | `autogluon/chronos-2-small` | 28M |
+
+`ChronosModel` is a backward-compatible alias for `Chronos2Model`.
+`ChronosModel` 是 `Chronos2Model` 的向后兼容别名。
+
+**Common parameters / 通用参数:**
+
+| Parameter / 参数 | Default / 默认值 | Description / 描述 |
+|---|---|---|
+| `lags` | 1 | Kept for API compatibility / 保留用于 API 兼容 |
+| `quantile` | 0.9 | Conformal interval coverage / 共形区间覆盖率 |
+| `device_map` | `'auto'` | Device placement: `'auto'`, `'cpu'`, `'cuda'`, `'mps'` |
+
+```python
+from PipelineTS.nn_model import Chronos2Model, Chronos2SynthModel, Chronos2SmallModel
+
+# Standalone usage / 独立使用
+model = Chronos2SmallModel(
+    time_col='date', target_col='value', quantile=0.9
+)
+model.fit(data, cv=2)
+result = model.predict(10)
+
+# Pipeline usage / 管道使用
+from PipelineTS.pipeline import ModelPipeline
+
+pipe = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models=['chronos_2_small'],
+    quantile=0.9,
+)
+pipe.fit(data)
+pipe.predict(n=10)
+```
+
+**Key features / 主要特点:**
+- **Zero-shot**: No training needed, uses pretrained weights / 零样本：无需训练，使用预训练权重
+- **Covariate support**: All Chronos-2 models support known future covariates / 协变量支持：所有 Chronos-2 模型支持已知未来协变量
+- **Multi-series**: Supports panel data via `id_col` / 多序列：通过 `id_col` 支持面板数据
+- **Conformal intervals**: Prediction intervals via conformal calibration / 共形区间：通过共形校准实现预测区间
 
 ---
 

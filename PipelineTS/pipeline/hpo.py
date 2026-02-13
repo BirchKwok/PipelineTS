@@ -97,7 +97,9 @@ MODEL_SEARCH_SPACES = {
     'prophet': PROPHET_SEARCH_SPACE,
     'auto_arima': ARIMA_SEARCH_SPACE,
     # Foundation
-    'chronos': {},  # Chronos is zero-shot, no tunable hyperparams
+    'chronos_2': {},  # Chronos-2 family: zero-shot, no tunable hyperparams
+    'chronos_2_synth': {},
+    'chronos_2_small': {},
 }
 
 

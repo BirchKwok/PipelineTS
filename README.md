@@ -45,8 +45,8 @@ Built on top of spinesTS, it provides a unified interface for 26 time series mod
 
 ## Features / 特性
 
-- **25 built-in models**: 15 neural network, 7 machine learning, 2 statistical, and 1 ensemble pipeline model.
-- **25 个内置模型**：15 个神经网络、7 个机器学习、2 个统计模型和 1 个集成管道模型。
+- **28 built-in models**: 15 neural network, 8 machine learning, 2 statistical, and 3 foundation (Chronos-2) models.
+- **28 个内置模型**：15 个神经网络、8 个机器学习、2 个统计模型和 3 个基础（Chronos-2）模型。
 
 - **Automatic model selection**: `ModelPipeline` trains and compares all models, automatically selecting the best one.
 - **自动模型选择**：`ModelPipeline` 训练并比较所有模型，自动选出最佳模型。
@@ -268,6 +268,19 @@ plot_series(data, time_col=time_col, target_col=target_col)
 |---|---|---|
 | ProphetModel | `prophet` | Custom Prophet-like model with ridge regression / 自定义类 Prophet 岭回归模型 |
 | AutoARIMAModel | `auto_arima` | Auto ARIMA parameter search / 自动 ARIMA 参数搜索 |
+
+### Foundation Models / 基础模型 (3, optional / 可选)
+
+> Requires: `pip install chronos-forecasting`
+
+| Model / 模型 | Key / 键名 | Description / 描述 |
+|---|---|---|
+| Chronos2Model | `chronos_2` | Amazon Chronos-2 (120M params, covariate support) / Amazon Chronos-2（120M 参数，支持协变量） |
+| Chronos2SynthModel | `chronos_2_synth` | Chronos-2-Synth trained on synthetic data (120M) / Chronos-2-Synth 合成数据训练（120M） |
+| Chronos2SmallModel | `chronos_2_small` | Chronos-2-Small lightweight variant (28M) / Chronos-2-Small 轻量版（28M） |
+
+All Chronos-2 models are **zero-shot** — no training needed, they use pretrained weights from large-scale time series corpora.
+所有 Chronos-2 模型都是**零样本**的 —— 无需训练，使用大规模时序语料库的预训练权重。
 
 ---
 

@@ -146,7 +146,9 @@ All located in `PipelineTS.nn_model`.
 | `ITransformerModel` | `from PipelineTS.nn_model import ITransformerModel` |
 | `SRSNetModel` | `from PipelineTS.nn_model import SRSNetModel` |
 | `DeepARModel` | `from PipelineTS.nn_model import DeepARModel` |
-| `ChronosModel` *(optional)* | `from PipelineTS.nn_model import ChronosModel` |
+| `Chronos2Model` *(optional)* | `from PipelineTS.nn_model import Chronos2Model` |
+| `Chronos2SynthModel` *(optional)* | `from PipelineTS.nn_model import Chronos2SynthModel` |
+| `Chronos2SmallModel` *(optional)* | `from PipelineTS.nn_model import Chronos2SmallModel` |
 
 **Common interface / 通用接口:**
 
@@ -171,20 +173,30 @@ model.fit(data, valid_data=None)  # Train / 训练
 model.predict(n, data=None)       # Predict / 预测
 ```
 
-### `PipelineTS.nn_model.ChronosModel` *(optional dependency / 可选依赖)*
+### Chronos-2 Family *(optional dependency / 可选依赖)*
 
-Zero-shot foundation model wrapping Amazon Chronos pretrained models.
-零样本基础模型，封装 Amazon Chronos 预训练模型。
+Zero-shot foundation models wrapping Amazon/AutoGluon Chronos-2 pretrained models.
+零样本基础模型，封装 Amazon/AutoGluon Chronos-2 预训练模型。
 
 > Requires: `pip install chronos-forecasting`
 
+| Class / 类 | Pipeline Key / 管道键名 | HuggingFace Path | Size / 大小 |
+|---|---|---|---|
+| `Chronos2Model` | `chronos_2` | `amazon/chronos-2` | 120M |
+| `Chronos2SynthModel` | `chronos_2_synth` | `autogluon/chronos-2-synth` | 120M |
+| `Chronos2SmallModel` | `chronos_2_small` | `autogluon/chronos-2-small` | 28M |
+
+`ChronosModel` is a backward-compatible alias for `Chronos2Model`.
+`ChronosModel` 是 `Chronos2Model` 的向后兼容别名。
+
 ```python
-ChronosModel(
+from PipelineTS.nn_model import Chronos2Model, Chronos2SynthModel, Chronos2SmallModel
+
+model = Chronos2SmallModel(
     time_col: str,
     target_col: str,
     lags: int = 1,                   # API compatibility / API 兼容
     quantile: float | None = 0.9,    # Conformal interval coverage / 共形区间覆盖率
-    model_name: str | None = None,   # Default: 'chronos-bolt-small'
     device_map: str = 'auto',        # 'auto', 'cpu', 'cuda', 'mps'
 )
 
@@ -192,15 +204,8 @@ model.fit(data, cv=5)                              # Store data + calibrate inte
 model.predict(n, future_covariates=None)            # Zero-shot predict / 零样本预测
 ```
 
-**Available model names / 可用模型名称:**
-
-| Family / 家族 | Names / 名称 |
-|---|---|
-| Chronos-2 | `'chronos-2'` (supports covariates / 支持协变量) |
-| Chronos-Bolt | `'chronos-bolt-tiny'`, `'chronos-bolt-mini'`, `'chronos-bolt-small'`, `'chronos-bolt-base'` |
-| Chronos-T5 | `'chronos-t5-tiny'`, `'chronos-t5-mini'`, `'chronos-t5-small'`, `'chronos-t5-base'`, `'chronos-t5-large'` |
-
-**Features / 特点:** Zero-shot (no training), multi-series (`id_col`), covariates (Chronos-2 only), conformal intervals.
+**Features / 特点:** Zero-shot (no training), multi-series (`id_col`), covariates support, conformal intervals.
+**特点：** 零样本（无需训练）、多序列（`id_col`）、协变量支持、共形预测区间。
 
 ---
 

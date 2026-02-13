@@ -15,6 +15,8 @@ from PipelineTS.nn_model.srs_net import SRSNetModel
 from PipelineTS.nn_model.deepar import DeepARModel
 
 try:
-    from PipelineTS.nn_model.chronos import ChronosModel
+    from PipelineTS.nn_model.chronos import (
+        Chronos2Model, Chronos2SynthModel, Chronos2SmallModel, ChronosModel,
+    )
 except ImportError:
     pass
