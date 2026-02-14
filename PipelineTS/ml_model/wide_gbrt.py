@@ -1,18 +1,17 @@
 from copy import deepcopy
 import numpy as np
 import pandas as pd
-import re
-from lightgbm import LGBMRegressor
 from sklearn.preprocessing import MinMaxScaler
 from PipelineTS.spinesTS.ml_model import GBRTPreprocessing
 from sklearn.multioutput import RegressorChain
+from PipelineTS.ml_model._torch_tree import _TorchTreeWrapper
 from spinesUtils.asserts import generate_function_kwargs, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
 from PipelineTS.base.spines_base import SpinesMLModelMixin
-from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
+from PipelineTS.utils import check_time_col_is_timestamp
 
 
 class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
@@ -27,7 +26,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             differential_n=0,
             moving_avg_n=0,
             extend_daily_target_features=True,
-            estimator=LGBMRegressor,
+            estimator=_TorchTreeWrapper,
             **model_init_configs
     ):
         """
@@ -53,7 +52,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             The window size for the moving average operation on the target variable.
         extend_daily_target_features : bool, optional, default: True
             Whether to extend the features with daily target-related features.
-        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+        estimator : class, optional, default: _TorchTreeWrapper
             The base estimator used for the GBRT model.
         **model_init_configs : dict
             Additional keyword arguments for configuring the base estimator.
@@ -71,24 +70,21 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
         """
         super().__init__(time_col=time_col, target_col=target_col)
 
-        self.all_configs['model_configs'] = generate_function_kwargs(
-            estimator,
-            n_estimators=n_estimators,
-            random_state=random_state,
-            **model_init_configs
-        )
-
-        if 'LGBMRegressor' in re.split("<|>|class| |\.\'", str(estimator)):
-            self.all_configs['model_configs'] = update_dict_without_conflict(self.all_configs['model_configs'], {
-                'verbose': -1,
-                'learning_rate': 0.05,
-                'reg_alpha': 0.1,
-                'reg_lambda': 0.1,
-                'min_child_samples': 5,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
-                'subsample_freq': 1,
-            })
+        # Map n_estimators to n_trees for _TorchTreeWrapper compatibility
+        if estimator is _TorchTreeWrapper and 'n_trees' not in model_init_configs:
+            model_init_configs['n_trees'] = n_estimators
+            self.all_configs['model_configs'] = generate_function_kwargs(
+                estimator,
+                random_state=random_state,
+                **model_init_configs
+            )
+        else:
+            self.all_configs['model_configs'] = generate_function_kwargs(
+                estimator,
+                n_estimators=n_estimators,
+                random_state=random_state,
+                **model_init_configs
+            )
 
         self._estimator = estimator
 
@@ -137,7 +133,10 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
 
     def _define_model_for_cv(self):
         cv_configs = dict(self.all_configs['model_configs'])
-        cv_configs['n_estimators'] = min(100, cv_configs.get('n_estimators', 500))
+        if 'n_trees' in cv_configs:
+            cv_configs['n_trees'] = min(32, cv_configs.get('n_trees', 48))
+        else:
+            cv_configs['n_estimators'] = min(100, cv_configs.get('n_estimators', 500))
         return RegressorChain(self._estimator(**cv_configs))
 
     @ParameterValuesAssert({

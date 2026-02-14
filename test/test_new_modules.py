@@ -609,9 +609,9 @@ class TestWeightedEnsemble:
         from PipelineTS.training import WeightedEnsemble
         from PipelineTS.ml_model import LightGBMModel
         data = make_ts_data(120)
-        m1 = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+        m1 = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
         m2 = LightGBMModel(time_col='date', target_col='value', lags=12,
-                           n_estimators=50, verbose=-1)
+                           n_trees=32, n_epochs=50)
         ens = WeightedEnsemble(
             [('lgbm1', m1), ('lgbm2', m2)],
             time_col='date', target_col='value',
@@ -626,9 +626,9 @@ class TestWeightedEnsemble:
         from PipelineTS.training import WeightedEnsemble
         from PipelineTS.ml_model import LightGBMModel
         data = make_ts_data(120)
-        m1 = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+        m1 = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
         m2 = LightGBMModel(time_col='date', target_col='value', lags=12,
-                           n_estimators=50, verbose=-1)
+                           n_trees=32, n_epochs=50)
         ens = WeightedEnsemble(
             [('lgbm1', m1), ('lgbm2', m2)],
             time_col='date', target_col='value',
@@ -650,7 +650,7 @@ class TestRollingPredictor:
         from PipelineTS.prediction import RollingPredictor
         from PipelineTS.ml_model import LightGBMModel
         data = make_ts_data(150)
-        model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+        model = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
         rp = RollingPredictor(
             model, time_col='date', target_col='value',
             train_size=80, horizon=10, step=20, refit=True,
@@ -665,7 +665,7 @@ class TestRollingPredictor:
         from PipelineTS.prediction import RollingPredictor
         from PipelineTS.ml_model import LightGBMModel
         data = make_ts_data(150)
-        model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+        model = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
         rp = RollingPredictor(
             model, time_col='date', target_col='value',
             train_size=80, horizon=10, step=20,
@@ -681,18 +681,17 @@ class TestRollingPredictor:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestModelExplainer:
-    def test_feature_importance_gbdt(self):
+    def test_feature_importance_torch_tree(self):
         from PipelineTS.prediction import ModelExplainer
         from PipelineTS.ml_model import LightGBMModel
         data = make_ts_data(120)
-        model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+        model = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
         model.fit(data)
         explainer = ModelExplainer(model, time_col='date', target_col='value')
+        # Torch tree models don't expose native feature_importances_,
+        # so feature_importance() returns None (use permutation_importance instead)
         importance = explainer.feature_importance()
-        assert importance is not None
-        assert 'feature' in importance.columns
-        assert 'importance' in importance.columns
-        assert len(importance) > 0
+        assert importance is None
 
 
 if __name__ == '__main__':

@@ -49,7 +49,7 @@ class TestSaveLoadSingleModel:
 
         model = LightGBMModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=30, verbose=-1
+            quantile=None, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
 
@@ -72,7 +72,7 @@ class TestSaveLoadSingleModel:
 
         model = LightGBMModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=30, verbose=-1
+            quantile=None, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
 
@@ -93,7 +93,7 @@ class TestSaveLoadSingleModel:
 
         model = LightGBMModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=30, verbose=-1
+            quantile=None, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
 

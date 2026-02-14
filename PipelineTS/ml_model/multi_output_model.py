@@ -1,19 +1,17 @@
-import re
-
-from lightgbm import LGBMRegressor
 import numpy as np
 import pandas as pd
 
 from PipelineTS.spinesTS.ml_model import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
 from sklearn.multioutput import RegressorChain
 from PipelineTS.spinesTS.preprocessing import split_series, lag_splits
+from PipelineTS.ml_model._torch_tree import _TorchTreeWrapper
 from spinesUtils.asserts import generate_function_kwargs, ParameterTypeAssert, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
 from PipelineTS.spinesTS.pipeline import Pipeline
 
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
 from PipelineTS.base.spines_base import SpinesMLModelMixin
-from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
+from PipelineTS.utils import check_time_col_is_timestamp
 
 
 class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
@@ -23,12 +21,12 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
             target_col,
             lags=1,
             quantile=0.9,
-            estimator=LGBMRegressor,
+            estimator=_TorchTreeWrapper,
             differential_n=0,
             **model_configs
     ):
         """
-        A mixin class for multi-output regression models using scikit-learn's ensemble.RandomForest.
+        A mixin class for multi-output regression models.
 
         Parameters
         ----------
@@ -40,7 +38,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
             The number of lagged values to use as input features for training and prediction.
         quantile : float, optional, default: 0.9
             The quantile used for interval prediction. Set to None for point prediction.
-        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+        estimator : class, optional, default: _TorchTreeWrapper
             The base estimator used for the multi-output regression model.
         differential_n : int,  optional, default: 0
             The number of differencing operations to apply to the target variable.
@@ -67,11 +65,6 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
             self._base_estimator,
             **model_configs
         )
-
-        if 'LGBMRegressor' in re.split("<|>|class| |\.|\'", str(estimator)):
-            self.all_configs['model_configs'] = update_dict_without_conflict(self.all_configs['model_configs'], {
-                'verbose': -1
-            })
 
         self.last_dt = None
         self.last_lags_dataframe = None
@@ -286,11 +279,11 @@ class MultiOutputRegressorModel(_MultiOutputModelMixin):
             target_col,
             lags=1,
             quantile=0.9,
-            estimator=LGBMRegressor,
+            estimator=_TorchTreeWrapper,
             **model_configs
     ):
         """
-        Multi-output regression model using scikit-learn's ensemble.RandomForest with a regressor chain.
+        Multi-output regression model.
 
         Parameters
         ----------
@@ -302,7 +295,7 @@ class MultiOutputRegressorModel(_MultiOutputModelMixin):
             The number of lagged values to use as input features for training and prediction.
         quantile : float, optional, default: 0.9
             The quantile used for interval prediction. Set to None for point prediction.
-        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+        estimator : class, optional, default: _TorchTreeWrapper
             The base estimator used for the multi-output regression model.
         **model_configs : dict
             Additional keyword arguments for configuring the base estimator.
@@ -343,11 +336,11 @@ class MultiStepRegressorModel(_MultiOutputModelMixin):
             target_col,
             lags=1,
             quantile=0.9,
-            estimator=LGBMRegressor,
+            estimator=_TorchTreeWrapper,
             **model_configs
     ):
         """
-        Multi-step regression model using scikit-learn's ensemble.RandomForest with a multi-step regressor.
+        Multi-step regression model.
 
         Parameters
         ----------
@@ -359,7 +352,7 @@ class MultiStepRegressorModel(_MultiOutputModelMixin):
             The number of lagged values to use as input features for training and prediction.
         quantile : float, optional, default: 0.9
             The quantile used for interval prediction. Set to None for point prediction.
-        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+        estimator : class, optional, default: _TorchTreeWrapper
             The base estimator used for the multi-step regression model.
         **model_configs : dict
             Additional keyword arguments for configuring the base estimator.
@@ -400,11 +393,11 @@ class RegressorChainModel(_MultiOutputModelMixin):
             target_col,
             lags=1,
             quantile=0.9,
-            estimator=LGBMRegressor,
+            estimator=_TorchTreeWrapper,
             **model_configs
     ):
         """
-        Regressor chain model using scikit-learn's ensemble.RandomForest.
+        Regressor chain model.
 
         Parameters
         ----------
@@ -416,7 +409,7 @@ class RegressorChainModel(_MultiOutputModelMixin):
             The number of lagged values to use as input features for training and prediction.
         quantile : float, optional, default: 0.9
             The quantile used for interval prediction. Set to None for point prediction.
-        estimator : sklearn.base.BaseEstimator, optional, default: LGBMRegressor
+        estimator : class, optional, default: _TorchTreeWrapper
             The base estimator used for the regressor chain model.
         **model_configs : dict
             Additional keyword arguments for configuring the base estimator.

@@ -24,10 +24,19 @@ def get_all_available_models():
     models = {
         'auto_arima': AutoARIMAModel,
         'prophet': ProphetModel,
-        'catboost': CatBoostModel,
-        'lightgbm': LightGBMModel,
-        'xgboost': XGBoostModel,
+        # ML tree models (all GPU-accelerated via differentiable trees)
+        'catboost': CatBoostModel,            # alias → TorchBoostingForestModel
+        'lightgbm': LightGBMModel,            # alias → TorchBoostingForestModel
+        'xgboost': XGBoostModel,              # alias → TorchBoostingForestModel
+        'random_forest': RandomForestModel,    # alias → TorchBaggingForestModel
+        'torch_boosting_forest': TorchBoostingForestModel,
+        'torch_bagging_forest': TorchBaggingForestModel,
+        'deep_forest': DeepForestModel,
         'wide_gbrt': WideGBRTModel,
+        'multi_output_model': MultiOutputRegressorModel,
+        'multi_step_model': MultiStepRegressorModel,
+        'regressor_chain': RegressorChainModel,
+        # NN models
         'd_linear': DLinearModel,
         'n_linear': NLinearModel,
         'n_beats': NBeatsModel,
@@ -37,13 +46,9 @@ def get_all_available_models():
         'gau': GAUModel,
         'stacking_rnn': StackingRNNModel,
         'time2vec': Time2VecModel,
-        'multi_output_model': MultiOutputRegressorModel,
-        'multi_step_model': MultiStepRegressorModel,
         'transformer': TransformerModel,
-        'random_forest': RandomForestModel,
         'tide': TiDEModel,
         'patch_rnn': PatchRNNModel,
-        'regressor_chain': RegressorChainModel,
         'itransformer': ITransformerModel,
         'srs_net': SRSNetModel,
         'deepar': DeepARModel,

@@ -60,7 +60,7 @@ class TestCatBoostModel:
         from PipelineTS.ml_model import CatBoostModel
         model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, iterations=50, verbose=False
+            quantile=0.9, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -70,7 +70,7 @@ class TestCatBoostModel:
         from PipelineTS.ml_model import CatBoostModel
         model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, iterations=50, verbose=False
+            quantile=None, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -80,7 +80,7 @@ class TestCatBoostModel:
         from PipelineTS.ml_model import CatBoostModel
         model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, iterations=50, verbose=False
+            quantile=None, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N, data=small_data)
@@ -90,7 +90,7 @@ class TestCatBoostModel:
         from PipelineTS.ml_model import CatBoostModel
         model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, iterations=50, verbose=False
+            quantile=None, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
         configs = model.all_configs
@@ -104,7 +104,7 @@ class TestLightGBMModel:
         from PipelineTS.ml_model import LightGBMModel
         model = LightGBMModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_estimators=50, verbose=-1
+            quantile=0.9, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -114,7 +114,7 @@ class TestLightGBMModel:
         from PipelineTS.ml_model import LightGBMModel
         model = LightGBMModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=50, verbose=-1
+            quantile=None, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -124,7 +124,7 @@ class TestLightGBMModel:
         from PipelineTS.ml_model import LightGBMModel
         model = LightGBMModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=50, verbose=-1
+            quantile=None, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N, data=small_data)
@@ -138,7 +138,7 @@ class TestXGBoostModel:
         from PipelineTS.ml_model import XGBoostModel
         model = XGBoostModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_estimators=50, verbose=0
+            quantile=0.9, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -148,7 +148,7 @@ class TestXGBoostModel:
         from PipelineTS.ml_model import XGBoostModel
         model = XGBoostModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=50, verbose=0
+            quantile=None, n_trees=16, n_epochs=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -162,7 +162,7 @@ class TestRandomForestModel:
         from PipelineTS.ml_model import RandomForestModel
         model = RandomForestModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_estimators=50, random_state=42
+            quantile=0.9, n_trees=16, n_epochs=50, random_state=42
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -172,7 +172,7 @@ class TestRandomForestModel:
         from PipelineTS.ml_model import RandomForestModel
         model = RandomForestModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=50, random_state=42
+            quantile=None, n_trees=16, n_epochs=50, random_state=42
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -186,7 +186,7 @@ class TestWideGBRTModel:
         from PipelineTS.ml_model import WideGBRTModel
         model = WideGBRTModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_estimators=50, verbose=-1
+            quantile=0.9, n_estimators=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -196,7 +196,7 @@ class TestWideGBRTModel:
         from PipelineTS.ml_model import WideGBRTModel
         model = WideGBRTModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=50, verbose=-1
+            quantile=None, n_estimators=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -206,7 +206,7 @@ class TestWideGBRTModel:
         from PipelineTS.ml_model import WideGBRTModel
         model = WideGBRTModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=50, verbose=-1
+            quantile=None, n_estimators=50
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N, data=small_data)
@@ -216,7 +216,7 @@ class TestWideGBRTModel:
         from PipelineTS.ml_model import WideGBRTModel
         model = WideGBRTModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_estimators=50, verbose=-1,
+            quantile=None, n_estimators=50,
             differential_n=2
         )
         model.fit(small_data)
@@ -231,7 +231,7 @@ class TestMultiOutputRegressorModel:
         from PipelineTS.ml_model import MultiOutputRegressorModel
         model = MultiOutputRegressorModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, verbose=-1
+            quantile=0.9
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -241,7 +241,7 @@ class TestMultiOutputRegressorModel:
         from PipelineTS.ml_model import MultiOutputRegressorModel
         model = MultiOutputRegressorModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, verbose=-1
+            quantile=None
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -255,7 +255,7 @@ class TestMultiStepRegressorModel:
         from PipelineTS.ml_model import MultiStepRegressorModel
         model = MultiStepRegressorModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, verbose=-1
+            quantile=0.9
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -265,7 +265,7 @@ class TestMultiStepRegressorModel:
         from PipelineTS.ml_model import MultiStepRegressorModel
         model = MultiStepRegressorModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, verbose=-1
+            quantile=None
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -279,7 +279,7 @@ class TestRegressorChainModel:
         from PipelineTS.ml_model import RegressorChainModel
         model = RegressorChainModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, verbose=-1
+            quantile=0.9
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
@@ -289,7 +289,7 @@ class TestRegressorChainModel:
         from PipelineTS.ml_model import RegressorChainModel
         model = RegressorChainModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, verbose=-1
+            quantile=None
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)

@@ -215,7 +215,7 @@ class TestPipelineModelKwargs:
             time_col='date', target_col='value', lags=LAGS,
             include_models=['lightgbm'],
             quantile=None, cv=2,
-            lightgbm__n_estimators=30
+            lightgbm__n_trees=16
         )
         leaderboard = pipeline.fit(small_data)
         assert len(leaderboard) > 0
@@ -266,7 +266,7 @@ class TestPipelineConfigs:
     def test_create_configs(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('lightgbm', {'init_configs': {'n_estimators': 100}, 'fit_configs': {}}),
+            ('lightgbm', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
         ])
         assert configs is not None
         assert len(configs.configs) == 1
@@ -274,18 +274,18 @@ class TestPipelineConfigs:
     def test_get_configs(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('lightgbm', {'init_configs': {'n_estimators': 100}, 'fit_configs': {}}),
+            ('lightgbm', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
         ])
         model_name = configs.configs[0][1]
         result = configs.get_configs(model_name)
         assert result is not None
         assert 'init_configs' in result
-        assert result['init_configs']['n_estimators'] == 100
+        assert result['init_configs']['n_trees'] == 32
 
     def test_get_configs_not_found(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('lightgbm', {'init_configs': {'n_estimators': 100}, 'fit_configs': {}}),
+            ('lightgbm', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
         ])
         result = configs.get_configs('non_existent_model')
         assert result is None
@@ -293,7 +293,7 @@ class TestPipelineConfigs:
     def test_rename_model(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('lightgbm', 'my_lgbm', {'init_configs': {'n_estimators': 100}, 'fit_configs': {}}),
+            ('lightgbm', 'my_lgbm', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
         ])
         result = configs.get_configs('my_lgbm')
         assert result is not None
@@ -301,19 +301,19 @@ class TestPipelineConfigs:
     def test_multiple_configs(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('lightgbm', 'lgbm_v1', {'init_configs': {'n_estimators': 50}, 'fit_configs': {}}),
-            ('lightgbm', 'lgbm_v2', {'init_configs': {'n_estimators': 100}, 'fit_configs': {}}),
+            ('lightgbm', 'lgbm_v1', {'init_configs': {'n_trees': 16}, 'fit_configs': {}}),
+            ('lightgbm', 'lgbm_v2', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
         ])
         assert len(configs.configs) == 2
         r1 = configs.get_configs('lgbm_v1')
         r2 = configs.get_configs('lgbm_v2')
-        assert r1['init_configs']['n_estimators'] == 50
-        assert r2['init_configs']['n_estimators'] == 100
+        assert r1['init_configs']['n_trees'] == 16
+        assert r2['init_configs']['n_trees'] == 32
 
     def test_pipeline_with_configs(self, small_data):
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('lightgbm', 'lgbm_fast', {'init_configs': {'n_estimators': 30}, 'fit_configs': {}}),
+            ('lightgbm', 'lgbm_fast', {'init_configs': {'n_trees': 16}, 'fit_configs': {}}),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,

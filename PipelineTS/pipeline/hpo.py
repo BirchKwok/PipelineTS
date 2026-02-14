@@ -30,18 +30,6 @@ def _lazy_import_optuna():
 # Each search space is a dict mapping param_name -> (type, *args).
 # Types: 'int', 'float', 'loguniform', 'categorical'
 
-GBDT_SEARCH_SPACE = {
-    'n_estimators': ('int', 50, 500),
-    'max_depth': ('int', 3, 10),
-    'learning_rate': ('loguniform', 1e-3, 0.3),
-}
-
-CATBOOST_SEARCH_SPACE = {
-    'iterations': ('int', 50, 500),
-    'depth': ('int', 3, 10),
-    'learning_rate': ('loguniform', 1e-3, 0.3),
-}
-
 NN_LIGHT_SEARCH_SPACE = {
     'learning_rate': ('loguniform', 1e-4, 1e-2),
     'epochs': ('int', 500, 3000),
@@ -56,25 +44,45 @@ PROPHET_SEARCH_SPACE = {
     'changepoint_prior_scale': ('loguniform', 0.001, 0.5),
 }
 
+DEEP_FOREST_SEARCH_SPACE = {
+    'n_trees': ('int', 16, 64),
+    'tree_depth': ('int', 3, 6),
+    'n_layers': ('int', 2, 5),
+    'learning_rate': ('loguniform', 1e-3, 0.02),
+    'n_epochs': ('int', 200, 800),
+}
+
+TORCH_TREE_SEARCH_SPACE = {
+    'n_trees': ('int', 32, 192),
+    'tree_depth': ('int', 3, 7),
+    'learning_rate': ('loguniform', 1e-3, 0.05),
+    'n_epochs': ('int', 200, 800),
+}
+
+TORCH_CASCADE_SEARCH_SPACE = {
+    'n_trees': ('int', 16, 64),
+    'tree_depth': ('int', 3, 6),
+    'n_layers': ('int', 2, 5),
+    'learning_rate': ('loguniform', 1e-3, 0.02),
+    'n_epochs': ('int', 200, 800),
+}
+
 ARIMA_SEARCH_SPACE = {}  # AutoARIMA does its own grid search
 
 # Model name -> search space mapping
 MODEL_SEARCH_SPACES = {
-    # GBDT / ML models
-    'lightgbm': GBDT_SEARCH_SPACE,
-    'xgboost': GBDT_SEARCH_SPACE,
-    'catboost': CATBOOST_SEARCH_SPACE,
-    'random_forest': {
-        'n_estimators': ('int', 50, 500),
-        'max_depth': ('int', 3, 15),
-    },
-    'wide_gbrt': {
-        'n_estimators': ('int', 50, 300),
-        'learning_rate': ('loguniform', 1e-3, 0.3),
-    },
-    'multi_output_model': GBDT_SEARCH_SPACE,
-    'multi_step_model': GBDT_SEARCH_SPACE,
-    'regressor_chain': GBDT_SEARCH_SPACE,
+    # All tree models now use differentiable torch trees
+    'lightgbm': TORCH_TREE_SEARCH_SPACE,
+    'xgboost': TORCH_TREE_SEARCH_SPACE,
+    'catboost': TORCH_TREE_SEARCH_SPACE,
+    'random_forest': TORCH_TREE_SEARCH_SPACE,
+    'torch_boosting_forest': TORCH_TREE_SEARCH_SPACE,
+    'torch_bagging_forest': TORCH_TREE_SEARCH_SPACE,
+    'wide_gbrt': TORCH_TREE_SEARCH_SPACE,
+    'multi_output_model': TORCH_TREE_SEARCH_SPACE,
+    'multi_step_model': TORCH_TREE_SEARCH_SPACE,
+    'regressor_chain': TORCH_TREE_SEARCH_SPACE,
+    'deep_forest': DEEP_FOREST_SEARCH_SPACE,
     # NN light
     'd_linear': NN_LIGHT_SEARCH_SPACE,
     'n_linear': NN_LIGHT_SEARCH_SPACE,
