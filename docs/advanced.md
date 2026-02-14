@@ -119,20 +119,20 @@ Multi-output regression models support custom base estimators.
 
 ```python
 from PipelineTS.ml_model import MultiOutputRegressorModel
-from xgboost import XGBRegressor
-from catboost import CatBoostRegressor
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import ExtraTreesRegressor
 
-# Use XGBoost as base estimator / 使用 XGBoost 作为基础估计器
+# Use GradientBoosting as base estimator / 使用 GradientBoosting 作为基础估计器
 model = MultiOutputRegressorModel(
     time_col='date', target_col='value', lags=12,
-    estimator=XGBRegressor,
-    kwargs={'verbosity': 0},
+    estimator=GradientBoostingRegressor,
+    kwargs={'n_estimators': 100},
 )
 
-# Use CatBoost as base estimator / 使用 CatBoost 作为基础估计器
+# Use ExtraTrees as base estimator / 使用 ExtraTrees 作为基础估计器
 model = MultiOutputRegressorModel(
     time_col='date', target_col='value', lags=12,
-    estimator=CatBoostRegressor,
+    estimator=ExtraTreesRegressor,
     verbose=False,
 )
 ```
@@ -142,11 +142,11 @@ The same works for `WideGBRTModel`:
 
 ```python
 from PipelineTS.ml_model import WideGBRTModel
-from xgboost import XGBRegressor
+from sklearn.ensemble import GradientBoostingRegressor
 
 model = WideGBRTModel(
     time_col='date', target_col='value', lags=12,
-    estimator=XGBRegressor,
+    estimator=GradientBoostingRegressor,
     verbose=0,
 )
 ```

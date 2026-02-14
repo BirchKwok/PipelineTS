@@ -13,7 +13,7 @@ class ModelExplainer:
     """Extract and visualize feature importance from fitted models.
 
     Supports:
-    - Native feature importance (GBDT models: LightGBM, XGBoost, CatBoost)
+    - Native feature importance (tree-based models)
     - Permutation importance (any model, model-agnostic)
 
     Parameters
@@ -55,18 +55,18 @@ class ModelExplainer:
         importance = None
         feature_names = None
 
-        # LightGBM
+        # Models with feature_name_ attribute
         if hasattr(inner_model, 'feature_importances_') and hasattr(inner_model, 'feature_name_'):
             importance = inner_model.feature_importances_
             feature_names = inner_model.feature_name_
-        # XGBoost / CatBoost / sklearn
+        # Models with feature_importances_ attribute
         elif hasattr(inner_model, 'feature_importances_'):
             importance = inner_model.feature_importances_
             if hasattr(inner_model, 'feature_names_in_'):
                 feature_names = list(inner_model.feature_names_in_)
             else:
                 feature_names = [f'feature_{i}' for i in range(len(importance))]
-        # XGBoost get_score
+        # Models with get_score method
         elif hasattr(inner_model, 'get_score'):
             score = inner_model.get_score(importance_type='weight')
             feature_names = list(score.keys())
@@ -201,7 +201,7 @@ class ModelExplainer:
         plt.show()
 
     def _get_inner_model(self):
-        """Try to extract the underlying sklearn/lightgbm/xgboost model."""
+        """Try to extract the underlying sklearn-compatible model."""
         # PipelineTS GBDT models: self.model.model = RegressorChain(LGBMRegressor)
         m = getattr(self.model, 'model', None)
         if m is None:

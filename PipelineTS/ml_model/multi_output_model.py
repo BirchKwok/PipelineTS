@@ -84,7 +84,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
 
     def _define_model(self):
         """
-        Define the multi-output regression model using scikit-learn's ensemble.RandomForest.
+        Define the multi-output regression model.
 
         Raises
         ------

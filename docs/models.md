@@ -329,8 +329,8 @@ All tree models automatically build rich lag features (26+ features per window) 
 
 **Architecture highlights / 架构亮点:**
 
-- **Oblivious decision trees**: All trees share the same split structure (like CatBoost), enabling efficient batched computation.
-- **斜向决策树**：所有树共享相同的分裂结构（类似 CatBoost），实现高效批量计算。
+- **Oblivious decision trees**: All trees share the same split structure, enabling efficient batched computation.
+- **斜向决策树**：所有树共享相同的分裂结构，实现高效批量计算。
 - **Linear skip connection**: `output = trees(x) + linear(x)` — trees learn the non-linear residual on top of a strong linear baseline.
 - **线性跳跃连接**：`output = trees(x) + linear(x)` —— 树在强线性基线之上学习非线性残差。
 - **Feature temperature annealing**: Softmax temperature on feature logits annealed 1.0→0.1 during training, producing increasingly tree-like hard feature selection.
@@ -349,9 +349,9 @@ All tree models automatically build rich lag features (26+ features per window) 
 
 ### TorchBoostingForestModel
 
-GPU-accelerated gradient boosting forest with staged residual learning (MART/DART). Subsumes LightGBM, XGBoost, and CatBoost via differentiable oblivious trees trained end-to-end. Each boosting stage trains on the residual error from all previous stages, with a GrowNet-style corrective step for joint fine-tuning.
+GPU-accelerated gradient boosting forest with staged residual learning (MART/DART). Uses differentiable oblivious trees trained end-to-end. Each boosting stage trains on the residual error from all previous stages, with a GrowNet-style corrective step for joint fine-tuning.
 
-GPU 加速梯度提升森林，具有分阶段残差学习（MART/DART）。通过端到端训练的可微分斜向树统一了 LightGBM、XGBoost 和 CatBoost。每个提升阶段在前序所有阶段的残差误差上训练，并使用 GrowNet 风格的修正步骤进行联合微调。
+GPU 加速梯度提升森林，具有分阶段残差学习（MART/DART）。使用端到端训练的可微分斜向树。每个提升阶段在前序所有阶段的残差误差上训练，并使用 GrowNet 风格的修正步骤进行联合微调。
 
 **Model-specific parameters / 模型特有参数:**
 
@@ -366,7 +366,7 @@ GPU 加速梯度提升森林，具有分阶段残差学习（MART/DART）。通�
 | `dropout` | 0.0 | Tree-level dropout / 树级别的 Dropout |
 | `weight_decay` | 1e-4 | L2 regularization / L2 正则化 |
 | `boosting_stages` | 3 | Number of sequential residual boosting stages / 顺序残差提升阶段数 |
-| `boosting_shrinkage` | 0.5 | Shrinkage per stage (like eta in XGBoost) / 每阶段收缩率 |
+| `boosting_shrinkage` | 0.5 | Shrinkage per stage / 每阶段收缩率 |
 | `accelerator` | None | `'cuda'`, `'mps'`, `'cpu'`, or None (auto-detect) / 加速器 |
 | `auto_complexity` | False | Enable adaptive complexity auto-tuning / 启用自适应复杂度自动调优 |
 | `verbose` | False | Show training progress / 显示训练进度 |
@@ -391,9 +391,9 @@ result = model.predict(10)
 
 ### TorchBaggingForestModel
 
-GPU-accelerated bagging forest (RandomForest-style). Each tree votes independently, and tree-level dropout during training decorrelates the ensemble — analogous to random subspace selection in classical Random Forests.
+GPU-accelerated bagging forest. Each tree votes independently, and tree-level dropout during training decorrelates the ensemble — analogous to random subspace selection in classical bagging methods.
 
-GPU 加速袋装森林（RandomForest 风格）。每棵树独立投票，训练期间的树级别 Dropout 去相关集成 —— 类似于经典随机森林的随机子空间选择。
+GPU 加速袋装森林。每棵树独立投票，训练期间的树级别 Dropout 去相关集成 —— 类似于经典袋装方法的随机子空间选择。
 
 
 | Parameter / 参数 | Default / 默认值 | Description / 描述 |
@@ -541,11 +541,11 @@ You can specify a custom estimator:
 可以指定自定义估计器：
 
 ```python
-from xgboost import XGBRegressor
+from sklearn.ensemble import GradientBoostingRegressor
 
 model = MultiOutputRegressorModel(
     time_col='date', target_col='value', lags=12,
-    estimator=XGBRegressor, verbose=0
+    estimator=GradientBoostingRegressor, verbose=0
 )
 ```
 

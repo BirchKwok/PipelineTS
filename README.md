@@ -149,16 +149,15 @@ data[time_col] = pd.to_datetime(data[time_col])
 ### Train a Single Model / 训练单个模型
 
 ```python
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 
-# Initialize and train a LightGBM model
-# 初始化并训练 LightGBM 模型
-model = LightGBMModel(
+# Initialize and train a model
+# 初始化并训练模型
+model = TorchBoostingForestModel(
     time_col=time_col,
     target_col=target_col,
     lags=12,
     quantile=0.9,
-    verbose=-1
 )
 model.fit(data)
 
@@ -249,14 +248,10 @@ plot_series(data, time_col=time_col, target_col=target_col)
 | SRSNetModel | `srs_net` | Selective Representation Space Network (multivariate) / 选择性表征空间网络（多变量） |
 | DeepARModel | `deepar` | Probabilistic forecasting with RWKV encoder + Gaussian head / 基于 RWKV 编码器 + 高斯输出头的概率预测 |
 
-### Machine Learning Models / 机器学习模型 (7)
+### Machine Learning Models / 机器学习模型 (4)
 
 | Model / 模型 | Key / 键名 | Description / 描述 |
 |---|---|---|
-| LightGBMModel | `lightgbm` | LightGBM gradient boosting / LightGBM 梯度提升 |
-| XGBoostModel | `xgboost` | XGBoost gradient boosting / XGBoost 梯度提升 |
-| CatBoostModel | `catboost` | CatBoost gradient boosting / CatBoost 梯度提升 |
-| RandomForestModel | `random_forest` | Random Forest regressor / 随机森林回归 |
 | WideGBRTModel | `wide_gbrt` | Wide-table GBRT with rich features / 宽表 GBRT + 丰富特征 |
 | MultiOutputRegressorModel | `multi_output_model` | Multi-output regressor / 多输出回归 |
 | MultiStepRegressorModel | `multi_step_model` | Multi-step regressor / 多步回归 |
@@ -302,7 +297,7 @@ ModelPipeline.list_all_available_models()
 pipeline = ModelPipeline(..., include_models='light')  # 'light', 'all', 'nn', 'ml'
 
 # Or specify a list of model names / 或指定模型名称列表
-pipeline = ModelPipeline(..., include_models=['lightgbm', 'xgboost', 'd_linear'])
+pipeline = ModelPipeline(..., include_models=['torch_boosting_forest', 'torch_bagging_forest', 'd_linear'])
 ```
 
 ### PipelineConfigs / 管道配置
@@ -314,8 +309,8 @@ Use `PipelineConfigs` to create multiple model variants with different hyperpara
 from PipelineTS.pipeline import PipelineConfigs
 
 configs = PipelineConfigs([
-    ('lightgbm', 'lgbm_v1', {'init_configs': {'n_estimators': 100}}),
-    ('lightgbm', 'lgbm_v2', {'init_configs': {'n_estimators': 300}}),
+    ('torch_boosting_forest', 'boost_v1', {'init_configs': {'n_trees': 32}}),
+    ('torch_boosting_forest', 'boost_v2', {'init_configs': {'n_trees': 128}}),
 ])
 
 pipeline = ModelPipeline(..., configs=configs)
@@ -329,8 +324,8 @@ Pass model-specific parameters directly via double-underscore syntax.
 ```python
 pipeline = ModelPipeline(
     ...,
-    lightgbm__n_estimators=200,
-    xgboost__verbose=0,
+    torch_boosting_forest__n_trees=64,
+    torch_bagging_forest__n_trees=128,
     d_linear__lags=50,
 )
 ```
@@ -616,10 +611,10 @@ Walk-forward backtesting evaluates model performance by simulating sequential re
 
 ```python
 from PipelineTS.evaluation import Backtester
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 from PipelineTS.spinesTS.metrics import mae
 
-model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
 bt = Backtester(model, time_col='date', target_col='value', metric=mae, metric_name='MAE')
 
 # Run expanding window backtesting / 运行扩展窗口回测
@@ -655,8 +650,8 @@ from PipelineTS.evaluation import ModelComparison
 from PipelineTS.metrics import mape, r2_score, picp
 
 comp = ModelComparison(time_col='date', target_col='value')
-comp.add_result('LightGBM', y_true, y_pred_lgbm, lower=lower_lgbm, upper=upper_lgbm)
-comp.add_result('XGBoost', y_true, y_pred_xgb, lower=lower_xgb, upper=upper_xgb)
+comp.add_result('BoostForest', y_true, y_pred_boost, lower=lower_boost, upper=upper_boost)
+comp.add_result('BagForest', y_true, y_pred_bag, lower=lower_bag, upper=upper_bag)
 
 # Evaluate on multiple metrics / 多指标评估
 table = comp.fit(
@@ -681,21 +676,19 @@ Built-in hyperparameter tuning using Optuna (with random search fallback).
 
 ```python
 from PipelineTS.training import AutoTune
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 from PipelineTS.spinesTS.metrics import mae
 
 tuner = AutoTune(
-    model_class=LightGBMModel,
+    model_class=TorchBoostingForestModel,
     time_col='date', target_col='value', lags=12,
     metric=mae, n_trials=30,
-    fixed_params={'verbose': -1},
 )
 
 best_model, best_params, history = tuner.fit(data, search_space={
-    'n_estimators': ('int', 50, 500),
+    'n_trees': ('int', 16, 128),
     'learning_rate': ('float', 0.01, 0.3, True),  # True = log scale / True = 对数刻度
-    'max_depth': ('int', 3, 10),
-    'num_leaves': ('int', 15, 63),
+    'tree_depth': ('int', 3, 7),
 })
 ```
 
@@ -703,11 +696,11 @@ best_model, best_params, history = tuner.fit(data, search_space={
 
 ```python
 from PipelineTS.training import WeightedEnsemble, StackingEnsemble
-from PipelineTS.ml_model import LightGBMModel, XGBoostModel
+from PipelineTS.ml_model import TorchBoostingForestModel, TorchBaggingForestModel
 
 models = [
-    ('lgbm', LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)),
-    ('xgb', XGBoostModel(time_col='date', target_col='value', lags=12, verbose=0)),
+    ('boost', TorchBoostingForestModel(time_col='date', target_col='value', lags=12)),
+    ('bag', TorchBaggingForestModel(time_col='date', target_col='value', lags=12)),
 ]
 
 # Weighted ensemble (auto-computes inverse-error weights)
@@ -735,9 +728,9 @@ Re-fits the model on a sliding window of recent data for adaptive forecasting.
 
 ```python
 from PipelineTS.prediction import RollingPredictor
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 
-model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
 rp = RollingPredictor(
     model, time_col='date', target_col='value',
     train_size=100,   # Training window / 训练窗口
@@ -850,12 +843,11 @@ For neural network models, Conformalized Quantile Regression (CQR) provides adap
 ```python
 # Single model with interval prediction
 # 单模型区间预测
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 
-model = LightGBMModel(
+model = TorchBoostingForestModel(
     time_col='date', target_col='value', lags=12,
     quantile=0.9,  # 90% prediction interval / 90% 预测区间
-    verbose=-1
 )
 model.fit(data)
 result = model.predict(10)
@@ -888,7 +880,7 @@ from PipelineTS.pipeline import ModelPipeline
 
 pipeline = ModelPipeline(
     time_col='date', target_col='value', lags=12,
-    quantile=0.9, include_models=['lightgbm'],
+    quantile=0.9, include_models=['torch_boosting_forest'],
 )
 pipeline.fit(data)
 
@@ -957,7 +949,7 @@ pipeline = ModelPipeline(
     target_col='value',
     lags=12,
     id_col='store_id',  # Enable multi-series / 启用多序列
-    include_models=['lightgbm', 'catboost'],
+    include_models=['torch_boosting_forest', 'torch_bagging_forest'],
 )
 pipeline.fit(data)
 
@@ -992,7 +984,7 @@ pipeline = ModelPipeline(
     time_col='date', target_col='value', lags=12,
     known_covariates=['holiday', 'promotion'],   # Known future values / 已知未来值
     past_covariates=['temperature'],              # Historical only / 仅历史值
-    include_models=['lightgbm', 'prophet'],
+    include_models=['torch_boosting_forest', 'prophet'],
 )
 pipeline.fit(data)  # data must contain covariate columns / data 必须包含协变量列
 
@@ -1017,7 +1009,7 @@ from PipelineTS.pipeline import ModelPipeline
 
 pipeline = ModelPipeline(
     time_col='date', target_col='value', lags=12,
-    include_models=['lightgbm', 'catboost'],
+    include_models=['torch_boosting_forest', 'torch_bagging_forest'],
 )
 pipeline.fit(initial_data)
 

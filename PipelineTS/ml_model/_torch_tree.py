@@ -3,8 +3,8 @@
 Implements Neural Oblivious Decision Ensembles (NODE) adapted for time series
 regression.  Each "tree" is a differentiable oblivious decision tree with
 learned feature selection, split thresholds, and leaf response values.
-Ensembles of these soft trees simulate the behavior of LightGBM, CatBoost,
-XGBoost, RandomForest, and DeepForest — but train end-to-end on GPU via
+Ensembles of these soft trees provide gradient boosting, bagging, and
+cascade (DeepForest) behavior — all trained end-to-end on GPU via
 backpropagation.
 
 Architecture (v3 — vectorized + skip + temp annealing)
@@ -613,7 +613,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         trained jointly).  >1 = true gradient boosting where each stage
         learns the residual from previous stages.
     boosting_shrinkage : float
-        Shrinkage factor per boosting stage (like eta in XGBoost).
+        Shrinkage factor per boosting stage.
     accelerator : str or None
     random_state : int or None
     verbose : bool
@@ -983,7 +983,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         effective_dropout = self.dropout
         effective_weight_decay = self.weight_decay
 
-        # For heavily regularized variants (xgboost/rf-like defaults),
+        # For heavily regularized variants,
         # structural breaks benefit from lighter regularization on the
         # latest regime.
         if (has_structural_break and self.ensemble_mode == 'additive'

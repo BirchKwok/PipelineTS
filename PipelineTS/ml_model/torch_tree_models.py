@@ -4,9 +4,9 @@ Provides three complementary PyTorch-based tree ensemble architectures
 inspired by Google's Yggdrasil Decision Forests:
 
 - ``TorchBoostingForestModel``  — staged gradient boosting (MART/DART)
-  with GrowNet corrective step.  Replaces LightGBM / XGBoost / CatBoost.
+  with GrowNet corrective step.
 - ``TorchBaggingForestModel``   — bagging ensemble with tree-level dropout
-  for decorrelation.  Replaces RandomForest.
+  for decorrelation.
 - ``TorchDeepForestModel``      — cascade (gcForest) multi-layer ensemble.
 
 All models inherit ``_DirectGBDTMixin`` for full time series support:
@@ -29,9 +29,8 @@ from PipelineTS.ml_model._torch_tree import _TorchTreeWrapper
 class TorchBoostingForestModel(_DirectGBDTMixin):
     """GPU-accelerated gradient boosting forest (MART/DART).
 
-    Unified differentiable boosting ensemble that subsumes LightGBM,
-    XGBoost and CatBoost via staged residual learning with oblivious
-    decision trees trained end-to-end on GPU.
+    Unified differentiable boosting ensemble using staged residual
+    learning with oblivious decision trees trained end-to-end on GPU.
 
     Parameters
     ----------
@@ -123,7 +122,7 @@ class TorchBoostingForestModel(_DirectGBDTMixin):
 
 
 class TorchBaggingForestModel(_DirectGBDTMixin):
-    """GPU-accelerated bagging forest (RandomForest-style).
+    """GPU-accelerated bagging forest.
 
     Differentiable bagging ensemble where each tree votes independently
     and tree-level dropout during training decorrelates the ensemble,

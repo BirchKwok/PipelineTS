@@ -176,8 +176,8 @@ class TestTorchTreeRegistry:
     def test_old_names_removed(self):
         from PipelineTS.pipeline.pipeline_models import get_all_available_models
         models = get_all_available_models()
-        for old in ['torch_lightgbm', 'torch_catboost', 'torch_xgboost',
-                     'torch_random_forest']:
+        for old in ['lightgbm', 'catboost', 'xgboost',
+                     'random_forest']:
             assert old not in models, f"Old name still in registry: {old}"
 
 
