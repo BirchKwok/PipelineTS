@@ -84,6 +84,7 @@ class DeepForestModel(_DirectGBDTMixin):
         weight_decay=1e-4,
         random_state=None,
         verbose=False,
+        auto_complexity=False,
     ):
         super().__init__(time_col=time_col, target_col=target_col)
 
@@ -101,6 +102,7 @@ class DeepForestModel(_DirectGBDTMixin):
             accelerator=accelerator,
             random_state=random_state,
             verbose=verbose,
+            auto_complexity=auto_complexity,
         )
 
         self.last_dt = None

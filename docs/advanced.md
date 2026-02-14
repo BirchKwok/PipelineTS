@@ -428,8 +428,8 @@ custom_pipeline = ModelPipeline(
 
 ## Computing Backends / 计算后端
 
-Neural network models support multiple computing backends:
-神经网络模型支持多种计算后端：
+Neural network models and GPU tree models support multiple computing backends:
+神经网络模型和 GPU 树模型支持多种计算后端：
 
 ```python
 from PipelineTS.pipeline import ModelPipeline
@@ -447,6 +447,138 @@ pipeline = ModelPipeline(
     n_hits__accelerator='cpu',  # Force CPU for NHits / 对 NHits 强制使用 CPU
     tft__accelerator='cpu',     # Force CPU for TFT / 对 TFT 强制使用 CPU
 )
+```
+
+---
+
+## GPU-Accelerated Tree Models / GPU 加速树模型
+
+All GBDT models in PipelineTS (`LightGBMModel`, `XGBoostModel`, `CatBoostModel`, `RandomForestModel`) are implemented as **GPU-accelerated differentiable tree ensembles** built in PyTorch. They are actually aliases for `TorchBoostingForestModel` and `TorchBaggingForestModel`.
+
+PipelineTS 中所有 GBDT 模型（`LightGBMModel`、`XGBoostModel`、`CatBoostModel`、`RandomForestModel`）均实现为基于 PyTorch 的 **GPU 加速可微分树集成**。它们实际上是 `TorchBoostingForestModel` 和 `TorchBaggingForestModel` 的别名。
+
+### Architecture / 架构
+
+The core `_DifferentiableTreeEnsemble` stores all tree parameters as **batched tensors** `(n_trees, ...)`. The forward pass uses `torch.einsum` and element-wise ops — **zero Python loops** over individual trees.
+
+核心 `_DifferentiableTreeEnsemble` 将所有树参数存储为**批量张量** `(n_trees, ...)`。前向传播使用 `torch.einsum` 和逐元素操作 —— 对单棵树**零 Python 循环**。
+
+```
+Input → Feature Normalization → Oblivious Trees (batched einsum) + Linear Skip → Output
+                                      ↑
+                          Temperature-annealed feature selection (1.0→0.1)
+```
+
+**Three ensemble modes / 三种集成模式:**
+
+| Mode / 模式 | Model / 模型 | Description / 描述 |
+|---|---|---|
+| `additive` | TorchBoostingForest | Staged gradient boosting with GrowNet corrective step / 带 GrowNet 修正的分阶段梯度提升 |
+| `additive` + dropout | TorchBaggingForest | Bagging with tree-level dropout for decorrelation / 带树级 Dropout 的袋装集成 |
+| `cascade` | DeepForest | Multi-layer gcForest; each layer augments features / 多层级联，每层增强特征 |
+
+### GPU Optimization Details / GPU 优化详情
+
+These optimizations are **automatic** — they activate when CUDA is available and data is large enough:
+
+这些优化是**自动的** —— 当 CUDA 可用且数据足够大时自动激活：
+
+| Optimization / 优化 | Condition / 条件 | Benefit / 收益 |
+|---|---|---|
+| **AMP (Mixed Precision)** | CUDA + n ≥ 128 | FP16 forward pass with FP32 loss scaling — 1.5–2× throughput / FP16 前向 + FP32 损失缩放 |
+| **torch.compile** | CUDA + n ≥ 256 + PyTorch 2.0+ | Fused CUDA kernels via `reduce-overhead` mode / 融合 CUDA 内核 |
+| **pin_memory + non_blocking** | CUDA | Overlapped CPU→GPU data transfer / CPU→GPU 数据传输重叠 |
+| **torch.inference_mode** | Always (predict) | Disables autograd + version counting for faster inference / 禁用自动求导加速推理 |
+| **On-device randperm** | CUDA | `torch.randperm(n, device=cuda)` avoids CPU→GPU transfer per epoch / 避免每轮 CPU→GPU 传输 |
+
+```python
+from PipelineTS.ml_model import TorchBoostingForestModel
+
+# GPU acceleration is automatic / GPU 加速是自动的
+model = TorchBoostingForestModel(
+    time_col='date', target_col='value', lags=16,
+    accelerator='cuda',  # or None for auto-detect / None 为自动检测
+)
+model.fit(data)
+result = model.predict(10)
+```
+
+### Staged Gradient Boosting / 分阶段梯度提升
+
+`TorchBoostingForestModel` supports true sequential residual boosting via `boosting_stages > 1`:
+
+`TorchBoostingForestModel` 通过 `boosting_stages > 1` 支持真正的顺序残差提升：
+
+1. **Stage 1**: Train a tree ensemble on the target.
+2. **Stage 2**: Train a new ensemble on the residual error from Stage 1.
+3. **Stage N**: Each stage learns the residual from all previous stages.
+4. **GrowNet corrective step**: After all stages, jointly fine-tune all stage models for a few epochs.
+
+```python
+model = TorchBoostingForestModel(
+    time_col='date', target_col='value', lags=16,
+    boosting_stages=3,         # 3 sequential residual stages / 3 个顺序残差阶段
+    boosting_shrinkage=0.5,    # Shrinkage per stage (like eta in XGBoost) / 每阶段收缩率
+)
+```
+
+### Adaptive Complexity Auto-Tuning / 自适应复杂度自动调优
+
+When `auto_complexity=True`, an `_AdaptiveComplexityController` analyzes the normalized training data and automatically selects optimal `tree_depth` and `n_trees`.
+
+当 `auto_complexity=True` 时，`_AdaptiveComplexityController` 分析归一化训练数据并自动选择最优的 `tree_depth` 和 `n_trees`。
+
+**Data statistics analyzed / 分析的数据统计量:**
+
+| Statistic / 统计量 | Method / 方法 |
+|---|---|
+| **Noise ratio** | Residual variance after OLS fit / OLS 拟合后的残差方差比 |
+| **Nonlinearity** | Running-mean residual vs linear residual / 滑动均值残差 vs 线性残差 |
+| **Autocorrelation** | Lag-1 autocorrelation coefficient / 滞后-1 自相关系数 |
+| **Feature concentration** | Entropy-based importance concentration / 基于熵的重要性集中度 |
+
+**Complexity profiles / 复杂度配置:**
+
+| Profile / 配置 | Depth / 深度 | Trees / 树数 | Data size / 数据规模 |
+|---|---|---|---|
+| `minimal` | 2–3 | 8–24 | n < 60 |
+| `light` | 3–4 | 16–48 | n < 150 |
+| `moderate` | 4–5 | 32–64 | n < 400 |
+| `heavy` | 5–6 | 48–96 | n < 1000 |
+| `maximal` | 6–7 | 64–128 | n ≥ 1000 |
+
+**Adjustment factors / 调整因子:**
+
+- High noise (>0.7) → reduce complexity / 高噪声 → 降低复杂度
+- High nonlinearity (>0.6) → deeper trees / 高非线性 → 更深的树
+- Strong autocorrelation (>0.8) → moderate complexity / 强自相关 → 适中复杂度
+- Cascade mode → lighter per-layer trees (−0.15) / 级联模式 → 每层更轻量的树
+
+```python
+from PipelineTS.ml_model import TorchBoostingForestModel
+
+model = TorchBoostingForestModel(
+    time_col='date', target_col='value', lags=16,
+    auto_complexity=True,     # Enable auto-tuning / 启用自动调优
+    verbose=True,             # Print selection reasons / 打印选择原因
+)
+model.fit(data)
+
+# Access complexity selection results / 访问复杂度选择结果
+info = model.model.complexity_info
+print(f"Profile: {info['profile']}")              # e.g., 'moderate'
+print(f"Selected: depth={info['tree_depth']}, trees={info['n_trees']}")
+print(f"Score: {info['complexity_score']}")        # 0.0 – 1.0
+print(f"Reasons: {info['reasons']}")               # ['medium_data(n=350)->moderate', ...]
+print(f"Data stats: {info['stats']}")              # noise, nonlinearity, autocorr, etc.
+```
+
+**Verbose output example / 详细输出示例:**
+
+```
+[AdaptiveComplexity] profile=moderate score=0.550 depth=5 trees=64
+  reasons: medium_data(n=350)->moderate, low_noise(0.04)->increase, strong_autocorr(0.85)->moderate
+  stats: noise=0.04 nonlin=0.50 autocorr=0.85 n=350 f=42
 ```
 
 ---

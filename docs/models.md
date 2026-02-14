@@ -1,8 +1,8 @@
 # Model Reference
 # 模型参考
 
-PipelineTS includes 28 built-in time series forecasting models across four categories.
-PipelineTS 包含 28 个内置时间序列预测模型，分为四大类。
+PipelineTS includes 25+ built-in time series forecasting models across five categories.
+PipelineTS 包含 25+ 个内置时间序列预测模型，分为五大类。
 
 All models share a unified API: `fit(data)` for training and `predict(n)` for forecasting.
 所有模型共享统一的 API：`fit(data)` 用于训练，`predict(n)` 用于预测。
@@ -318,64 +318,209 @@ Salinas et al., "DeepAR: Probabilistic Forecasting with Autoregressive Recurrent
 
 ---
 
-## Machine Learning Models / 机器学习模型
+## GPU-Accelerated Tree Models / GPU 加速树模型
 
-ML models are based on gradient boosting and ensemble methods. They typically train faster than NN models.
-ML 模型基于梯度提升和集成方法。通常比神经网络模型训练更快。
+PipelineTS features fully **GPU-accelerated differentiable tree ensembles** built in PyTorch. All tree parameters are stored as batched tensors and the forward pass uses `torch.einsum` — **zero Python loops** over individual trees. GPU acceleration is automatic: CUDA > MPS > CPU fallback.
 
-All ML models automatically build rich lag features (26+ features per window) including statistics, trends, and autocorrelation.
-所有 ML 模型自动构建丰富的滞后特征（每个窗口 26+ 个特征），包括统计量、趋势和自相关。
+PipelineTS 采用基于 PyTorch 的**全 GPU 加速可微分树集成**。所有树参数以批量张量存储，前向传播使用 `torch.einsum` —— 对单棵树**零 Python 循环**。GPU 加速为自动模式：CUDA > MPS > CPU 降级。
 
-### LightGBMModel
+All tree models automatically build rich lag features (26+ features per window) including statistics, trends, and autocorrelation.
+所有树模型自动构建丰富的滞后特征（每个窗口 26+ 个特征），包括统计量、趋势和自相关。
+
+**Architecture highlights / 架构亮点:**
+
+- **Oblivious decision trees**: All trees share the same split structure (like CatBoost), enabling efficient batched computation.
+- **斜向决策树**：所有树共享相同的分裂结构（类似 CatBoost），实现高效批量计算。
+- **Linear skip connection**: `output = trees(x) + linear(x)` — trees learn the non-linear residual on top of a strong linear baseline.
+- **线性跳跃连接**：`output = trees(x) + linear(x)` —— 树在强线性基线之上学习非线性残差。
+- **Feature temperature annealing**: Softmax temperature on feature logits annealed 1.0→0.1 during training, producing increasingly tree-like hard feature selection.
+- **特征温度退火**：特征 logits 的 softmax 温度在训练中从 1.0 退火到 0.1，产生越来越像树的硬特征选择。
+- **Structural-break adaptation**: YDF-inspired exponential recency sample weighting for regime changes.
+- **结构性断点适应**：受 YDF 启发的指数近因样本加权，用于处理分布变化。
+
+**GPU optimization features / GPU 优化特性:**
+
+| Feature / 特性 | Description / 描述 |
+|---|---|
+| **AMP (Mixed Precision)** | `torch.amp.autocast` + `GradScaler` for CUDA, auto-enabled when n≥128 / CUDA 混合精度，n≥128 时自动启用 |
+| **torch.compile** | PyTorch 2.0+ `reduce-overhead` mode for CUDA when n≥256 / PyTorch 2.0+ 编译加速 |
+| **pin_memory** | Efficient CPU→GPU data transfers via `pin_memory()` + `non_blocking=True` / 高效 CPU→GPU 数据传输 |
+| **inference_mode** | `torch.inference_mode()` for faster prediction / 更快的推理模式 |
+
+### TorchBoostingForestModel
+
+GPU-accelerated gradient boosting forest with staged residual learning (MART/DART). Subsumes LightGBM, XGBoost, and CatBoost via differentiable oblivious trees trained end-to-end. Each boosting stage trains on the residual error from all previous stages, with a GrowNet-style corrective step for joint fine-tuning.
+
+GPU 加速梯度提升森林，具有分阶段残差学习（MART/DART）。通过端到端训练的可微分斜向树统一了 LightGBM、XGBoost 和 CatBoost。每个提升阶段在前序所有阶段的残差误差上训练，并使用 GrowNet 风格的修正步骤进行联合微调。
+
+> **Note / 注意**: `LightGBMModel`, `XGBoostModel`, and `CatBoostModel` are backward-compatible aliases for `TorchBoostingForestModel`.
+> `LightGBMModel`、`XGBoostModel` 和 `CatBoostModel` 是 `TorchBoostingForestModel` 的向后兼容别名。
+
+**Model-specific parameters / 模型特有参数:**
+
+| Parameter / 参数 | Default / 默认值 | Description / 描述 |
+|---|---|---|
+| `n_trees` | 64 | Number of trees per boosting stage / 每个提升阶段的树数量 |
+| `tree_depth` | 5 | Depth of each oblivious decision tree / 每棵斜向决策树的深度 |
+| `learning_rate` | 0.08 | Learning rate for AdamW optimizer / AdamW 优化器的学习率 |
+| `n_epochs` | 200 | Maximum training epochs per stage / 每阶段最大训练轮数 |
+| `batch_size` | 0 | Batch size (0 = full batch) / 批大小（0 = 全批量） |
+| `early_stop_patience` | 15 | Early stopping patience / 早停耐心值 |
+| `dropout` | 0.0 | Tree-level dropout / 树级别的 Dropout |
+| `weight_decay` | 1e-4 | L2 regularization / L2 正则化 |
+| `boosting_stages` | 3 | Number of sequential residual boosting stages / 顺序残差提升阶段数 |
+| `boosting_shrinkage` | 0.5 | Shrinkage per stage (like eta in XGBoost) / 每阶段收缩率 |
+| `accelerator` | None | `'cuda'`, `'mps'`, `'cpu'`, or None (auto-detect) / 加速器 |
+| `auto_complexity` | False | Enable adaptive complexity auto-tuning / 启用自适应复杂度自动调优 |
+| `verbose` | False | Show training progress / 显示训练进度 |
 
 ```python
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 
-model = LightGBMModel(
-    time_col='date', target_col='value', lags=12,
-    quantile=0.9, n_estimators=200, verbose=-1
+model = TorchBoostingForestModel(
+    time_col='date', target_col='value', lags=16,
+    quantile=0.9,
+    accelerator='cuda',       # GPU acceleration / GPU 加速
+    n_trees=64,
+    tree_depth=5,
+    boosting_stages=3,
+    boosting_shrinkage=0.5,
+    auto_complexity=False,     # Set True for auto-tuning / 设为 True 自动调优
 )
 model.fit(data)
 result = model.predict(10)
 ```
 
-### XGBoostModel
-
 ```python
-from PipelineTS.ml_model import XGBoostModel
-
-model = XGBoostModel(
-    time_col='date', target_col='value', lags=12,
-    quantile=0.9, n_estimators=200, verbose=0
-)
+# Backward-compatible aliases / 向后兼容别名
+from PipelineTS.ml_model import LightGBMModel   # == TorchBoostingForestModel
+from PipelineTS.ml_model import XGBoostModel     # == TorchBoostingForestModel
+from PipelineTS.ml_model import CatBoostModel    # == TorchBoostingForestModel
 ```
 
-### CatBoostModel
+### TorchBaggingForestModel
+
+GPU-accelerated bagging forest (RandomForest-style). Each tree votes independently, and tree-level dropout during training decorrelates the ensemble — analogous to random subspace selection in classical Random Forests.
+
+GPU 加速袋装森林（RandomForest 风格）。每棵树独立投票，训练期间的树级别 Dropout 去相关集成 —— 类似于经典随机森林的随机子空间选择。
+
+> **Note / 注意**: `RandomForestModel` is a backward-compatible alias for `TorchBaggingForestModel`.
+> `RandomForestModel` 是 `TorchBaggingForestModel` 的向后兼容别名。
+
+| Parameter / 参数 | Default / 默认值 | Description / 描述 |
+|---|---|---|
+| `n_trees` | 128 | Number of trees in the ensemble / 集成中的树数量 |
+| `tree_depth` | 5 | Depth of each oblivious decision tree / 每棵树的深度 |
+| `dropout` | 0.15 | Tree-level dropout for decorrelation / 去相关的树级 Dropout |
+| `n_epochs` | 300 | Maximum training epochs / 最大训练轮数 |
+| `auto_complexity` | False | Enable adaptive complexity auto-tuning / 启用自适应复杂度自动调优 |
 
 ```python
-from PipelineTS.ml_model import CatBoostModel
+from PipelineTS.ml_model import TorchBaggingForestModel
 
-model = CatBoostModel(
-    time_col='date', target_col='value', lags=12,
-    quantile=0.9, iterations=200, verbose=False
+model = TorchBaggingForestModel(
+    time_col='date', target_col='value', lags=16,
+    quantile=0.9,
+    accelerator='cuda',
+    n_trees=128,
+    dropout=0.15,
 )
+model.fit(data)
+result = model.predict(10)
 ```
-
-### RandomForestModel
 
 ```python
-from PipelineTS.ml_model import RandomForestModel
-
-model = RandomForestModel(
-    time_col='date', target_col='value', lags=12,
-    quantile=0.9, n_estimators=200, random_state=42
-)
+# Backward-compatible alias / 向后兼容别名
+from PipelineTS.ml_model import RandomForestModel  # == TorchBaggingForestModel
 ```
+
+### DeepForestModel
+
+GPU-accelerated Deep Forest (gcForest) — multi-layer cascade of differentiable tree ensembles (Zhou & Feng 2017). Each layer's tree outputs are concatenated with the original features and fed to the next layer, all trained end-to-end via backpropagation. Includes a learnable residual scale parameter that provides gradient shortcuts to all layers.
+
+GPU 加速深度森林（gcForest）—— 多层级联可微分树集成（Zhou & Feng 2017）。每层树的输出与原始特征拼接后输入下一层，全部通过反向传播端到端训练。包含可学习的残差缩放参数，为所有层提供梯度快捷通道。
+
+| Parameter / 参数 | Default / 默认值 | Description / 描述 |
+|---|---|---|
+| `n_trees` | 32 | Trees per cascade layer / 每层级联的树数量 |
+| `tree_depth` | 4 | Depth of each tree / 每棵树的深度 |
+| `n_layers` | 3 | Number of cascade layers / 级联层数 |
+| `dropout` | 0.1 | Tree-level dropout / 树级 Dropout |
+| `n_epochs` | 200 | Maximum training epochs / 最大训练轮数 |
+| `auto_complexity` | False | Enable adaptive complexity auto-tuning / 启用自适应复杂度自动调优 |
+
+```python
+from PipelineTS.ml_model import DeepForestModel
+
+model = DeepForestModel(
+    time_col='date', target_col='value', lags=16,
+    quantile=0.9,
+    accelerator='cuda',
+    n_trees=32,
+    n_layers=3,
+    tree_depth=4,
+)
+model.fit(data)
+result = model.predict(10)
+```
+
+```python
+# Pipeline usage / 管道使用
+from PipelineTS.pipeline import ModelPipeline
+
+pipe = ModelPipeline(
+    time_col='date', target_col='value', lags=16,
+    include_models=['deep_forest'],
+    deep_forest__n_layers=4,
+    deep_forest__n_trees=48,
+)
+pipe.fit(data)
+```
+
+### Adaptive Complexity Auto-Tuning / 自适应复杂度自动调优
+
+All three GPU tree models support `auto_complexity=True`, which dynamically selects optimal `tree_depth` and `n_trees` based on data characteristics. An `_AdaptiveComplexityController` analyzes the training data and selects one of five complexity profiles:
+
+三个 GPU 树模型均支持 `auto_complexity=True`，可根据数据特征动态选择最优的 `tree_depth` 和 `n_trees`。`_AdaptiveComplexityController` 分析训练数据并选择五个复杂度配置之一：
+
+| Profile / 配置 | Depth / 深度 | Trees / 树数 | When / 适用场景 |
+|---|---|---|---|
+| `minimal` | 2–3 | 8–24 | Tiny data (n < 60) / 极小数据 |
+| `light` | 3–4 | 16–48 | Small data (n < 150) / 小数据 |
+| `moderate` | 4–5 | 32–64 | Medium data (n < 400) / 中等数据 |
+| `heavy` | 5–6 | 48–96 | Large data (n < 1000) / 大数据 |
+| `maximal` | 6–7 | 64–128 | Very large data (n ≥ 1000) / 超大数据 |
+
+The controller considers: **data size**, **noise ratio** (linear residual variance), **nonlinearity** (smooth vs linear fit), **autocorrelation** (lag-1), and **ensemble mode** (cascade gets lighter per-layer trees).
+
+控制器综合考虑：**数据规模**、**噪声比率**（线性残差方差）、**非线性度**（平滑 vs 线性拟合）、**自相关**（滞后-1）和**集成模式**（级联模式每层使用更轻量的树）。
+
+```python
+from PipelineTS.ml_model import TorchBoostingForestModel
+
+model = TorchBoostingForestModel(
+    time_col='date', target_col='value', lags=16,
+    auto_complexity=True,     # Enable auto-tuning / 启用自动调优
+    verbose=True,             # Print complexity selection reasons / 打印复杂度选择原因
+)
+model.fit(data)
+
+# Inspect the auto-selected complexity / 查看自动选择的复杂度
+info = model.model.complexity_info
+print(f"Profile: {info['profile']}")          # e.g., 'moderate'
+print(f"Auto depth: {info['tree_depth']}")    # e.g., 5
+print(f"Auto trees: {info['n_trees']}")       # e.g., 64
+print(f"Reasons: {info['reasons']}")          # e.g., ['medium_data(n=350)->moderate', ...]
+```
+
+---
+
+## Other ML Models / 其他 ML 模型
 
 ### WideGBRTModel
 
-Wide-table GBRT with automatically constructed rich time series features. Supports differencing.
-宽表 GBRT 模型，自动构建丰富的时序特征。支持差分操作。
+Wide-table GBRT with automatically constructed rich time series features (~40 features). Supports differencing.
+宽表 GBRT 模型，自动构建丰富的时序特征（约 40 个特征）。支持差分操作。
 
 ```python
 from PipelineTS.ml_model import WideGBRTModel

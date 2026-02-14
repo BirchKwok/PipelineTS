@@ -214,12 +214,100 @@ model.predict(n, future_covariates=None)            # Zero-shot predict / 零样
 All located in `PipelineTS.ml_model`.
 全部位于 `PipelineTS.ml_model`。
 
+### GPU-Accelerated Tree Models / GPU 加速树模型
+
+| Class / 类 | Import / 导入 | Description / 描述 |
+|---|---|---|
+| `TorchBoostingForestModel` | `from PipelineTS.ml_model import TorchBoostingForestModel` | Staged gradient boosting (MART/DART) / 分阶段梯度提升 |
+| `TorchBaggingForestModel` | `from PipelineTS.ml_model import TorchBaggingForestModel` | Bagging forest with dropout / 带 Dropout 的袋装森林 |
+| `DeepForestModel` | `from PipelineTS.ml_model import DeepForestModel` | Cascade multi-layer ensemble (gcForest) / 级联多层集成 |
+
+**Backward-compatible aliases / 向后兼容别名:**
+
+| Alias / 别名 | Points to / 指向 |
+|---|---|
+| `LightGBMModel` | `TorchBoostingForestModel` |
+| `XGBoostModel` | `TorchBoostingForestModel` |
+| `CatBoostModel` | `TorchBoostingForestModel` |
+| `RandomForestModel` | `TorchBaggingForestModel` |
+
+```python
+TorchBoostingForestModel(
+    time_col: str,
+    target_col: str,
+    lags: int = 1,
+    quantile: float | None = 0.9,
+    accelerator: str | None = None,  # 'cuda', 'mps', 'cpu', or None (auto)
+    n_trees: int = 64,
+    tree_depth: int = 5,
+    learning_rate: float = 0.08,
+    n_epochs: int = 200,
+    batch_size: int = 0,             # 0 = full batch
+    early_stop_patience: int = 15,
+    dropout: float = 0.0,
+    weight_decay: float = 1e-4,
+    boosting_stages: int = 3,
+    boosting_shrinkage: float = 0.5,
+    random_state: int | None = None,
+    verbose: bool = False,
+    auto_complexity: bool = False,   # Enable adaptive depth/trees auto-tuning
+)
+```
+
+```python
+TorchBaggingForestModel(
+    time_col: str,
+    target_col: str,
+    lags: int = 1,
+    quantile: float | None = 0.9,
+    accelerator: str | None = None,
+    n_trees: int = 128,
+    tree_depth: int = 5,
+    learning_rate: float = 0.08,
+    n_epochs: int = 300,
+    batch_size: int = 0,
+    early_stop_patience: int = 15,
+    dropout: float = 0.15,           # Tree-level dropout for decorrelation
+    weight_decay: float = 1e-4,
+    random_state: int | None = None,
+    verbose: bool = False,
+    auto_complexity: bool = False,
+)
+```
+
+```python
+DeepForestModel(
+    time_col: str,
+    target_col: str,
+    lags: int = 1,
+    quantile: float | None = 0.9,
+    accelerator: str | None = None,
+    n_trees: int = 32,
+    tree_depth: int = 4,
+    n_layers: int = 3,               # Number of cascade layers
+    learning_rate: float = 0.08,
+    n_epochs: int = 200,
+    batch_size: int = 0,
+    early_stop_patience: int = 12,
+    dropout: float = 0.1,
+    weight_decay: float = 1e-4,
+    random_state: int | None = None,
+    verbose: bool = False,
+    auto_complexity: bool = False,
+)
+```
+
+**Auto-complexity property / 自适应复杂度属性:**
+
+```python
+model.model.complexity_info  # dict or None
+# Returns: {'profile', 'tree_depth', 'n_trees', 'complexity_score', 'reasons', 'stats'}
+```
+
+### Other ML Models / 其他 ML 模型
+
 | Class / 类 | Import / 导入 |
 |---|---|
-| `LightGBMModel` | `from PipelineTS.ml_model import LightGBMModel` |
-| `XGBoostModel` | `from PipelineTS.ml_model import XGBoostModel` |
-| `CatBoostModel` | `from PipelineTS.ml_model import CatBoostModel` |
-| `RandomForestModel` | `from PipelineTS.ml_model import RandomForestModel` |
 | `WideGBRTModel` | `from PipelineTS.ml_model import WideGBRTModel` |
 | `MultiOutputRegressorModel` | `from PipelineTS.ml_model import MultiOutputRegressorModel` |
 | `MultiStepRegressorModel` | `from PipelineTS.ml_model import MultiStepRegressorModel` |

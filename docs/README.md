@@ -21,8 +21,8 @@ Welcome to the PipelineTS documentation. This guide covers everything you need t
 ### Core Guides / 核心指南
 
 - **[Model Reference / 模型参考](models.md)**
-  Detailed reference for all 25 built-in models, including parameters and usage examples.
-  所有 25 个内置模型的详细参考，包括参数和使用示例。
+  Detailed reference for all 25+ built-in models, including GPU-accelerated tree models, parameters, and usage examples.
+  所有 25+ 个内置模型的详细参考，包括 GPU 加速树模型、参数和使用示例。
 
 - **[Pipeline Usage / 管道使用](pipeline.md)**
   How to use `ModelPipeline` for automatic model selection and comparison.
@@ -45,8 +45,8 @@ Welcome to the PipelineTS documentation. This guide covers everything you need t
   使用 ITransformer 和 SRSNet 进行多输入/多输出预测。
 
 - **[Advanced Features / 高级功能](advanced.md)**
-  Hyperparameter tuning, differencing, custom scalers, multi-quantile, covariates, incremental learning, HPO, and more.
-  超参数调优、差分、自定义缩放器、多分位数、协变量、增量学习、HPO 等高级功能。
+  Hyperparameter tuning, GPU tree models, adaptive complexity, differencing, custom scalers, multi-quantile, covariates, incremental learning, HPO, and more.
+  超参数调优、GPU 树模型、自适应复杂度、差分、自定义缩放器、多分位数、协变量、增量学习、HPO 等高级功能。
 
 - **[API Reference / API 参考](api_reference.md)**
   Complete API reference for all public classes and functions.
@@ -62,7 +62,7 @@ For hands-on learning, check out the [tutorials/](../tutorials/) directory which
 | # | Tutorial / 教程 | Description / 描述 |
 |---|---|---|
 | 01 | [Quick Start Guide](../tutorials/01_QuickStart_Guide.ipynb) | Basic usage and core workflow / 基本用法和核心工作流 |
-| 02 | [All Models Guide](../tutorials/02_All_Models_Guide.ipynb) | Usage of all 24 models / 所有 24 个模型的用法 |
+| 02 | [All Models Guide](../tutorials/02_All_Models_Guide.ipynb) | Usage of all models including GPU tree models / 所有模型的用法（含 GPU 树模型） |
 | 03 | [Multivariate Prediction](../tutorials/03_Multivariate_Prediction.ipynb) | Multi-input/multi-output forecasting / 多输入/多输出预测 |
 | 04 | [Advanced Pipeline](../tutorials/04_Advanced_Pipeline.ipynb) | PipelineConfigs, scalers, metrics / 管道配置、缩放器、指标 |
 | 05 | [Preprocessing & Data](../tutorials/05_Preprocessing_and_Data.ipynb) | Datasets, scalers, sequence splitting / 数据集、缩放器、序列分割 |

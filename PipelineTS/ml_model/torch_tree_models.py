@@ -78,6 +78,7 @@ class TorchBoostingForestModel(_DirectGBDTMixin):
         boosting_shrinkage=0.5,
         random_state=None,
         verbose=False,
+        auto_complexity=False,
     ):
         super().__init__(time_col=time_col, target_col=target_col)
 
@@ -97,6 +98,7 @@ class TorchBoostingForestModel(_DirectGBDTMixin):
             accelerator=accelerator,
             random_state=random_state,
             verbose=verbose,
+            auto_complexity=auto_complexity,
         )
 
         self.last_dt = None
@@ -166,6 +168,7 @@ class TorchBaggingForestModel(_DirectGBDTMixin):
         boosting_shrinkage=0.5,
         random_state=None,
         verbose=False,
+        auto_complexity=False,
     ):
         super().__init__(time_col=time_col, target_col=target_col)
 
@@ -185,6 +188,7 @@ class TorchBaggingForestModel(_DirectGBDTMixin):
             accelerator=accelerator,
             random_state=random_state,
             verbose=verbose,
+            auto_complexity=auto_complexity,
         )
 
         self.last_dt = None

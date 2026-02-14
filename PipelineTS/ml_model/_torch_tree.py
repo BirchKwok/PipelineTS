@@ -32,6 +32,7 @@ References
 import math
 import os
 import sys
+import warnings
 import numpy as np
 
 # Fix OpenMP threading conflict between sklearn and PyTorch on macOS ARM.
@@ -116,6 +117,254 @@ def _build_bit_masks(depth):
             if (leaf >> (depth - 1 - d)) & 1:
                 masks[d, leaf] = 1.0
     return masks
+
+
+# ---------------------------------------------------------------------------
+#  Adaptive Complexity Controller
+# ---------------------------------------------------------------------------
+
+class _AdaptiveComplexityController:
+    """Analyzes data characteristics to dynamically select tree depth and count.
+
+    Inspired by AutoML complexity selection: uses lightweight data statistics
+    (sample size, feature count, noise level, nonlinearity, autocorrelation)
+    to choose model complexity that balances capacity vs overfitting risk.
+
+    The controller adjusts two axes:
+    - **tree_depth**: controls per-tree expressiveness (deeper = more interactions)
+    - **n_trees**: controls ensemble capacity (more = better approximation)
+
+    Design principles:
+    - Small/clean data → shallow trees, fewer trees (avoid overfitting)
+    - Large/noisy data → moderate depth, more trees (need capacity)
+    - High nonlinearity → deeper trees (need interaction capacity)
+    - Strong autocorrelation → moderate trees (patterns are regular)
+    """
+
+    # Complexity profiles: (min_depth, max_depth, min_trees, max_trees)
+    _PROFILES = {
+        'minimal':   (2, 3, 8, 24),
+        'light':     (3, 4, 16, 48),
+        'moderate':  (4, 5, 32, 64),
+        'heavy':     (5, 6, 48, 96),
+        'maximal':   (6, 7, 64, 128),
+    }
+
+    def __init__(self, verbose=False):
+        self.verbose = verbose
+        self._analysis = {}
+
+    def analyze(self, X, y):
+        """Compute data statistics for complexity selection.
+
+        Parameters
+        ----------
+        X : np.ndarray, shape (n_samples, n_features)
+        y : np.ndarray, shape (n_samples,) or (n_samples, n_outputs)
+
+        Returns
+        -------
+        dict with analysis results
+        """
+        n_samples, n_features = X.shape
+        if y.ndim == 1:
+            y = y.reshape(-1, 1)
+
+        # 1. Noise estimation: residual variance after linear fit
+        try:
+            # Quick OLS via normal equations (no sklearn dependency)
+            X_aug = np.column_stack([X, np.ones(n_samples)])
+            beta = np.linalg.lstsq(X_aug, y, rcond=None)[0]
+            y_hat = X_aug @ beta
+            residual_var = np.mean((y - y_hat) ** 2)
+            total_var = np.var(y) + 1e-12
+            noise_ratio = min(1.0, residual_var / total_var)
+        except Exception:
+            noise_ratio = 0.5
+
+        # 2. Nonlinearity score: compare linear residuals with running median
+        try:
+            y_flat = y[:, 0]
+            window = max(5, n_samples // 20)
+            # Running median approximation via cumsum trick
+            padded = np.pad(y_flat, (window // 2, window // 2), mode='edge')
+            cumsum = np.cumsum(padded)
+            running_mean = (cumsum[window:] - cumsum[:-window]) / window
+            running_mean = running_mean[:n_samples]
+            smooth_residual = np.mean((y_flat - running_mean) ** 2)
+            linear_residual = residual_var
+            # If smoothing captures much more variance than linear, data is nonlinear
+            nonlinearity = max(0.0, 1.0 - smooth_residual / (linear_residual + 1e-12))
+            nonlinearity = min(1.0, nonlinearity)
+        except Exception:
+            nonlinearity = 0.5
+
+        # 3. Autocorrelation (lag-1)
+        try:
+            y_flat = y[:, 0]
+            y_centered = y_flat - y_flat.mean()
+            c0 = np.dot(y_centered, y_centered) + 1e-12
+            c1 = np.dot(y_centered[:-1], y_centered[1:])
+            autocorr = abs(c1 / c0)
+        except Exception:
+            autocorr = 0.5
+
+        # 4. Feature importance concentration (Gini-like)
+        try:
+            feat_vars = np.var(X, axis=0)
+            feat_vars = feat_vars / (feat_vars.sum() + 1e-12)
+            concentration = 1.0 - (-np.sum(feat_vars * np.log(feat_vars + 1e-12))
+                                    / np.log(max(n_features, 2)))
+            concentration = max(0.0, min(1.0, concentration))
+        except Exception:
+            concentration = 0.5
+
+        self._analysis = {
+            'n_samples': n_samples,
+            'n_features': n_features,
+            'noise_ratio': float(noise_ratio),
+            'nonlinearity': float(nonlinearity),
+            'autocorr': float(autocorr),
+            'feat_concentration': float(concentration),
+        }
+        return self._analysis
+
+    def select_complexity(self, X, y, ensemble_mode='additive',
+                          user_depth=None, user_n_trees=None):
+        """Select optimal tree depth and count based on data analysis.
+
+        Parameters
+        ----------
+        X, y : training data
+        ensemble_mode : str
+        user_depth : int or None
+            User-specified depth (None = auto-select)
+        user_n_trees : int or None
+            User-specified n_trees (None = auto-select)
+
+        Returns
+        -------
+        dict with keys 'tree_depth', 'n_trees', 'profile', 'reasons'
+        """
+        stats = self.analyze(X, y)
+        n = stats['n_samples']
+        f = stats['n_features']
+        noise = stats['noise_ratio']
+        nonlin = stats['nonlinearity']
+        autocorr = stats['autocorr']
+
+        reasons = []
+
+        # --- Select complexity profile ---
+        # Base score from data size (most important factor)
+        if n < 60:
+            size_score = 0.0
+            reasons.append(f'tiny_data(n={n})->minimal')
+        elif n < 150:
+            size_score = 0.25
+            reasons.append(f'small_data(n={n})->light')
+        elif n < 400:
+            size_score = 0.5
+            reasons.append(f'medium_data(n={n})->moderate')
+        elif n < 1000:
+            size_score = 0.75
+            reasons.append(f'large_data(n={n})->heavy')
+        else:
+            size_score = 1.0
+            reasons.append(f'very_large_data(n={n})->maximal')
+
+        # Adjust for noise: high noise → reduce complexity (overfit risk)
+        noise_adj = 0.0
+        if noise > 0.7:
+            noise_adj = -0.2
+            reasons.append(f'high_noise({noise:.2f})->reduce')
+        elif noise < 0.3:
+            noise_adj = 0.1
+            reasons.append(f'low_noise({noise:.2f})->increase')
+
+        # Adjust for nonlinearity: high nonlinearity → increase depth
+        nonlin_adj = 0.0
+        if nonlin > 0.6:
+            nonlin_adj = 0.15
+            reasons.append(f'high_nonlinearity({nonlin:.2f})->deeper')
+        elif nonlin < 0.2:
+            nonlin_adj = -0.1
+            reasons.append(f'low_nonlinearity({nonlin:.2f})->shallower')
+
+        # Adjust for autocorrelation: strong AR → moderate (regular patterns)
+        ar_adj = 0.0
+        if autocorr > 0.8:
+            ar_adj = -0.05
+            reasons.append(f'strong_autocorr({autocorr:.2f})->moderate')
+
+        # Adjust for feature count: many features → deeper trees
+        feat_adj = 0.0
+        if f > 50:
+            feat_adj = 0.1
+            reasons.append(f'many_features(f={f})->deeper')
+        elif f < 5:
+            feat_adj = -0.05
+
+        # Cascade mode benefits from lighter per-layer trees
+        mode_adj = 0.0
+        if ensemble_mode == 'cascade':
+            mode_adj = -0.15
+            reasons.append('cascade_mode->lighter_per_layer')
+
+        complexity_score = max(0.0, min(1.0,
+            size_score + noise_adj + nonlin_adj + ar_adj + feat_adj + mode_adj))
+
+        # Map score to profile
+        if complexity_score < 0.15:
+            profile = 'minimal'
+        elif complexity_score < 0.35:
+            profile = 'light'
+        elif complexity_score < 0.6:
+            profile = 'moderate'
+        elif complexity_score < 0.8:
+            profile = 'heavy'
+        else:
+            profile = 'maximal'
+
+        min_d, max_d, min_t, max_t = self._PROFILES[profile]
+
+        # Interpolate within profile range
+        frac = (complexity_score - [0.0, 0.15, 0.35, 0.6, 0.8][
+            ['minimal', 'light', 'moderate', 'heavy', 'maximal'].index(profile)
+        ]) / 0.2
+        frac = max(0.0, min(1.0, frac))
+
+        auto_depth = int(round(min_d + frac * (max_d - min_d)))
+        auto_trees = int(round(min_t + frac * (max_t - min_t)))
+
+        # Ensure minimum viable ensemble
+        auto_depth = max(2, auto_depth)
+        auto_trees = max(8, auto_trees)
+
+        # Apply user overrides (user always wins)
+        final_depth = user_depth if user_depth is not None else auto_depth
+        final_trees = user_n_trees if user_n_trees is not None else auto_trees
+
+        result = {
+            'tree_depth': final_depth,
+            'n_trees': final_trees,
+            'profile': profile,
+            'complexity_score': round(complexity_score, 3),
+            'reasons': reasons,
+            'stats': stats,
+            'auto_depth': auto_depth,
+            'auto_trees': auto_trees,
+        }
+
+        if self.verbose:
+            print(f"  [AdaptiveComplexity] profile={profile} "
+                  f"score={complexity_score:.3f} "
+                  f"depth={final_depth} trees={final_trees}")
+            print(f"    reasons: {', '.join(reasons)}")
+            print(f"    stats: noise={noise:.2f} nonlin={nonlin:.2f} "
+                  f"autocorr={autocorr:.2f} n={n} f={f}")
+
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +637,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         accelerator=None,
         random_state=None,
         verbose=False,
+        auto_complexity=False,
     ):
         self.n_trees = n_trees
         self.tree_depth = tree_depth
@@ -405,6 +655,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         self.accelerator = accelerator
         self.random_state = random_state
         self.verbose = verbose
+        self.auto_complexity = auto_complexity
 
         self._model = None
         self._staged_models = None  # list of (model, shrinkage) for staged boosting
@@ -415,6 +666,8 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         self._target_mean = None
         self._target_std = None
         self._use_log_target = False
+        self._complexity_result = None  # stores adaptive complexity selection result
+        self._use_amp = False  # set True when CUDA AMP is beneficial
 
     def _make_loss_fn(self):
         if self.loss_fn == 'mse':
@@ -517,6 +770,10 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         use_mse = (self.loss_fn == 'mse')
         has_val = X_val is not None and y_val is not None
 
+        # AMP setup for CUDA — mixed precision training
+        use_amp = self._use_amp and self._device is not None and self._device.type == 'cuda'
+        scaler = torch.amp.GradScaler('cuda') if use_amp else None
+
         best_loss = float('inf')
         patience_counter = 0
         best_state = None
@@ -527,7 +784,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
             feat_temp = 1.0 - 0.9 * progress
             model.set_feat_temp(feat_temp)
 
-            perm = torch.randperm(n_samples)
+            perm = torch.randperm(n_samples, device=self._device)
             epoch_loss = 0.0
             n_batches = 0
 
@@ -536,13 +793,26 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
                 idx = perm[start:end]
 
                 w_batch = sample_weights[idx] if sample_weights is not None else None
-                loss = self._compute_loss(model, X_t[idx], y_t[idx], use_mse,
-                                          sample_weights=w_batch)
 
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-                optimizer.step()
+                if use_amp:
+                    with torch.amp.autocast('cuda'):
+                        loss = self._compute_loss(
+                            model, X_t[idx], y_t[idx], use_mse,
+                            sample_weights=w_batch)
+                    optimizer.zero_grad(set_to_none=True)
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss = self._compute_loss(
+                        model, X_t[idx], y_t[idx], use_mse,
+                        sample_weights=w_batch)
+                    optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+                    optimizer.step()
 
                 epoch_loss += loss.item()
                 n_batches += 1
@@ -551,9 +821,13 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
             if has_val:
                 model.eval()
                 with torch.no_grad():
-                    # Validation loss is always unweighted (true metric)
-                    monitor_loss = self._compute_loss(
-                        model, X_val, y_val, use_mse).item()
+                    if use_amp:
+                        with torch.amp.autocast('cuda'):
+                            monitor_loss = self._compute_loss(
+                                model, X_val, y_val, use_mse).item()
+                    else:
+                        monitor_loss = self._compute_loss(
+                            model, X_val, y_val, use_mse).item()
                 model.train()
             else:
                 monitor_loss = epoch_loss / max(n_batches, 1)
@@ -596,15 +870,6 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         self._n_outputs = y.shape[1]
         n_samples, n_features = X.shape
 
-        # Adaptive tree count for boosting mode: larger datasets need more
-        # trees per stage for sufficient approximation capacity.
-        # Only additive (staged boosting) benefits — cascade/bagging modes
-        # have their own per-layer/per-bag tree counts already tuned.
-        if self.ensemble_mode == 'additive' and n_samples >= 400:
-            self._effective_n_trees = self.n_trees * 2
-        else:
-            self._effective_n_trees = self.n_trees
-
         # Structural-break handling (YDF-inspired):
         # Instead of discarding old data (hard tail cutoff), use ALL data
         # with exponential recency sample weights.  This preserves feature
@@ -636,8 +901,45 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
 
         self._device = _get_device(self.accelerator)
 
-        X_all = torch.tensor(X_norm, dtype=torch.float32, device=self._device)
-        y_all = torch.tensor(y_norm, dtype=torch.float32, device=self._device)
+        # Enable AMP for CUDA when dataset is large enough to benefit
+        self._use_amp = (self._device.type == 'cuda' and n_samples >= 128)
+
+        # Adaptive complexity: auto-tune tree_depth and n_trees from data
+        # Must run BEFORE _effective_n_trees calculation.
+        if self.auto_complexity:
+            controller = _AdaptiveComplexityController(verbose=self.verbose)
+            self._complexity_result = controller.select_complexity(
+                X_norm, y_norm,
+                ensemble_mode=self.ensemble_mode,
+                user_depth=None,  # auto-select
+                user_n_trees=None,
+            )
+            self._auto_tree_depth = self._complexity_result['tree_depth']
+            self._auto_n_trees = self._complexity_result['n_trees']
+        else:
+            self._auto_tree_depth = self.tree_depth
+            self._auto_n_trees = self.n_trees
+            self._complexity_result = None
+
+        # Adaptive tree count for boosting mode: larger datasets need more
+        # trees per stage for sufficient approximation capacity.
+        # Only additive (staged boosting) benefits — cascade/bagging modes
+        # have their own per-layer/per-bag tree counts already tuned.
+        base_n_trees = self._auto_n_trees
+        if self.ensemble_mode == 'additive' and n_samples >= 400:
+            self._effective_n_trees = base_n_trees * 2
+        else:
+            self._effective_n_trees = base_n_trees
+
+        # Efficient tensor creation: use pin_memory for CUDA transfers
+        if self._device.type == 'cuda':
+            X_all = torch.from_numpy(X_norm).float().pin_memory().to(
+                self._device, non_blocking=True)
+            y_all = torch.from_numpy(y_norm).float().pin_memory().to(
+                self._device, non_blocking=True)
+        else:
+            X_all = torch.from_numpy(X_norm).float().to(self._device)
+            y_all = torch.from_numpy(y_norm).float().to(self._device)
 
         # Exponential recency sample weights (YDF-inspired)
         # Adaptive alpha: stronger break → sharper recency focus.
@@ -720,16 +1022,26 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         """Standard single-model training."""
         self._staged_models = None
         eff_trees = getattr(self, '_effective_n_trees', self.n_trees)
+        eff_depth = self._auto_tree_depth if self.auto_complexity else self.tree_depth
         self._model = _DifferentiableTreeEnsemble(
             in_features=n_features,
             out_features=self._n_outputs,
             n_trees=eff_trees,
-            tree_depth=self.tree_depth,
+            tree_depth=eff_depth,
             ensemble_mode=self.ensemble_mode,
             n_layers=self.n_layers,
             dropout=(self.dropout if dropout_override is None
                      else dropout_override),
         ).to(self._device)
+
+        # torch.compile for PyTorch 2.0+ on CUDA (skip on MPS/CPU)
+        if (self._device.type == 'cuda'
+                and hasattr(torch, 'compile')
+                and n_samples >= 256):
+            try:
+                self._model = torch.compile(self._model, mode='reduce-overhead')
+            except Exception:
+                pass  # graceful fallback if compile not supported
 
         loss = self._train_one_model(
             self._model, X_t, y_t, n_samples, batch_size,
@@ -763,6 +1075,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         if base_learning_rate is None:
             base_learning_rate = self.learning_rate
         eff_trees = getattr(self, '_effective_n_trees', self.n_trees)
+        eff_depth = self._auto_tree_depth if self.auto_complexity else self.tree_depth
         trees_per_stage = max(4, eff_trees // n_stages)
         epochs_per_stage = max(30, self.n_epochs // n_stages)
         shrinkage = self.boosting_shrinkage
@@ -788,7 +1101,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
                 in_features=n_features,
                 out_features=self._n_outputs,
                 n_trees=trees_per_stage,
-                tree_depth=self.tree_depth,
+                tree_depth=eff_depth,
                 ensemble_mode='additive',
                 dropout=(self.dropout if dropout_override is None
                          else dropout_override),
@@ -933,7 +1246,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
             return (per_sample * w).sum() / w.sum()
         return per_sample.mean()
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict(self, X):
         """Predict using the trained ensemble.
 
@@ -947,10 +1260,18 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         """
         X = np.asarray(X, dtype=np.float32)
         X_norm = (X - self._feature_mean) / self._feature_std
-        X_t = torch.tensor(X_norm, dtype=torch.float32, device=self._device)
+
+        # Efficient tensor creation with pin_memory for CUDA
+        if self._device.type == 'cuda':
+            X_t = torch.from_numpy(X_norm).float().pin_memory().to(
+                self._device, non_blocking=True)
+        else:
+            X_t = torch.from_numpy(X_norm).float().to(self._device)
 
         chunk_size = 8192
         preds = []
+        use_amp = self._use_amp and self._device.type == 'cuda'
+
         for start in range(0, X_t.shape[0], chunk_size):
             end = min(start + chunk_size, X_t.shape[0])
             chunk = X_t[start:end]
@@ -961,11 +1282,20 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
                                   device=self._device)
                 for model in self._staged_models:
                     model.eval()
-                    out = out + self.boosting_shrinkage * model(chunk)
-                preds.append(out.cpu().numpy())
+                    if use_amp:
+                        with torch.amp.autocast('cuda'):
+                            out = out + self.boosting_shrinkage * model(chunk)
+                    else:
+                        out = out + self.boosting_shrinkage * model(chunk)
+                preds.append(out.float().cpu().numpy())
             else:
                 self._model.eval()
-                preds.append(self._model(chunk).cpu().numpy())
+                if use_amp:
+                    with torch.amp.autocast('cuda'):
+                        pred = self._model(chunk)
+                    preds.append(pred.float().cpu().numpy())
+                else:
+                    preds.append(self._model(chunk).cpu().numpy())
 
         result = np.concatenate(preds, axis=0)
         # De-normalise
@@ -977,6 +1307,11 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         if self._n_outputs == 1:
             return result.ravel()
         return result
+
+    @property
+    def complexity_info(self):
+        """Return adaptive complexity selection results (None if not used)."""
+        return self._complexity_result
 
     def get_params(self, deep=True):
         return {
@@ -996,6 +1331,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
             'accelerator': self.accelerator,
             'random_state': self.random_state,
             'verbose': self.verbose,
+            'auto_complexity': self.auto_complexity,
         }
 
     def set_params(self, **params):

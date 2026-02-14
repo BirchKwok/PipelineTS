@@ -253,3 +253,145 @@ class TestDifferentiableTreeCore:
         preds = wrapper.predict(X)
         assert preds.shape == (50, 2)
         assert not np.isnan(preds).any()
+
+
+class TestAdaptiveComplexityController:
+    """Tests for the _AdaptiveComplexityController."""
+
+    def test_analyze_returns_all_stats(self):
+        from PipelineTS.ml_model._torch_tree import _AdaptiveComplexityController
+        np.random.seed(42)
+        X = np.random.randn(200, 10).astype(np.float32)
+        y = (X[:, 0] * 2 + np.sin(X[:, 1]) + np.random.randn(200) * 0.1).astype(np.float32)
+        ctrl = _AdaptiveComplexityController()
+        stats = ctrl.analyze(X, y)
+        for key in ['n_samples', 'n_features', 'noise_ratio', 'nonlinearity',
+                     'autocorr', 'feat_concentration']:
+            assert key in stats, f"Missing stat: {key}"
+        assert stats['n_samples'] == 200
+        assert stats['n_features'] == 10
+        assert 0 <= stats['noise_ratio'] <= 1
+        assert 0 <= stats['nonlinearity'] <= 1
+        assert 0 <= stats['autocorr'] <= 1
+
+    def test_select_complexity_small_data(self):
+        from PipelineTS.ml_model._torch_tree import _AdaptiveComplexityController
+        np.random.seed(42)
+        X = np.random.randn(40, 5).astype(np.float32)
+        y = X[:, 0].astype(np.float32)
+        ctrl = _AdaptiveComplexityController()
+        result = ctrl.select_complexity(X, y)
+        assert result['profile'] in ('minimal', 'light')
+        assert result['tree_depth'] <= 4
+        assert result['n_trees'] <= 48
+
+    def test_select_complexity_large_data(self):
+        from PipelineTS.ml_model._torch_tree import _AdaptiveComplexityController
+        np.random.seed(42)
+        X = np.random.randn(500, 20).astype(np.float32)
+        y = (X[:, 0] ** 2 + X[:, 1] * X[:, 2]).astype(np.float32)
+        ctrl = _AdaptiveComplexityController()
+        result = ctrl.select_complexity(X, y)
+        assert result['profile'] in ('moderate', 'heavy', 'maximal')
+        assert result['tree_depth'] >= 4
+        assert result['n_trees'] >= 32
+
+    def test_select_complexity_cascade_lighter(self):
+        from PipelineTS.ml_model._torch_tree import _AdaptiveComplexityController
+        np.random.seed(42)
+        X = np.random.randn(300, 10).astype(np.float32)
+        y = X[:, 0].astype(np.float32)
+        ctrl = _AdaptiveComplexityController()
+        add_result = ctrl.select_complexity(X, y, ensemble_mode='additive')
+        cas_result = ctrl.select_complexity(X, y, ensemble_mode='cascade')
+        # Cascade should select equal or lighter complexity
+        assert cas_result['complexity_score'] <= add_result['complexity_score']
+
+    def test_select_complexity_user_override(self):
+        from PipelineTS.ml_model._torch_tree import _AdaptiveComplexityController
+        np.random.seed(42)
+        X = np.random.randn(200, 10).astype(np.float32)
+        y = X[:, 0].astype(np.float32)
+        ctrl = _AdaptiveComplexityController()
+        result = ctrl.select_complexity(X, y, user_depth=7, user_n_trees=100)
+        assert result['tree_depth'] == 7
+        assert result['n_trees'] == 100
+        # auto values should still be computed
+        assert 'auto_depth' in result
+        assert 'auto_trees' in result
+
+    def test_select_complexity_reasons_populated(self):
+        from PipelineTS.ml_model._torch_tree import _AdaptiveComplexityController
+        np.random.seed(42)
+        X = np.random.randn(200, 10).astype(np.float32)
+        y = X[:, 0].astype(np.float32)
+        ctrl = _AdaptiveComplexityController()
+        result = ctrl.select_complexity(X, y)
+        assert isinstance(result['reasons'], list)
+        assert len(result['reasons']) > 0
+
+
+class TestAutoComplexityIntegration:
+    """Tests for auto_complexity parameter in model wrappers."""
+
+    def test_wrapper_auto_complexity(self):
+        from PipelineTS.ml_model._torch_tree import _TorchTreeWrapper
+        np.random.seed(42)
+        X = np.random.randn(100, 10).astype(np.float32)
+        y = (X[:, 0] * 2 + np.sin(X[:, 1])).astype(np.float32)
+
+        wrapper = _TorchTreeWrapper(
+            n_epochs=30, accelerator='cpu', random_state=42,
+            auto_complexity=True,
+        )
+        wrapper.fit(X, y)
+        preds = wrapper.predict(X)
+        assert preds.shape == (100,)
+        assert not np.isnan(preds).any()
+        # complexity_info should be populated
+        assert wrapper.complexity_info is not None
+        assert 'profile' in wrapper.complexity_info
+        assert 'tree_depth' in wrapper.complexity_info
+        assert 'n_trees' in wrapper.complexity_info
+
+    def test_boosting_model_auto_complexity(self, small_data):
+        from PipelineTS.ml_model import TorchBoostingForestModel
+        model = TorchBoostingForestModel(
+            time_col='date', target_col='value', lags=LAGS,
+            quantile=None, n_epochs=50, accelerator='cpu',
+            random_state=42, auto_complexity=True,
+        )
+        model.fit(small_data)
+        result = model.predict(PREDICT_N)
+        _check_prediction(result, check_interval=False)
+        # Verify complexity info is accessible
+        assert model.model.complexity_info is not None
+
+    def test_bagging_model_auto_complexity(self, small_data):
+        from PipelineTS.ml_model import TorchBaggingForestModel
+        model = TorchBaggingForestModel(
+            time_col='date', target_col='value', lags=LAGS,
+            quantile=None, n_epochs=50, accelerator='cpu',
+            random_state=42, auto_complexity=True, dropout=0.1,
+        )
+        model.fit(small_data)
+        result = model.predict(PREDICT_N)
+        _check_prediction(result, check_interval=False)
+
+    def test_deep_forest_auto_complexity(self, small_data):
+        from PipelineTS.ml_model import DeepForestModel
+        model = DeepForestModel(
+            time_col='date', target_col='value', lags=LAGS,
+            quantile=None, n_epochs=50, accelerator='cpu',
+            random_state=42, auto_complexity=True, n_layers=2,
+        )
+        model.fit(small_data)
+        result = model.predict(PREDICT_N)
+        _check_prediction(result, check_interval=False)
+
+    def test_auto_complexity_get_params(self):
+        from PipelineTS.ml_model._torch_tree import _TorchTreeWrapper
+        wrapper = _TorchTreeWrapper(auto_complexity=True)
+        params = wrapper.get_params()
+        assert 'auto_complexity' in params
+        assert params['auto_complexity'] is True
