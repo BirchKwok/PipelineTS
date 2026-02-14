@@ -29,10 +29,10 @@ class WeightedEnsemble:
 
     Examples
     --------
-    >>> from PipelineTS.ml_model import LightGBMModel, XGBoostModel
+    >>> from PipelineTS.ml_model import TorchBoostingForestModel, TorchBaggingForestModel
     >>> models = [
-    ...     ('lgbm', LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)),
-    ...     ('xgb', XGBoostModel(time_col='date', target_col='value', lags=12, verbose=0)),
+    ...     ('boosting', TorchBoostingForestModel(time_col='date', target_col='value', lags=12)),
+    ...     ('bagging', TorchBaggingForestModel(time_col='date', target_col='value', lags=12)),
     ... ]
     >>> ens = WeightedEnsemble(models, time_col='date', target_col='value')
     >>> ens.fit(data)

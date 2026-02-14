@@ -607,10 +607,10 @@ class TestModelComparison:
 class TestWeightedEnsemble:
     def test_manual_weights(self):
         from PipelineTS.training import WeightedEnsemble
-        from PipelineTS.ml_model import LightGBMModel
+        from PipelineTS.ml_model import TorchBoostingForestModel
         data = make_ts_data(120)
-        m1 = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
-        m2 = LightGBMModel(time_col='date', target_col='value', lags=12,
+        m1 = TorchBoostingForestModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
+        m2 = TorchBoostingForestModel(time_col='date', target_col='value', lags=12,
                            n_trees=32, n_epochs=50)
         ens = WeightedEnsemble(
             [('lgbm1', m1), ('lgbm2', m2)],
@@ -624,10 +624,10 @@ class TestWeightedEnsemble:
 
     def test_auto_weights(self):
         from PipelineTS.training import WeightedEnsemble
-        from PipelineTS.ml_model import LightGBMModel
+        from PipelineTS.ml_model import TorchBoostingForestModel
         data = make_ts_data(120)
-        m1 = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
-        m2 = LightGBMModel(time_col='date', target_col='value', lags=12,
+        m1 = TorchBoostingForestModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
+        m2 = TorchBoostingForestModel(time_col='date', target_col='value', lags=12,
                            n_trees=32, n_epochs=50)
         ens = WeightedEnsemble(
             [('lgbm1', m1), ('lgbm2', m2)],
@@ -648,9 +648,9 @@ class TestWeightedEnsemble:
 class TestRollingPredictor:
     def test_basic_rolling(self):
         from PipelineTS.prediction import RollingPredictor
-        from PipelineTS.ml_model import LightGBMModel
+        from PipelineTS.ml_model import TorchBoostingForestModel
         data = make_ts_data(150)
-        model = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
+        model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
         rp = RollingPredictor(
             model, time_col='date', target_col='value',
             train_size=80, horizon=10, step=20, refit=True,
@@ -663,9 +663,9 @@ class TestRollingPredictor:
 
     def test_evaluate(self):
         from PipelineTS.prediction import RollingPredictor
-        from PipelineTS.ml_model import LightGBMModel
+        from PipelineTS.ml_model import TorchBoostingForestModel
         data = make_ts_data(150)
-        model = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
+        model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
         rp = RollingPredictor(
             model, time_col='date', target_col='value',
             train_size=80, horizon=10, step=20,
@@ -683,9 +683,9 @@ class TestRollingPredictor:
 class TestModelExplainer:
     def test_feature_importance_torch_tree(self):
         from PipelineTS.prediction import ModelExplainer
-        from PipelineTS.ml_model import LightGBMModel
+        from PipelineTS.ml_model import TorchBoostingForestModel
         data = make_ts_data(120)
-        model = LightGBMModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
+        model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12, n_trees=16, n_epochs=50)
         model.fit(data)
         explainer = ModelExplainer(model, time_col='date', target_col='value')
         # Torch tree models don't expose native feature_importances_,

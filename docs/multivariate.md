@@ -139,7 +139,7 @@ pipeline = ModelPipeline(
     target_col='value',
     feature_cols=['value', 'feature_a', 'feature_b'],
     lags=12,
-    include_models=['itransformer', 'srs_net', 'lightgbm'],
+    include_models=['itransformer', 'srs_net', 'torch_boosting_forest'],
     quantile=None,
     cv=2,
 )

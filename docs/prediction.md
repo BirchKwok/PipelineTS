@@ -16,9 +16,9 @@ At each step: train on the most recent `train_size` observations → forecast `h
 
 ```python
 from PipelineTS.prediction import RollingPredictor
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 
-model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
 
 rp = RollingPredictor(
     model,
@@ -81,15 +81,15 @@ eval_results = rp.score(results, metrics={'MAPE': mape, 'R²': r2_score})
 
 ### Native Feature Importance / 原生特征重要性
 
-For GBDT models (LightGBM, XGBoost, CatBoost, RandomForest), native feature importance is extracted from the underlying tree-based model.
-对于 GBDT 模型（LightGBM、XGBoost、CatBoost、RandomForest），从底层树模型提取原生特征重要性。
+For GPU tree models (TorchBoostingForest, TorchBaggingForest, DeepForest), native feature importance is extracted from the underlying tree-based model.
+对于 GPU 树模型（TorchBoostingForest、TorchBaggingForest、DeepForest），从底层树模型提取原生特征重要性。
 
 ```python
 from PipelineTS.prediction import ModelExplainer
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 
 # Fit a model first / 先训练模型
-model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
 model.fit(data)
 
 # Create explainer / 创建解释器
@@ -116,10 +116,9 @@ explainer.plot_importance(importance_df=importance, top_k=20)
 
 | Model / 模型 | Native Importance / 原生重要性 | Notes / 备注 |
 |---|---|---|
-| LightGBMModel | Yes | `feature_importances_` from first chain estimator / 链式回归第一个估计器 |
-| XGBoostModel | Yes | `feature_importances_` or `get_score()` |
-| CatBoostModel | Yes | `feature_importances_` |
-| RandomForestModel | Yes | `feature_importances_` |
+| TorchBoostingForestModel | No | Use permutation importance / 使用置换重要性 |
+| TorchBaggingForestModel | No | Use permutation importance / 使用置换重要性 |
+| DeepForestModel | No | Use permutation importance / 使用置换重要性 |
 | WideGBRTModel | Yes | `feature_importances_` |
 | NN Models / 神经网络模型 | No | Use permutation importance instead / 使用置换重要性替代 |
 | Statistical Models / 统计模型 | No | Use residual analysis instead / 使用残差分析替代 |

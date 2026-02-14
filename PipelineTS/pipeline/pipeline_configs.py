@@ -132,8 +132,8 @@ class PipelineConfigs:
 
         Example
         -------
-        >>> pipeline_configs = PipelineConfigs(configs=[('lightgbm', 'my_lightgbm', {'init_configs': {...}, 'fit_configs': {...}})])
-        >>> configs_model_a = pipeline_configs.get_configs('my_lightgbm')
+        >>> pipeline_configs = PipelineConfigs(configs=[('torch_boosting_forest', 'my_boosting', {'init_configs': {...}, 'fit_configs': {...}})])
+        >>> configs_model_a = pipeline_configs.get_configs('my_boosting')
         >>> print(configs_model_a)
         {'init_configs': {...}, 'fit_configs': {...}, 'predict_configs': {}}
         """

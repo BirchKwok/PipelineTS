@@ -52,11 +52,11 @@ def _make_panel_data(n_per_series=80, n_series=3, seed=42):
 # GBDT Covariate Tests
 # ============================================================
 
-def test_catboost_known_covariates():
-    """CatBoost with known covariates - single series."""
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+def test_torch_boosting_known_covariates():
+    """TorchBoostingForest with known covariates - single series."""
+    from PipelineTS.ml_model import TorchBoostingForestModel
     data = _make_data()
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, verbose=False, quantile=None)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10, quantile=None)
     model.all_configs['known_covariates'] = ['holiday']
     model.fit(data)
     
@@ -69,28 +69,28 @@ def test_catboost_known_covariates():
     # Predictions should differ when covariates differ
     assert not np.allclose(preds_fc['y'].values, preds_no['y'].values, atol=0.01), \
         "Predictions should differ with/without future covariates"
-    print("[PASS] test_catboost_known_covariates")
+    print("[PASS] test_torch_boosting_known_covariates")
 
 
-def test_catboost_past_covariates():
-    """CatBoost with past covariates - single series."""
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+def test_torch_boosting_past_covariates():
+    """TorchBoostingForest with past covariates - single series."""
+    from PipelineTS.ml_model import TorchBoostingForestModel
     data = _make_data()
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, verbose=False, quantile=None)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10, quantile=None)
     model.all_configs['past_covariates'] = ['temperature']
     model.fit(data)
     
     preds = model.predict(5)
     assert preds.shape == (5, 2)
     assert not preds['y'].isna().any(), "Predictions should not contain NaN"
-    print("[PASS] test_catboost_past_covariates")
+    print("[PASS] test_torch_boosting_past_covariates")
 
 
-def test_catboost_known_and_past_covariates():
-    """CatBoost with both known and past covariates."""
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+def test_torch_boosting_known_and_past_covariates():
+    """TorchBoostingForest with both known and past covariates."""
+    from PipelineTS.ml_model import TorchBoostingForestModel
     data = _make_data()
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, verbose=False, quantile=None)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10, quantile=None)
     model.all_configs['known_covariates'] = ['holiday']
     model.all_configs['past_covariates'] = ['temperature']
     model.fit(data)
@@ -98,14 +98,14 @@ def test_catboost_known_and_past_covariates():
     future = _make_future(5)
     preds = model.predict(5, future_covariates=future)
     assert preds.shape == (5, 2)
-    print("[PASS] test_catboost_known_and_past_covariates")
+    print("[PASS] test_torch_boosting_known_and_past_covariates")
 
 
-def test_catboost_covariates_autoregressive():
-    """CatBoost autoregressive prediction (n > lags) with covariates."""
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+def test_torch_boosting_covariates_autoregressive():
+    """TorchBoostingForest autoregressive prediction (n > lags) with covariates."""
+    from PipelineTS.ml_model import TorchBoostingForestModel
     data = _make_data()
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, verbose=False, quantile=None)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10, quantile=None)
     model.all_configs['known_covariates'] = ['holiday']
     model.all_configs['past_covariates'] = ['temperature']
     model.fit(data)
@@ -113,14 +113,14 @@ def test_catboost_covariates_autoregressive():
     future = pd.DataFrame({'holiday': np.zeros(20)})
     preds = model.predict(20, future_covariates=future)
     assert preds.shape == (20, 2), f"Expected (20,2), got {preds.shape}"
-    print("[PASS] test_catboost_covariates_autoregressive")
+    print("[PASS] test_torch_boosting_covariates_autoregressive")
 
 
-def test_catboost_panel_covariates():
-    """CatBoost with covariates on multi-series panel data."""
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+def test_torch_boosting_panel_covariates():
+    """TorchBoostingForest with covariates on multi-series panel data."""
+    from PipelineTS.ml_model import TorchBoostingForestModel
     data = _make_panel_data()
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, verbose=False, quantile=None)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10, quantile=None)
     model.all_configs['id_col'] = 'series_id'
     model.all_configs['known_covariates'] = ['holiday']
     model.all_configs['past_covariates'] = ['temperature']
@@ -138,18 +138,18 @@ def test_catboost_panel_covariates():
     for sid in data['series_id'].unique():
         sid_preds = preds[preds['series_id'] == sid]
         assert len(sid_preds) == 5, f"Series {sid}: expected 5 preds, got {len(sid_preds)}"
-    print("[PASS] test_catboost_panel_covariates")
+    print("[PASS] test_torch_boosting_panel_covariates")
 
 
-def test_catboost_no_covariates_backward_compat():
-    """CatBoost without covariates - backward compatibility."""
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+def test_torch_boosting_no_covariates_backward_compat():
+    """TorchBoostingForest without covariates - backward compatibility."""
+    from PipelineTS.ml_model import TorchBoostingForestModel
     data = _make_data()[['ds', 'y']]
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, verbose=False, quantile=None)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10, quantile=None)
     model.fit(data)
     preds = model.predict(5)
     assert preds.shape == (5, 2)
-    print("[PASS] test_catboost_no_covariates_backward_compat")
+    print("[PASS] test_torch_boosting_no_covariates_backward_compat")
 
 
 # ============================================================
@@ -225,17 +225,16 @@ def test_autoarima_no_covariates_backward_compat():
 # Pipeline Covariate Tests
 # ============================================================
 
-def test_pipeline_covariates_catboost():
-    """Pipeline with covariates using CatBoost."""
+def test_pipeline_covariates_torch_boosting():
+    """Pipeline with covariates using TorchBoostingForest."""
     from PipelineTS.pipeline import ModelPipeline
     data = _make_data()
     pipe = ModelPipeline(
         time_col='ds', target_col='y', lags=10,
         known_covariates=['holiday'],
         past_covariates=['temperature'],
-        include_models=['catboost'],
+        include_models=['torch_boosting_forest'],
         scaler=True, quantile=None,
-        catboost__verbose=False,
     )
     pipe.fit(data)
 
@@ -243,7 +242,7 @@ def test_pipeline_covariates_catboost():
     preds = pipe.predict(n=5, future_covariates=future)
     assert preds.shape[0] == 5
     assert 'y' in preds.columns
-    print("[PASS] test_pipeline_covariates_catboost")
+    print("[PASS] test_pipeline_covariates_torch_boosting")
 
 
 def test_pipeline_covariates_prophet():
@@ -270,9 +269,8 @@ def test_pipeline_no_covariates_backward_compat():
     data = _make_data()[['ds', 'y']]
     pipe = ModelPipeline(
         time_col='ds', target_col='y', lags=10,
-        include_models=['catboost'],
+        include_models=['torch_boosting_forest'],
         scaler=True, quantile=None,
-        catboost__verbose=False,
     )
     pipe.fit(data)
     preds = pipe.predict(n=5)
@@ -285,13 +283,13 @@ def test_pipeline_no_covariates_backward_compat():
 # ============================================================
 
 ALL_TESTS = [
-    # GBDT
-    test_catboost_known_covariates,
-    test_catboost_past_covariates,
-    test_catboost_known_and_past_covariates,
-    test_catboost_covariates_autoregressive,
-    test_catboost_panel_covariates,
-    test_catboost_no_covariates_backward_compat,
+    # GBDT (TorchTree)
+    test_torch_boosting_known_covariates,
+    test_torch_boosting_past_covariates,
+    test_torch_boosting_known_and_past_covariates,
+    test_torch_boosting_covariates_autoregressive,
+    test_torch_boosting_panel_covariates,
+    test_torch_boosting_no_covariates_backward_compat,
     # Prophet
     test_prophet_known_covariates,
     test_prophet_no_covariates_backward_compat,
@@ -299,7 +297,7 @@ ALL_TESTS = [
     test_autoarima_known_covariates,
     test_autoarima_no_covariates_backward_compat,
     # Pipeline
-    test_pipeline_covariates_catboost,
+    test_pipeline_covariates_torch_boosting,
     test_pipeline_covariates_prophet,
     test_pipeline_no_covariates_backward_compat,
 ]

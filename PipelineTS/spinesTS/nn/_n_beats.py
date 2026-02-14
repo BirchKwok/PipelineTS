@@ -8,7 +8,7 @@ Key ideas:
 - Interpretable architecture: trend (polynomial) + seasonality (Fourier) basis
 - Generic architecture: learnable basis functions
 
-Enhancements over darts:
+Enhancements:
 - RevIN normalization
 - GELU activation instead of ReLU
 - Huber loss by default

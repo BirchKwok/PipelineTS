@@ -13,11 +13,11 @@ PipelineTS 提供内置的超参数调优和集成方法，以提升预测性能
 
 ```python
 from PipelineTS.training import AutoTune
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 from PipelineTS.spinesTS.metrics import mae
 
 tuner = AutoTune(
-    model_class=LightGBMModel,
+    model_class=TorchBoostingForestModel,
     time_col='date',
     target_col='value',
     lags=12,
@@ -104,12 +104,11 @@ Without Optuna, `AutoTune` uses random search (no installation needed).
 
 ```python
 from PipelineTS.training import WeightedEnsemble
-from PipelineTS.ml_model import LightGBMModel, XGBoostModel, CatBoostModel
+from PipelineTS.ml_model import TorchBoostingForestModel, TorchBaggingForestModel
 
 models = [
-    ('lgbm', LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)),
-    ('xgb',  XGBoostModel(time_col='date', target_col='value', lags=12, verbose=0)),
-    ('cat',  CatBoostModel(time_col='date', target_col='value', lags=12, verbose=False)),
+    ('boost', TorchBoostingForestModel(time_col='date', target_col='value', lags=12)),
+    ('bag',   TorchBaggingForestModel(time_col='date', target_col='value', lags=12)),
 ]
 
 # Auto weights: inverse-error weighting from validation set
@@ -153,11 +152,11 @@ When `weights='auto'`, the ensemble:
 
 ```python
 from PipelineTS.training import StackingEnsemble
-from PipelineTS.ml_model import LightGBMModel, XGBoostModel
+from PipelineTS.ml_model import TorchBoostingForestModel, TorchBaggingForestModel
 
 models = [
-    ('lgbm', LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)),
-    ('xgb',  XGBoostModel(time_col='date', target_col='value', lags=12, verbose=0)),
+    ('boost', TorchBoostingForestModel(time_col='date', target_col='value', lags=12)),
+    ('bag',   TorchBaggingForestModel(time_col='date', target_col='value', lags=12)),
 ]
 
 stack = StackingEnsemble(

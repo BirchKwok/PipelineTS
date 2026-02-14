@@ -357,7 +357,7 @@ if router.ensemble_:
 
 # Get specific fitted model
 # 获取特定的拟合模型
-model = router.get_model('lightgbm')
+model = router.get_model('torch_boosting_forest')
 ```
 
 ### Data Profile Details / 数据画像详情
@@ -398,7 +398,7 @@ SmartRouter scores each model based on:
 | **Multi-seasonality** / 多季节性 | Multiple periods favor Prophet, TFT, NBeats / 多周期偏好 Prophet、TFT、NBeats |
 | **Forecast horizon** / 预测范围 | Long horizon favors extrapolation models; short allows complex models / 长范围偏好外推模型；短范围允许复杂模型 |
 | **Regime changes** / 机制变化 | Many changes favor tree models; penalizes smooth models / 多变化偏好树模型；惩罚平滑模型 |
-| **Noise level** / 噪声水平 | High noise favors regularized GBDT (LightGBM, XGBoost) / 高噪声偏好正则化 GBDT |
+| **Noise level** / 噪声水平 | High noise favors regularized GBDT (TorchBoostingForest) / 高噪声偏好正则化 GBDT |
 
 ### Customizing SmartRouter / 自定义 SmartRouter
 
@@ -420,7 +420,7 @@ custom_pipeline = ModelPipeline(
     time_col='date',
     target_col='value',
     lags=router.strategy['lags'],  # Use SmartRouter's suggested lags
-    include_models=['lightgbm', 'prophet'],
+    include_models=['torch_boosting_forest', 'prophet'],
 )
 ```
 
@@ -453,9 +453,9 @@ pipeline = ModelPipeline(
 
 ## GPU-Accelerated Tree Models / GPU 加速树模型
 
-All GBDT models in PipelineTS (`LightGBMModel`, `XGBoostModel`, `CatBoostModel`, `RandomForestModel`) are implemented as **GPU-accelerated differentiable tree ensembles** built in PyTorch. They are actually aliases for `TorchBoostingForestModel` and `TorchBaggingForestModel`.
+All tree models in PipelineTS (`TorchBoostingForestModel`, `TorchBaggingForestModel`, `DeepForestModel`) are implemented as **GPU-accelerated differentiable tree ensembles** built in PyTorch.
 
-PipelineTS 中所有 GBDT 模型（`LightGBMModel`、`XGBoostModel`、`CatBoostModel`、`RandomForestModel`）均实现为基于 PyTorch 的 **GPU 加速可微分树集成**。它们实际上是 `TorchBoostingForestModel` 和 `TorchBaggingForestModel` 的别名。
+PipelineTS 中所有树模型（`TorchBoostingForestModel`、`TorchBaggingForestModel`、`DeepForestModel`）均实现为基于 PyTorch 的 **GPU 加速可微分树集成**。
 
 ### Architecture / 架构
 
@@ -518,7 +518,7 @@ result = model.predict(10)
 model = TorchBoostingForestModel(
     time_col='date', target_col='value', lags=16,
     boosting_stages=3,         # 3 sequential residual stages / 3 个顺序残差阶段
-    boosting_shrinkage=0.5,    # Shrinkage per stage (like eta in XGBoost) / 每阶段收缩率
+    boosting_shrinkage=0.5,    # Shrinkage per stage / 每阶段收缩率
 )
 ```
 
@@ -622,7 +622,7 @@ from PipelineTS.pipeline import ModelPipeline
 
 pipeline = ModelPipeline(
     time_col='date', target_col='value', lags=12,
-    quantile=0.9, include_models=['lightgbm', 'catboost'],
+    quantile=0.9, include_models=['torch_boosting_forest', 'torch_bagging_forest'],
 )
 pipeline.fit(data)
 
@@ -665,7 +665,7 @@ from PipelineTS.pipeline import ModelPipeline, SmartRouter
 pipe = ModelPipeline(
     time_col='date', target_col='value', lags=10,
     id_col='series_id',
-    include_models=['catboost', 'lightgbm'],
+    include_models=['torch_boosting_forest', 'torch_bagging_forest'],
 )
 pipe.fit(panel_data)
 result = pipe.predict(n=5)  # Returns DataFrame with series_id column
@@ -704,7 +704,7 @@ pipeline = ModelPipeline(
     time_col='date', target_col='value', lags=12,
     known_covariates=['holiday', 'promotion'],
     past_covariates=['temperature'],
-    include_models=['lightgbm', 'prophet', 'auto_arima'],
+    include_models=['torch_boosting_forest', 'prophet', 'auto_arima'],
 )
 pipeline.fit(data)  # data must contain all covariate columns
                     # data 必须包含所有协变量列
@@ -742,7 +742,7 @@ from PipelineTS.pipeline import ModelPipeline
 
 pipeline = ModelPipeline(
     time_col='date', target_col='value', lags=12,
-    include_models=['lightgbm', 'tide'],
+    include_models=['torch_boosting_forest', 'tide'],
 )
 pipeline.fit(initial_data)
 
@@ -801,8 +801,8 @@ print(router._hpo_results)  # {model: {best_params, best_value, n_trials, time}}
 
 | Model Type / 模型类型 | Parameters / 参数 |
 |---|---|
-| **GBDT** (LightGBM, XGBoost) | n_estimators, max_depth, learning_rate |
-| **CatBoost** | iterations, depth, learning_rate |
+| **TorchBoostingForest** | n_trees, tree_depth, learning_rate, boosting_stages |
+| **TorchBaggingForest** | n_trees, tree_depth, dropout |
 | **NN light** | learning_rate, epochs |
 | **NN heavy** | learning_rate, epochs |
 | **Prophet** | changepoint_prior_scale |

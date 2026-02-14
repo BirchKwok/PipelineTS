@@ -71,11 +71,7 @@ ARIMA_SEARCH_SPACE = {}  # AutoARIMA does its own grid search
 
 # Model name -> search space mapping
 MODEL_SEARCH_SPACES = {
-    # All tree models now use differentiable torch trees
-    'lightgbm': TORCH_TREE_SEARCH_SPACE,
-    'xgboost': TORCH_TREE_SEARCH_SPACE,
-    'catboost': TORCH_TREE_SEARCH_SPACE,
-    'random_forest': TORCH_TREE_SEARCH_SPACE,
+    # GPU-accelerated differentiable tree models
     'torch_boosting_forest': TORCH_TREE_SEARCH_SPACE,
     'torch_bagging_forest': TORCH_TREE_SEARCH_SPACE,
     'wide_gbrt': TORCH_TREE_SEARCH_SPACE,

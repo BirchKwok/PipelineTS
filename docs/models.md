@@ -353,9 +353,6 @@ GPU-accelerated gradient boosting forest with staged residual learning (MART/DAR
 
 GPU 加速梯度提升森林，具有分阶段残差学习（MART/DART）。通过端到端训练的可微分斜向树统一了 LightGBM、XGBoost 和 CatBoost。每个提升阶段在前序所有阶段的残差误差上训练，并使用 GrowNet 风格的修正步骤进行联合微调。
 
-> **Note / 注意**: `LightGBMModel`, `XGBoostModel`, and `CatBoostModel` are backward-compatible aliases for `TorchBoostingForestModel`.
-> `LightGBMModel`、`XGBoostModel` 和 `CatBoostModel` 是 `TorchBoostingForestModel` 的向后兼容别名。
-
 **Model-specific parameters / 模型特有参数:**
 
 | Parameter / 参数 | Default / 默认值 | Description / 描述 |
@@ -391,12 +388,6 @@ model.fit(data)
 result = model.predict(10)
 ```
 
-```python
-# Backward-compatible aliases / 向后兼容别名
-from PipelineTS.ml_model import LightGBMModel   # == TorchBoostingForestModel
-from PipelineTS.ml_model import XGBoostModel     # == TorchBoostingForestModel
-from PipelineTS.ml_model import CatBoostModel    # == TorchBoostingForestModel
-```
 
 ### TorchBaggingForestModel
 
@@ -404,8 +395,6 @@ GPU-accelerated bagging forest (RandomForest-style). Each tree votes independent
 
 GPU 加速袋装森林（RandomForest 风格）。每棵树独立投票，训练期间的树级别 Dropout 去相关集成 —— 类似于经典随机森林的随机子空间选择。
 
-> **Note / 注意**: `RandomForestModel` is a backward-compatible alias for `TorchBaggingForestModel`.
-> `RandomForestModel` 是 `TorchBaggingForestModel` 的向后兼容别名。
 
 | Parameter / 参数 | Default / 默认值 | Description / 描述 |
 |---|---|---|
@@ -427,11 +416,6 @@ model = TorchBaggingForestModel(
 )
 model.fit(data)
 result = model.predict(10)
-```
-
-```python
-# Backward-compatible alias / 向后兼容别名
-from PipelineTS.ml_model import RandomForestModel  # == TorchBaggingForestModel
 ```
 
 ### DeepForestModel

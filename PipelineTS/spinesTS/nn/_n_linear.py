@@ -5,7 +5,7 @@ Reference: Zeng et al., "Are Transformers Effective for Time Series Forecasting?
 Key idea: Subtract the last value of the input sequence before feeding into a linear layer,
 then add it back to the output. This simple normalization handles distribution shift effectively.
 
-Enhancements over darts implementation:
+Enhancements:
 - RevIN (Reversible Instance Normalization) for better distribution shift handling
 - Huber loss by default (more robust than MSE)
 - AdamW with weight decay for regularization

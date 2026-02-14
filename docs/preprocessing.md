@@ -117,12 +117,12 @@ pipeline = ModelPipeline(..., scaler=StandardScaler())
 
 ```python
 from PipelineTS.preprocessing import Scaler
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 
 scaler = Scaler('min_max')
 data['value'] = scaler.fit_transform(data['value'].values.reshape(-1, 1)).squeeze()
 
-model = LightGBMModel(time_col='date', target_col='value', lags=12)
+model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
 model.fit(data)
 result = model.predict(10)
 

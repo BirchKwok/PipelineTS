@@ -222,15 +222,6 @@ All located in `PipelineTS.ml_model`.
 | `TorchBaggingForestModel` | `from PipelineTS.ml_model import TorchBaggingForestModel` | Bagging forest with dropout / 带 Dropout 的袋装森林 |
 | `DeepForestModel` | `from PipelineTS.ml_model import DeepForestModel` | Cascade multi-layer ensemble (gcForest) / 级联多层集成 |
 
-**Backward-compatible aliases / 向后兼容别名:**
-
-| Alias / 别名 | Points to / 指向 |
-|---|---|
-| `LightGBMModel` | `TorchBoostingForestModel` |
-| `XGBoostModel` | `TorchBoostingForestModel` |
-| `CatBoostModel` | `TorchBoostingForestModel` |
-| `RandomForestModel` | `TorchBaggingForestModel` |
-
 ```python
 TorchBoostingForestModel(
     time_col: str,

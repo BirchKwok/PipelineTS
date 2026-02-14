@@ -35,9 +35,6 @@ The following packages are automatically installed:
 | `pandas` | >= 2.0.3 | Data manipulation / 数据处理 |
 | `scikit-learn` | >= 1.3.0 | ML utilities and metrics / 机器学习工具和指标 |
 | `torch` | >= 1.8.0 | Neural network backend / 神经网络后端 |
-| `xgboost` | >= 1.6.0 | XGBoost model / XGBoost 模型 |
-| `lightgbm` | >= 3.3.5 | LightGBM model / LightGBM 模型 |
-| `catboost` | >= 1.2.2 | CatBoost model / CatBoost 模型 |
 | `statsmodels` | >= 0.14.0 | Statistical models (ARIMA) / 统计模型 (ARIMA) |
 | `matplotlib` | >= 3.7.1 | Plotting / 绑图 |
 | `scipy` | >= 1.7.3 | Scientific computing / 科学计算 |

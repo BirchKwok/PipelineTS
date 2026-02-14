@@ -87,7 +87,7 @@ def test_strategy_selection():
 
     # Ensure model diversity
     stat = {'auto_arima', 'prophet'}
-    ml = {'lightgbm', 'catboost', 'xgboost', 'random_forest', 'wide_gbrt',
+    ml = {'wide_gbrt',
            'multi_output_model', 'multi_step_model', 'regressor_chain',
            'deep_forest', 'torch_boosting_forest', 'torch_bagging_forest'}
     models_set = set(strategy['models'])
@@ -124,12 +124,12 @@ def test_model_scoring_explanation():
         assert info['reasons'][0][0] == 'base'
         assert info['reasons'][0][1] == 50.0
 
-    # Check that lightgbm has a good score for Electric_Production
-    lgbm_score = router.model_scores_['lightgbm']['total']
-    assert lgbm_score > 50, f"LightGBM score too low: {lgbm_score}"
+    # Check that torch_boosting_forest has a good score for Electric_Production
+    boost_score = router.model_scores_['torch_boosting_forest']['total']
+    assert boost_score > 50, f"TorchBoostingForest score too low: {boost_score}"
 
     print(f"[PASS] test_model_scoring_explanation: "
-          f"lightgbm={lgbm_score:.1f}, "
+          f"torch_boosting_forest={boost_score:.1f}, "
           f"prophet={router.model_scores_['prophet']['total']:.1f}")
 
 
@@ -166,9 +166,8 @@ def test_small_data_routing():
     strategy = router._build_strategy(profile)
 
     has_stat = any(m in ('prophet', 'auto_arima') for m in strategy['models'])
-    has_ml = any(m in ('lightgbm', 'catboost', 'xgboost', 'random_forest',
-                        'deep_forest', 'torch_boosting_forest',
-                        'torch_bagging_forest')
+    has_ml = any(m in ('deep_forest', 'torch_boosting_forest',
+                        'torch_bagging_forest', 'wide_gbrt')
                  for m in strategy['models'])
     # SmartRouter may prefer ML/NN models over stat for some small data profiles
     assert has_stat or has_ml, f"No stat or ML model for small data: {strategy['models']}"
@@ -237,20 +236,20 @@ def test_ensemble_predictor_weighted():
     """Test EnsemblePredictor with weighted_avg strategy."""
     ep = EnsemblePredictor(
         pipeline=None,
-        model_names=['lightgbm', 'prophet'],
-        weights={'lightgbm': 0.6, 'prophet': 0.4},
+        model_names=['torch_boosting_forest', 'prophet'],
+        weights={'torch_boosting_forest': 0.6, 'prophet': 0.4},
         time_col='date',
         target_col='value',
         ensemble_method='weighted_avg',
     )
-    assert 'lightgbm' in ep.model_names
+    assert 'torch_boosting_forest' in ep.model_names
     assert abs(sum(ep.weights.values()) - 1.0) < 1e-6
     cfg = ep.all_configs
     assert cfg['ensemble'] is True
     assert cfg['strategy'] == 'weighted_avg'
     r = repr(ep)
     assert 'weighted_avg' in r
-    assert 'lightgbm' in r and 'prophet' in r
+    assert 'torch_boosting_forest' in r and 'prophet' in r
     print(f"[PASS] test_ensemble_predictor_weighted: {r}")
 
 
@@ -258,8 +257,8 @@ def test_ensemble_predictor_median():
     """Test EnsemblePredictor with median strategy."""
     ep = EnsemblePredictor(
         pipeline=None,
-        model_names=['lightgbm', 'prophet', 'xgboost'],
-        weights={'lightgbm': 0.4, 'prophet': 0.3, 'xgboost': 0.3},
+        model_names=['torch_boosting_forest', 'prophet', 'torch_bagging_forest'],
+        weights={'torch_boosting_forest': 0.4, 'prophet': 0.3, 'torch_bagging_forest': 0.3},
         time_col='date',
         target_col='value',
         ensemble_method='median',
@@ -329,7 +328,7 @@ def test_adaptive_hyperparams():
 
     assert isinstance(hp, dict)
     if profile.n_rows >= 300 and profile.seasonality_strength > 0.1:
-        assert 'lightgbm__n_trees' in hp
+        assert 'torch_boosting_forest__n_trees' in hp
     print(f"[PASS] test_adaptive_hyperparams: {list(hp.keys())}")
 
 
@@ -340,7 +339,7 @@ def test_pipeline_time_limit_param():
     from PipelineTS.pipeline import ModelPipeline
     pipeline = ModelPipeline(
         time_col='date', target_col='value', lags=6,
-        include_models=['lightgbm'], time_limit=60, cv=2,
+        include_models=['torch_boosting_forest'], time_limit=60, cv=2,
     )
     assert pipeline.time_limit == 60
     print(f"[PASS] test_pipeline_time_limit_param")
@@ -352,7 +351,7 @@ def test_pipeline_time_limit_validation():
     try:
         ModelPipeline(
             time_col='date', target_col='value', lags=6,
-            include_models=['lightgbm'], time_limit=-1, cv=2,
+            include_models=['torch_boosting_forest'], time_limit=-1, cv=2,
         )
         assert False, "Should have raised ValueError"
     except ValueError:
@@ -372,7 +371,7 @@ def test_pipeline_error_resilience():
 
     pipeline = ModelPipeline(
         time_col='date', target_col='value', lags=6,
-        include_models=['lightgbm', 'xgboost'],
+        include_models=['torch_boosting_forest', 'torch_bagging_forest'],
         cv=2,
     )
     leaderboard = pipeline.fit(data)
@@ -391,7 +390,7 @@ def test_pipeline_failed_skipped_properties():
 
     pipeline = ModelPipeline(
         time_col='date', target_col='value', lags=6,
-        include_models=['lightgbm'], cv=2,
+        include_models=['torch_boosting_forest'], cv=2,
     )
     # Before fit
     assert pipeline.failed_models == []
@@ -694,7 +693,7 @@ def test_pick_fast_eval_model():
     """Test fast model selection for lag evaluation."""
     r = SmartRouter(time_col='date', target_col='value')
 
-    assert r._pick_fast_eval_model(['tft', 'lightgbm', 'prophet']) == 'lightgbm'
+    assert r._pick_fast_eval_model(['tft', 'torch_boosting_forest', 'prophet']) == 'torch_boosting_forest'
     assert r._pick_fast_eval_model(['prophet', 'n_beats']) == 'prophet'
     assert r._pick_fast_eval_model(['transformer', 'srs_net']) == 'transformer'
 
@@ -778,8 +777,7 @@ def test_scoring_model_diversity():
 
     # Should have models from at least 2 different categories
     categories = set()
-    ml = {'catboost', 'lightgbm', 'xgboost', 'random_forest',
-          'wide_gbrt', 'multi_output_model', 'multi_step_model', 'regressor_chain',
+    ml = {'wide_gbrt', 'multi_output_model', 'multi_step_model', 'regressor_chain',
           'deep_forest', 'torch_boosting_forest', 'torch_bagging_forest'}
     stat = {'auto_arima', 'prophet'}
     nn = {'d_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
@@ -793,8 +791,8 @@ def test_scoring_model_diversity():
     assert len(categories) >= 2, \
         f"Insufficient diversity: {selected} -> categories={categories}"
 
-    # The top 5 should not be exclusively prophet+lightgbm+tft
-    always_same = {'prophet', 'lightgbm', 'tft'}
+    # The top 5 should not be exclusively prophet+torch_boosting_forest+tft
+    always_same = {'prophet', 'torch_boosting_forest', 'tft'}
     assert not always_same.issubset(set(selected[:3])), \
         f"Top 3 are still always the same: {selected[:3]}"
 
@@ -1001,7 +999,7 @@ def test_5category_diversity():
     sel = r._select_models(p, n_candidates=8)
 
     categories = {
-        'ml': {'catboost', 'lightgbm', 'xgboost', 'random_forest',
+        'ml': {'torch_boosting_forest', 'torch_bagging_forest', 'deep_forest',
                'wide_gbrt', 'multi_output_model', 'multi_step_model',
                'regressor_chain'},
         'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
@@ -1122,14 +1120,14 @@ def test_hpo_search_space():
     from PipelineTS.pipeline.hpo import get_search_space, MODEL_SEARCH_SPACES
 
     # All tree models now use torch tree params: n_trees, tree_depth, learning_rate, n_epochs
-    lgb_space = get_search_space('lightgbm')
-    assert 'n_trees' in lgb_space
-    assert 'tree_depth' in lgb_space
-    assert 'learning_rate' in lgb_space
+    boost_space = get_search_space('torch_boosting_forest')
+    assert 'n_trees' in boost_space
+    assert 'tree_depth' in boost_space
+    assert 'learning_rate' in boost_space
 
-    # CatBoost also uses torch tree params now (same as lightgbm)
-    cat_space = get_search_space('catboost')
-    assert 'n_trees' in cat_space
+    # TorchBaggingForest also uses torch tree params
+    bag_space = get_search_space('torch_bagging_forest')
+    assert 'n_trees' in bag_space
 
     # NN models have learning_rate, epochs
     tcn_space = get_search_space('tcn')
@@ -1208,8 +1206,7 @@ def test_multi_quantile_pipeline():
     df['date'] = pd.to_datetime(df['date'])
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        quantile=0.9, include_models=['lightgbm'],
-        lightgbm__verbose=-1,
+        quantile=0.9, include_models=['torch_boosting_forest'],
     )
     pipe.fit(df)
 
@@ -1269,8 +1266,7 @@ def test_multi_quantile_monotonicity():
     df['date'] = pd.to_datetime(df['date'])
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        quantile=0.9, include_models=['lightgbm'],
-        lightgbm__verbose=-1,
+        quantile=0.9, include_models=['torch_boosting_forest'],
     )
     pipe.fit(df)
 
@@ -1297,8 +1293,7 @@ def test_multi_quantile_no_quantile():
     df['date'] = pd.to_datetime(df['date'])
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        include_models=['lightgbm'],
-        lightgbm__verbose=-1,
+        include_models=['torch_boosting_forest'],
     )
     pipe.fit(df)
 
@@ -1323,8 +1318,7 @@ def test_incremental_pipeline_update():
 
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        include_models=['lightgbm'],
-        lightgbm__verbose=-1,
+        include_models=['torch_boosting_forest'],
     )
     pipe.fit(initial)
 
@@ -1381,7 +1375,7 @@ def test_incremental_update_not_fitted():
 
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        include_models=['lightgbm'],
+        include_models=['torch_boosting_forest'],
     )
     try:
         pipe.update(df)
@@ -1409,8 +1403,8 @@ def test_per_model_lags_pipeline():
     # Test 1: per_model_lags overrides global lag for specific models
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=16,
-        include_models=['lightgbm', 'catboost'],
-        per_model_lags={'lightgbm': 12, 'catboost': 8},
+        include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+        per_model_lags={'torch_boosting_forest': 12, 'torch_bagging_forest': 8},
         random_state=42,
     )
     lb = pipe.fit(df)
@@ -1418,12 +1412,12 @@ def test_per_model_lags_pipeline():
     assert len(lb) == 2
 
     # Verify models got their individual lags
-    lgb_model = pipe.get_model('lightgbm')
-    cat_model = pipe.get_model('catboost')
-    assert lgb_model.all_configs['lags'] == 12
-    assert cat_model.all_configs['lags'] == 8
+    boost_model = pipe.get_model('torch_boosting_forest')
+    bag_model = pipe.get_model('torch_bagging_forest')
+    assert boost_model.all_configs['lags'] == 12
+    assert bag_model.all_configs['lags'] == 8
 
-    print(f"[PASS] test_per_model_lags_pipeline: lgb_lag={lgb_model.all_configs['lags']}, cat_lag={cat_model.all_configs['lags']}")
+    print(f"[PASS] test_per_model_lags_pipeline: boost_lag={boost_model.all_configs['lags']}, bag_lag={bag_model.all_configs['lags']}")
 
 
 def test_per_model_lags_default_fallback():
@@ -1433,17 +1427,17 @@ def test_per_model_lags_default_fallback():
 
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=16,
-        include_models=['lightgbm', 'catboost'],
-        per_model_lags={'lightgbm': 10},  # catboost not specified
+        include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+        per_model_lags={'torch_boosting_forest': 10},  # torch_bagging_forest not specified
         random_state=42,
     )
     lb = pipe.fit(df)
     assert not lb.empty
 
-    lgb_model = pipe.get_model('lightgbm')
-    cat_model = pipe.get_model('catboost')
-    assert lgb_model.all_configs['lags'] == 10
-    assert cat_model.all_configs['lags'] == 16  # fallback to global
+    boost_model = pipe.get_model('torch_boosting_forest')
+    bag_model = pipe.get_model('torch_bagging_forest')
+    assert boost_model.all_configs['lags'] == 10
+    assert bag_model.all_configs['lags'] == 16  # fallback to global
 
     print(f"[PASS] test_per_model_lags_default_fallback")
 
@@ -1455,13 +1449,13 @@ def test_per_model_lags_empty_dict():
 
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=16,
-        include_models=['lightgbm'],
+        include_models=['torch_boosting_forest'],
         per_model_lags={},
         random_state=42,
     )
     lb = pipe.fit(df)
-    lgb_model = pipe.get_model('lightgbm')
-    assert lgb_model.all_configs['lags'] == 16
+    boost_model = pipe.get_model('torch_boosting_forest')
+    assert boost_model.all_configs['lags'] == 16
 
     print("[PASS] test_per_model_lags_empty_dict")
 
@@ -1478,7 +1472,7 @@ def test_explore_lags_per_model():
     r.profile_ = r._profile_data(data)
     r.strategy_ = r._build_strategy(r.profile_)
 
-    models = ['lightgbm', 'catboost']
+    models = ['torch_boosting_forest', 'torch_bagging_forest']
     primary_lag = r._explore_lags(data, models, r.strategy_)
 
     # Verify per-model lags stored

@@ -16,10 +16,10 @@ The model is deep-copied per fold to avoid state leakage between folds.
 
 ```python
 from PipelineTS.evaluation import Backtester
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 from PipelineTS.spinesTS.metrics import mae
 
-model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
 
 bt = Backtester(
     model,
@@ -148,8 +148,8 @@ from PipelineTS.metrics import mape, r2_score, picp, pinaw
 comp = ModelComparison(time_col='date', target_col='value')
 
 # Register model predictions / 注册模型预测
-comp.add_result('LightGBM', y_true, y_pred_lgbm, lower=lower_lgbm, upper=upper_lgbm)
-comp.add_result('XGBoost',  y_true, y_pred_xgb,  lower=lower_xgb,  upper=upper_xgb)
+comp.add_result('TorchBoostingForest', y_true, y_pred_boost, lower=lower_boost, upper=upper_boost)
+comp.add_result('TorchBaggingForest',  y_true, y_pred_bag,   lower=lower_bag,   upper=upper_bag)
 comp.add_result('Prophet',  y_true, y_pred_prophet)
 
 # Evaluate on metrics / 按指标评估

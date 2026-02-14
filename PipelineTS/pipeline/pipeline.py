@@ -154,7 +154,7 @@ class ModelPipeline:
 
         if include_models == 'light':
             include_models = ['d_linear', 'itransformer', 'multi_output_model', 'multi_step_model',
-                              'n_hits', 'n_linear', 'patch_rnn', 'random_forest',
+                              'n_hits', 'n_linear', 'patch_rnn', 'torch_bagging_forest',
                               'regressor_chain', 'tide', 'transformer']
         elif include_models == 'all':
             include_models = None
@@ -163,8 +163,8 @@ class ModelPipeline:
                               'patch_rnn', 'stacking_rnn', 'tide', 'time2vec', 'transformer',
                               'itransformer', 'srs_net']
         elif include_models == 'ml':
-            include_models = ['catboost', 'lightgbm', 'multi_output_model',
-                              'multi_step_model', 'random_forest', 'wide_gbrt', 'xgboost']
+            include_models = ['torch_boosting_forest', 'torch_bagging_forest', 'multi_output_model',
+                              'multi_step_model', 'deep_forest', 'wide_gbrt']
         elif isinstance(include_models, str):
             raise_if_not(ValueError, include_models in ModelPipeline.list_all_available_models(),
                          f"{include_models} is not a available model name. ")
@@ -243,10 +243,7 @@ class ModelPipeline:
                                                          {
                                                              'multi_output_model__verbose': -1,
                                                              'multi_step_model__verbose': -1,
-                                                             'lightgbm__verbose': -1,
-                                                             'wide_gbrt__verbose': -1,
-                                                             'catboost__verbose': False,
-                                                             'xgboost__verbose': 0
+                                                             'wide_gbrt__verbose': -1
                                                          })
 
         if time_limit is not None and time_limit <= 0:
@@ -264,9 +261,9 @@ class ModelPipeline:
                 self._model_init_kwargs[k] = v
 
         # Build compact single-line device description
-        _cpu_only_models = {'auto_arima', 'prophet', 'catboost', 'lightgbm', 'xgboost',
+        _cpu_only_models = {'auto_arima', 'prophet',
                             'wide_gbrt', 'multi_output_model', 'multi_step_model',
-                            'random_forest', 'regressor_chain'}
+                            'regressor_chain'}
         _effective = self._given_models or list(self._available_models.keys())
         _all_cpu = all(isinstance(m, str) and m in _cpu_only_models for m in _effective)
         if _all_cpu:
@@ -428,16 +425,15 @@ class ModelPipeline:
         Example
         -------
         >>> ModelPipeline.list_all_available_models()
-        ['catboost',
+        ['auto_arima',
          'd_linear',
+         'deep_forest',
          'gau',
-         'lightgbm',
          'multi_output_model',
          'multi_step_model',
          'n_beats',
          'n_hits',
          'n_linear',
-         'random_forest',
          'regressor_chain',
          'patch_rnn',
          'stacking_rnn',
@@ -445,8 +441,9 @@ class ModelPipeline:
          'tft',
          'tide',
          'time2vec',
-         'transformer',
-         'xgboost']
+         'torch_bagging_forest',
+         'torch_boosting_forest',
+         'transformer']
         """
         return sorted(list(get_all_available_models().keys()))
 
@@ -694,9 +691,9 @@ class ModelPipeline:
         >>> leaderboard = pipeline.fit(train_data, valid_data)
         >>> print(leaderboard)
            Leaderboard         model  train_cost(s)  eval_cost(s)    metric
-        0           0    lightgbm_0       2.567801      0.978624  0.123456
-        1           1    xgboost_1       3.123456      1.234567  0.456789
-        2           2  random_forest       1.987654      0.876543  0.987654
+        0           0  torch_boosting_forest_0  2.567801  0.978624  0.123456
+        1           1  torch_bagging_forest_0   3.123456  1.234567  0.456789
+        2           2  deep_forest_0            1.987654  0.876543  0.987654
         ...         ...            ...            ...           ...       ...
 
         Notes
@@ -890,12 +887,12 @@ class ModelPipeline:
         >>> pipeline = ModelPipeline(time_col='timestamp', target_col='value', lags=10)
         >>> pipeline.fit(train_data, valid_data)
         >>> best_model = pipeline.get_model()
-        >>> specific_model = pipeline.get_model('lightgbm_0')
+        >>> specific_model = pipeline.get_model('torch_boosting_forest_0')
 
         Notes
         -----
         - If model_name is not provided, the function returns the best-performing model based on the leaderboard.
-        - The function allows retrieving a specific trained model by providing its unique name (e.g., 'lightgbm_0').
+        - The function allows retrieving a specific trained model by providing its unique name (e.g., 'torch_boosting_forest_0').
         """
         if model_name is None:
             return self.best_model_
@@ -926,12 +923,12 @@ class ModelPipeline:
         >>> pipeline = ModelPipeline(time_col='timestamp', target_col='value', lags=10)
         >>> pipeline.fit(train_data, valid_data)
         >>> best_model_configs = pipeline.get_model_all_configs()
-        >>> specific_model_configs = pipeline.get_model_all_configs('lightgbm_0')
+        >>> specific_model_configs = pipeline.get_model_all_configs('torch_boosting_forest_0')
 
         Notes
         -----
         - If model_name is not provided, the function returns the configuration details of the best-performing model.
-        - The function allows retrieving configuration details for a specific trained model by providing its unique name (e.g., 'lightgbm_0').
+        - The function allows retrieving configuration details for a specific trained model by providing its unique name (e.g., 'torch_boosting_forest_0').
         """
         if model_name is None:
             return self.best_model_.all_configs

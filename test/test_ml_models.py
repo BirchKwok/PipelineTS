@@ -1,8 +1,8 @@
 """
 Comprehensive test suite for all ML models in PipelineTS.
 
-Tests all 7 ML models:
-- CatBoostModel, LightGBMModel, XGBoostModel, RandomForestModel
+Tests all ML models:
+- TorchBoostingForestModel, TorchBaggingForestModel
 - WideGBRTModel
 - MultiOutputRegressorModel, MultiStepRegressorModel, RegressorChainModel
 
@@ -53,12 +53,12 @@ def _check_prediction(result, target_col='value', time_col='date',
     assert not result[target_col].isna().any(), "Predictions contain NaN"
 
 
-# ─── CatBoostModel ───────────────────────────────────────────────────────────
+# ─── TorchBoostingForestModel ───────────────────────────────────────────
 
-class TestCatBoostModel:
+class TestTorchBoostingForestModel:
     def test_fit_predict_with_quantile(self, small_data):
-        from PipelineTS.ml_model import CatBoostModel
-        model = CatBoostModel(
+        from PipelineTS.ml_model import TorchBoostingForestModel
+        model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=0.9, n_trees=16, n_epochs=50
         )
@@ -67,8 +67,8 @@ class TestCatBoostModel:
         _check_prediction(result)
 
     def test_fit_predict_no_quantile(self, small_data):
-        from PipelineTS.ml_model import CatBoostModel
-        model = CatBoostModel(
+        from PipelineTS.ml_model import TorchBoostingForestModel
+        model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_trees=16, n_epochs=50
         )
@@ -77,8 +77,8 @@ class TestCatBoostModel:
         _check_prediction(result, check_interval=False)
 
     def test_predict_with_data(self, small_data):
-        from PipelineTS.ml_model import CatBoostModel
-        model = CatBoostModel(
+        from PipelineTS.ml_model import TorchBoostingForestModel
+        model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_trees=16, n_epochs=50
         )
@@ -87,8 +87,8 @@ class TestCatBoostModel:
         _check_prediction(result, check_interval=False)
 
     def test_all_configs(self, small_data):
-        from PipelineTS.ml_model import CatBoostModel
-        model = CatBoostModel(
+        from PipelineTS.ml_model import TorchBoostingForestModel
+        model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_trees=16, n_epochs=50
         )
@@ -97,70 +97,12 @@ class TestCatBoostModel:
         assert isinstance(configs, dict), "all_configs should be a dict"
 
 
-# ─── LightGBMModel ───────────────────────────────────────────────────────────
+# ─── TorchBaggingForestModel ────────────────────────────────────────────
 
-class TestLightGBMModel:
+class TestTorchBaggingForestModel:
     def test_fit_predict_with_quantile(self, small_data):
-        from PipelineTS.ml_model import LightGBMModel
-        model = LightGBMModel(
-            time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_trees=16, n_epochs=50
-        )
-        model.fit(small_data)
-        result = model.predict(PREDICT_N)
-        _check_prediction(result)
-
-    def test_fit_predict_no_quantile(self, small_data):
-        from PipelineTS.ml_model import LightGBMModel
-        model = LightGBMModel(
-            time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_trees=16, n_epochs=50
-        )
-        model.fit(small_data)
-        result = model.predict(PREDICT_N)
-        _check_prediction(result, check_interval=False)
-
-    def test_predict_with_data(self, small_data):
-        from PipelineTS.ml_model import LightGBMModel
-        model = LightGBMModel(
-            time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_trees=16, n_epochs=50
-        )
-        model.fit(small_data)
-        result = model.predict(PREDICT_N, data=small_data)
-        _check_prediction(result, check_interval=False)
-
-
-# ─── XGBoostModel ────────────────────────────────────────────────────────────
-
-class TestXGBoostModel:
-    def test_fit_predict_with_quantile(self, small_data):
-        from PipelineTS.ml_model import XGBoostModel
-        model = XGBoostModel(
-            time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_trees=16, n_epochs=50
-        )
-        model.fit(small_data)
-        result = model.predict(PREDICT_N)
-        _check_prediction(result)
-
-    def test_fit_predict_no_quantile(self, small_data):
-        from PipelineTS.ml_model import XGBoostModel
-        model = XGBoostModel(
-            time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_trees=16, n_epochs=50
-        )
-        model.fit(small_data)
-        result = model.predict(PREDICT_N)
-        _check_prediction(result, check_interval=False)
-
-
-# ─── RandomForestModel ───────────────────────────────────────────────────────
-
-class TestRandomForestModel:
-    def test_fit_predict_with_quantile(self, small_data):
-        from PipelineTS.ml_model import RandomForestModel
-        model = RandomForestModel(
+        from PipelineTS.ml_model import TorchBaggingForestModel
+        model = TorchBaggingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=0.9, n_trees=16, n_epochs=50, random_state=42
         )
@@ -169,8 +111,8 @@ class TestRandomForestModel:
         _check_prediction(result)
 
     def test_fit_predict_no_quantile(self, small_data):
-        from PipelineTS.ml_model import RandomForestModel
-        model = RandomForestModel(
+        from PipelineTS.ml_model import TorchBaggingForestModel
+        model = TorchBaggingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_trees=16, n_epochs=50, random_state=42
         )

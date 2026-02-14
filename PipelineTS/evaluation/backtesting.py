@@ -34,9 +34,9 @@ class Backtester:
 
     Examples
     --------
-    >>> from PipelineTS.ml_model import LightGBMModel
+    >>> from PipelineTS.ml_model import TorchBoostingForestModel
     >>> from PipelineTS.spinesTS.metrics import mae
-    >>> model = LightGBMModel(time_col='date', target_col='value', lags=12, verbose=-1)
+    >>> model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
     >>> bt = Backtester(model, time_col='date', target_col='value', metric=mae)
     >>> results = bt.fit(data, n_splits=5, test_size=12, mode='expanding')
     >>> bt.summary()

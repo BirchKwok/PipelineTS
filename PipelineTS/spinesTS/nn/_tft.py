@@ -9,7 +9,7 @@ Simplified but effective implementation focusing on:
 - Interpretable multi-head attention
 - RevIN normalization
 
-Enhancements over darts:
+Enhancements:
 - Pre-LayerNorm for stable training
 - RevIN for distribution shift
 - Huber loss by default

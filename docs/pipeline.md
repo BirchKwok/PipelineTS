@@ -77,7 +77,7 @@ pipeline = ModelPipeline(..., include_models='ml')
 # Specify exact model names / 指定精确的模型名称
 pipeline = ModelPipeline(
     ...,
-    include_models=['lightgbm', 'xgboost', 'd_linear', 'n_linear']
+    include_models=['torch_boosting_forest', 'torch_bagging_forest', 'd_linear', 'n_linear']
 )
 
 # Or exclude specific models / 或排除特定模型
@@ -117,16 +117,16 @@ from PipelineTS.pipeline import PipelineConfigs
 configs = PipelineConfigs([
     # (model_name, custom_name, config_dict)
     # (模型名称, 自定义名称, 配置字典)
-    ('lightgbm', 'lgbm_small', {
-        'init_configs': {'n_estimators': 50},
+    ('torch_boosting_forest', 'boost_small', {
+        'init_configs': {'n_trees': 32},
     }),
-    ('lightgbm', 'lgbm_large', {
-        'init_configs': {'n_estimators': 300},
+    ('torch_boosting_forest', 'boost_large', {
+        'init_configs': {'n_trees': 128},
     }),
 
     # Without custom name: auto-numbered
     # 不指定自定义名称：自动编号
-    ('xgboost', {'init_configs': {'n_estimators': 200}}),
+    ('torch_bagging_forest', {'init_configs': {'n_trees': 96}}),
 ])
 
 pipeline = ModelPipeline(
@@ -158,13 +158,11 @@ pipeline = ModelPipeline(
     time_col='date',
     target_col='value',
     lags=12,
-    include_models=['lightgbm', 'xgboost', 'd_linear'],
+    include_models=['torch_boosting_forest', 'torch_bagging_forest', 'd_linear'],
 
     # Model-specific parameters / 模型特定参数
-    lightgbm__n_estimators=200,
-    lightgbm__verbose=-1,
-    xgboost__n_estimators=150,
-    xgboost__verbose=0,
+    torch_boosting_forest__n_trees=64,
+    torch_bagging_forest__n_trees=96,
     d_linear__lags=50,
 )
 ```
@@ -222,20 +220,20 @@ best_model = pipeline.get_model()
 ### Get a Specific Model / 获取指定模型
 
 ```python
-model = pipeline.get_model(model_name='lightgbm')
+model = pipeline.get_model(model_name='torch_boosting_forest')
 ```
 
 ### Get Model Configurations / 获取模型配置
 
 ```python
 configs = pipeline.get_model_all_configs()           # Best model / 最佳模型
-configs = pipeline.get_model_all_configs('xgboost')  # Specific model / 指定模型
+configs = pipeline.get_model_all_configs('torch_boosting_forest')  # Specific model / 指定模型
 ```
 
 ### Predict with a Specific Model / 使用指定模型预测
 
 ```python
-result = pipeline.predict(10, model_name='lightgbm')
+result = pipeline.predict(10, model_name='torch_boosting_forest')
 ```
 
 ### Predict from a Specific Series / 从指定序列预测
@@ -274,7 +272,7 @@ pipeline = ModelPipeline(
     target_col='value',
     lags=12,
     id_col='store_id',
-    include_models=['lightgbm', 'catboost'],
+    include_models=['torch_boosting_forest', 'torch_bagging_forest'],
 )
 pipeline.fit(panel_data)
 
@@ -295,7 +293,7 @@ pipeline = ModelPipeline(
     time_col='date', target_col='value', lags=12,
     known_covariates=['holiday', 'promotion'],
     past_covariates=['temperature'],
-    include_models=['lightgbm', 'prophet'],
+    include_models=['torch_boosting_forest', 'prophet'],
 )
 pipeline.fit(data)
 
@@ -324,7 +322,7 @@ Use `update()` to incrementally train on new data without full retraining.
 ```python
 pipeline = ModelPipeline(
     time_col='date', target_col='value', lags=12,
-    include_models=['lightgbm'],
+    include_models=['torch_boosting_forest'],
 )
 pipeline.fit(initial_data)
 
@@ -364,7 +362,7 @@ Pipeline provides built-in `plot()` and `plot_leaderboard()` methods with Chines
 pipeline.plot(n=12, lang='zh')
 
 # Use specific model / 使用指定模型
-pipeline.plot(n=12, model_name='lightgbm', history_tail=60, lang='en')
+pipeline.plot(n=12, model_name='torch_boosting_forest', history_tail=60, lang='en')
 
 # Leaderboard chart / 排行榜图
 pipeline.plot_leaderboard(lang='zh')

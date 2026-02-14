@@ -5,7 +5,7 @@ Reference: Zeng et al., "Are Transformers Effective for Time Series Forecasting?
 Key idea: Decompose input into trend (moving average) and remainder (seasonal),
 apply separate linear layers to each, then sum the results.
 
-Enhancements over darts implementation:
+Enhancements:
 - RevIN for distribution shift handling
 - Adaptive kernel size based on input length
 - Huber loss by default

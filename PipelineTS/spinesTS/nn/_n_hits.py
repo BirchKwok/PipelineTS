@@ -8,7 +8,7 @@ Key ideas:
 - Hierarchical interpolation for multi-scale temporal patterns
 - Doubly residual stacking like N-BEATS
 
-Enhancements over darts:
+Enhancements:
 - RevIN normalization
 - GELU activation
 - Huber loss by default

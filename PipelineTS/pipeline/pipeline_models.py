@@ -25,10 +25,6 @@ def get_all_available_models():
         'auto_arima': AutoARIMAModel,
         'prophet': ProphetModel,
         # ML tree models (all GPU-accelerated via differentiable trees)
-        'catboost': CatBoostModel,            # alias → TorchBoostingForestModel
-        'lightgbm': LightGBMModel,            # alias → TorchBoostingForestModel
-        'xgboost': XGBoostModel,              # alias → TorchBoostingForestModel
-        'random_forest': RandomForestModel,    # alias → TorchBaggingForestModel
         'torch_boosting_forest': TorchBoostingForestModel,
         'torch_bagging_forest': TorchBaggingForestModel,
         'deep_forest': DeepForestModel,

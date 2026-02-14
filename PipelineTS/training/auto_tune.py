@@ -16,7 +16,7 @@ class AutoTune:
     Parameters
     ----------
     model_class : class
-        A PipelineTS model class (e.g. LightGBMModel, TCNModel).
+        A PipelineTS model class (e.g. TorchBoostingForestModel, TCNModel).
     time_col : str
         Datetime column name.
     target_col : str
@@ -38,13 +38,13 @@ class AutoTune:
 
     Examples
     --------
-    >>> from PipelineTS.ml_model import LightGBMModel
+    >>> from PipelineTS.ml_model import TorchBoostingForestModel
     >>> from PipelineTS.spinesTS.metrics import mae
     >>> tuner = AutoTune(
-    ...     model_class=LightGBMModel,
+    ...     model_class=TorchBoostingForestModel,
     ...     time_col='date', target_col='value', lags=12,
     ...     metric=mae, n_trials=30,
-    ...     fixed_params={'verbose': -1},
+    ...     fixed_params={'verbose': False},
     ... )
     >>> best_model, best_params, history = tuner.fit(data, search_space={
     ...     'n_estimators': ('int', 50, 500),

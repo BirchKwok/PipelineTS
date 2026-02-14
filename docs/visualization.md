@@ -212,7 +212,7 @@ Overlay predictions from multiple models on the same chart.
 from PipelineTS.plot import plot_model_comparison
 
 predictions = {
-    'LightGBM': pred_lgbm,
+    'TorchBoostingForest': pred_boost,
     'Prophet':  pred_prophet,
     'TFT':      pred_tft,
 }
@@ -360,7 +360,7 @@ pipeline.plot(n=12, lang='zh')
 # With options / 带选项
 pipeline.plot(
     n=12,
-    model_name='lightgbm',   # Use specific model / 使用指定模型
+    model_name='torch_boosting_forest',   # Use specific model / 使用指定模型
     history_tail=60,          # Show last 60 points / 显示最后 60 个点
     lang='en',                # English labels / 英文标签
 )

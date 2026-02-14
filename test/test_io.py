@@ -44,10 +44,10 @@ PREDICT_N = 3
 
 class TestSaveLoadSingleModel:
     def test_save_and_load_ml_model(self, small_data, tmp_dir):
-        from PipelineTS.ml_model import LightGBMModel
+        from PipelineTS.ml_model import TorchBoostingForestModel
         from PipelineTS.io import save_model, load_model
 
-        model = LightGBMModel(
+        model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_trees=16, n_epochs=50
         )
@@ -66,11 +66,11 @@ class TestSaveLoadSingleModel:
         assert 'value' in result.columns
 
     def test_save_and_load_with_scaler(self, small_data, tmp_dir):
-        from PipelineTS.ml_model import LightGBMModel
+        from PipelineTS.ml_model import TorchBoostingForestModel
         from PipelineTS.io import save_model, load_model
         from sklearn.preprocessing import MinMaxScaler
 
-        model = LightGBMModel(
+        model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_trees=16, n_epochs=50
         )
@@ -88,10 +88,10 @@ class TestSaveLoadSingleModel:
         assert loaded_scaler is not None
 
     def test_save_invalid_path_raises(self, small_data):
-        from PipelineTS.ml_model import LightGBMModel
+        from PipelineTS.ml_model import TorchBoostingForestModel
         from PipelineTS.io import save_model
 
-        model = LightGBMModel(
+        model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_trees=16, n_epochs=50
         )
@@ -110,7 +110,7 @@ class TestSaveLoadPipeline:
 
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['lightgbm', 'random_forest'],
+            include_models=['torch_boosting_forest', 'torch_bagging_forest'],
             quantile=None, cv=2
         )
         pipeline.fit(small_data)

@@ -112,7 +112,7 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
     ):
         """
         AutoARIMAModel: Auto ARIMA using statsmodels SARIMAX with AIC-based grid search.
-        No dependency on pmdarima or darts.
+        No dependency on pmdarima.
 
         Parameters
         ----------

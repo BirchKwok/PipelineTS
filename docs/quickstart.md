@@ -45,16 +45,15 @@ All models share the same `fit()` / `predict()` interface.
 所有模型共享相同的 `fit()` / `predict()` 接口。
 
 ```python
-from PipelineTS.ml_model import LightGBMModel
+from PipelineTS.ml_model import TorchBoostingForestModel
 
-model = LightGBMModel(
+model = TorchBoostingForestModel(
     time_col=time_col,
     target_col=target_col,
     lags=12,           # Use 12 past time steps as features
                        # 使用过去 12 个时间步作为特征
     quantile=0.9,      # 90% prediction interval
                        # 90% 预测区间
-    verbose=-1
 )
 
 # Train the model
@@ -125,7 +124,7 @@ You can also predict using a specific model:
 你也可以使用指定的模型进行预测：
 
 ```python
-result = pipeline.predict(10, model_name='xgboost')
+result = pipeline.predict(10, model_name='torch_boosting_forest')
 ```
 
 ---

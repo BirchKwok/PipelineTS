@@ -23,8 +23,8 @@ class ModelComparison:
     --------
     >>> from PipelineTS.metrics import mape, smape, r2_score
     >>> comp = ModelComparison(time_col='date', target_col='value')
-    >>> comp.add_result('LightGBM', y_true, y_pred_lgbm)
-    >>> comp.add_result('XGBoost', y_true, y_pred_xgb)
+    >>> comp.add_result('TorchBoostingForest', y_true, y_pred_boost)
+    >>> comp.add_result('TorchBaggingForest', y_true, y_pred_bag)
     >>> table = comp.fit(metrics={'MAPE': mape, 'sMAPE': smape, 'R2': r2_score})
     >>> comp.plot_bar()
     """

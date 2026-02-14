@@ -1,9 +1,9 @@
 """
-Comprehensive test suite for all reimplemented models (darts → spinesTS).
+Comprehensive test suite for all models.
 
 Tests:
 - 7 NN models: NLinear, DLinear, NBeats, NHits, TFT, Transformer, TiDE
-- 4 ML models: CatBoost, LightGBM, XGBoost, RandomForest
+- 2 ML tree models: TorchBoostingForest, TorchBaggingForest
 - 1 Statistic model: AutoARIMA
 
 Each test verifies:
@@ -180,10 +180,10 @@ class TestTiDEModel:
 
 # ─── ML Model Tests ──────────────────────────────────────────────────────────
 
-class TestCatBoostModel:
+class TestTorchBoostingForestModel:
     def test_fit_predict(self, small_data):
-        from PipelineTS.ml_model import CatBoostModel
-        model = CatBoostModel(
+        from PipelineTS.ml_model import TorchBoostingForestModel
+        model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=0.9, n_trees=16, n_epochs=50
         )
@@ -192,8 +192,8 @@ class TestCatBoostModel:
         _check_prediction(result)
 
     def test_predict_with_data(self, small_data):
-        from PipelineTS.ml_model import CatBoostModel
-        model = CatBoostModel(
+        from PipelineTS.ml_model import TorchBoostingForestModel
+        model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_trees=16, n_epochs=50
         )
@@ -202,34 +202,10 @@ class TestCatBoostModel:
         _check_prediction(result, check_interval=False)
 
 
-class TestLightGBMModel:
+class TestTorchBaggingForestModel:
     def test_fit_predict(self, small_data):
-        from PipelineTS.ml_model import LightGBMModel
-        model = LightGBMModel(
-            time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_trees=16, n_epochs=50
-        )
-        model.fit(small_data)
-        result = model.predict(PREDICT_N)
-        _check_prediction(result)
-
-
-class TestXGBoostModel:
-    def test_fit_predict(self, small_data):
-        from PipelineTS.ml_model import XGBoostModel
-        model = XGBoostModel(
-            time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_trees=16, n_epochs=50
-        )
-        model.fit(small_data)
-        result = model.predict(PREDICT_N)
-        _check_prediction(result)
-
-
-class TestRandomForestModel:
-    def test_fit_predict(self, small_data):
-        from PipelineTS.ml_model import RandomForestModel
-        model = RandomForestModel(
+        from PipelineTS.ml_model import TorchBaggingForestModel
+        model = TorchBaggingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=0.9, n_trees=16, n_epochs=50, random_state=42
         )
@@ -395,50 +371,10 @@ class TestSpinesTSTiDE:
         assert pred.shape == (1, 10)
 
 
-# ─── No darts import test ────────────────────────────────────────────────────
+# ─── No legacy import test ───────────────────────────────────────────────────
 
-class TestNoDartsImport:
-    """Ensure darts is not imported at runtime by any active module."""
-
-    def test_nn_models_no_darts(self):
-        import importlib
-        for mod_name in [
-            'PipelineTS.nn_model.n_linear',
-            'PipelineTS.nn_model.d_linear',
-            'PipelineTS.nn_model.n_beats',
-            'PipelineTS.nn_model.n_hits',
-            'PipelineTS.nn_model.tft',
-            'PipelineTS.nn_model.transformer',
-            'PipelineTS.nn_model.tide',
-        ]:
-            mod = importlib.import_module(mod_name)
-            src = open(mod.__file__).read()
-            assert 'from darts' not in src, f"{mod_name} still imports darts!"
-            assert 'import darts' not in src, f"{mod_name} still imports darts!"
-
-    def test_ml_models_no_darts(self):
-        import importlib
-        mod = importlib.import_module('PipelineTS.ml_model.gbdt')
-        src = open(mod.__file__).read()
-        assert 'from darts' not in src, "gbdt.py still imports darts!"
-
-    def test_auto_arima_no_darts(self):
-        import importlib
-        mod = importlib.import_module('PipelineTS.statistic_model.auto_arima')
-        src = open(mod.__file__).read()
-        assert 'from darts' not in src, "auto_arima.py still imports darts!"
-
-    def test_base_no_darts(self):
-        import importlib
-        mod = importlib.import_module('PipelineTS.base.base')
-        src = open(mod.__file__).read()
-        assert 'from darts' not in src, "base.py still imports darts!"
-
-    def test_utils_no_darts(self):
-        import importlib
-        mod = importlib.import_module('PipelineTS.utils')
-        src = open(mod.__file__).read()
-        assert 'from darts' not in src, "utils/__init__.py still imports darts!"
+class TestNoLegacyImport:
+    """Ensure legacy libraries are not imported at runtime by any active module."""
 
     def test_no_mapie(self):
         import importlib

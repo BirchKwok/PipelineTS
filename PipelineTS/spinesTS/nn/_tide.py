@@ -9,7 +9,7 @@ Key ideas:
 - Temporal decoder for per-step refinement
 - Residual connection from lookback to forecast
 
-Enhancements over darts:
+Enhancements:
 - RevIN normalization
 - GELU activation
 - Huber loss by default

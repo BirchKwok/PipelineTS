@@ -2,7 +2,7 @@
 
 A lightweight encoder-only Transformer tailored for time series.
 
-Enhancements over darts:
+Enhancements:
 - Pre-LayerNorm for stable training
 - Learnable positional encoding
 - RevIN normalization

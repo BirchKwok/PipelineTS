@@ -2,7 +2,7 @@
 
 Tests:
 - Panel split functions: split_series_panel, lag_splits_panel
-- GBDT models: CatBoost/LightGBM/XGBoost with id_col
+- GBDT models: TorchBoostingForest/TorchBaggingForest with id_col
 - ModelPipeline: id_col injection, per-series scaling, evaluation
 - SmartRouter: id_col pass-through, profiling
 - Backward compatibility: single-series still works
@@ -105,12 +105,12 @@ def test_lag_splits_panel_short_series():
 
 # ─── 2. GBDT model with id_col ──────────────────────────────────────────────
 
-def test_catboost_multi_series():
-    """CatBoostModel trains and predicts with id_col."""
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+def test_torch_boosting_multi_series():
+    """TorchBoostingForestModel trains and predicts with id_col."""
+    from PipelineTS.ml_model import TorchBoostingForestModel
 
     panel = make_panel_data(n_series=3, n_points=80)
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, verbose=False)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10)
     model.all_configs['id_col'] = 'series_id'
 
     model.fit(panel)
@@ -121,45 +121,30 @@ def test_catboost_multi_series():
     assert preds.shape[0] == 15  # 3 series * 5 steps
     assert 'series_id' in preds.columns
     assert set(preds['series_id'].unique()) == {'series_0', 'series_1', 'series_2'}
-    print("[PASS] test_catboost_multi_series")
+    print("[PASS] test_torch_boosting_multi_series")
 
 
-def test_lightgbm_multi_series():
-    """LightGBMModel trains and predicts with id_col."""
-    from PipelineTS.ml_model.gbdt import LightGBMModel
+def test_torch_bagging_multi_series():
+    """TorchBaggingForestModel trains and predicts with id_col."""
+    from PipelineTS.ml_model import TorchBaggingForestModel
 
     panel = make_panel_data(n_series=2, n_points=60)
-    model = LightGBMModel(time_col='ds', target_col='y', lags=8, verbose=-1)
+    model = TorchBaggingForestModel(time_col='ds', target_col='y', lags=8)
     model.all_configs['id_col'] = 'series_id'
 
     model.fit(panel)
     preds = model.predict(n=3)
     assert preds.shape[0] == 6  # 2 series * 3 steps
     assert 'series_id' in preds.columns
-    print("[PASS] test_lightgbm_multi_series")
-
-
-def test_xgboost_multi_series():
-    """XGBoostModel trains and predicts with id_col."""
-    from PipelineTS.ml_model.gbdt import XGBoostModel
-
-    panel = make_panel_data(n_series=2, n_points=60)
-    model = XGBoostModel(time_col='ds', target_col='y', lags=8, verbose=0)
-    model.all_configs['id_col'] = 'series_id'
-
-    model.fit(panel)
-    preds = model.predict(n=4)
-    assert preds.shape[0] == 8  # 2 series * 4 steps
-    assert 'series_id' in preds.columns
-    print("[PASS] test_xgboost_multi_series")
+    print("[PASS] test_torch_bagging_multi_series")
 
 
 def test_gbdt_predict_with_data():
     """GBDT predict with explicit data= argument for multi-series."""
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+    from PipelineTS.ml_model import TorchBoostingForestModel
 
     panel = make_panel_data(n_series=2, n_points=80)
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, verbose=False)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10)
     model.all_configs['id_col'] = 'series_id'
     model.fit(panel)
 
@@ -172,11 +157,11 @@ def test_gbdt_predict_with_data():
 
 def test_gbdt_single_series_unchanged():
     """Single-series GBDT works without id_col (backward compat)."""
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+    from PipelineTS.ml_model import TorchBoostingForestModel
 
     panel = make_panel_data(n_series=1, n_points=120)
     single = panel[['ds', 'y']]
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, quantile=None, verbose=False)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10, quantile=None)
 
     model.fit(single)
     preds = model.predict(n=5)
@@ -195,7 +180,7 @@ def test_pipeline_multi_series_ml():
     pipe = ModelPipeline(
         time_col='ds', target_col='y', lags=10,
         id_col='series_id',
-        include_models=['catboost'],
+        include_models=['torch_boosting_forest'],
         scaler=True,
     )
 
@@ -216,7 +201,7 @@ def test_pipeline_id_col_injection():
     pipe = ModelPipeline(
         time_col='ds', target_col='y', lags=10,
         id_col='series_id',
-        include_models=['catboost'],
+        include_models=['torch_boosting_forest'],
     )
     models = pipe._initial_models()
     for name, model in models:
@@ -234,7 +219,7 @@ def test_pipeline_per_series_scaling():
     pipe = ModelPipeline(
         time_col='ds', target_col='y', lags=5,
         id_col='series_id',
-        include_models=['catboost'],
+        include_models=['torch_boosting_forest'],
         scaler=True,
     )
 
@@ -258,7 +243,7 @@ def test_pipeline_no_id_col_unchanged():
     single = panel[['ds', 'y']]
     pipe = ModelPipeline(
         time_col='ds', target_col='y', lags=10,
-        include_models=['catboost'],
+        include_models=['torch_boosting_forest'],
         scaler=True,
     )
 
@@ -404,7 +389,7 @@ def test_pipeline_all_model_types():
     pipe = ModelPipeline(
         time_col='ds', target_col='y', lags=10,
         id_col='series_id',
-        include_models=['prophet', 'catboost'],
+        include_models=['prophet', 'torch_boosting_forest'],
         scaler=True, quantile=None,
     )
     lb = pipe.fit(panel)
@@ -442,13 +427,13 @@ def test_backtesting_panel_prophet():
     print(f"[PASS] test_backtesting_panel_prophet: mean_mae={summary['mean']:.4f}")
 
 
-def test_backtesting_panel_catboost():
-    """Backtester handles panel data with global model (CatBoost)."""
+def test_backtesting_panel_torch_boosting():
+    """Backtester handles panel data with global model (TorchBoostingForest)."""
     from PipelineTS.evaluation.backtesting import Backtester
-    from PipelineTS.ml_model.gbdt import CatBoostModel
+    from PipelineTS.ml_model import TorchBoostingForestModel
 
     panel = make_panel_data(n_series=3, n_points=100)
-    model = CatBoostModel(time_col='ds', target_col='y', lags=10, verbose=False, quantile=None)
+    model = TorchBoostingForestModel(time_col='ds', target_col='y', lags=10, quantile=None)
     model.all_configs['id_col'] = 'series_id'
 
     bt = Backtester(
@@ -462,7 +447,7 @@ def test_backtesting_panel_catboost():
     assert results['mae'].notna().all()
     summary = bt.summary()
     assert summary['n_failed'] == 0
-    print(f"[PASS] test_backtesting_panel_catboost: mean_mae={summary['mean']:.4f}")
+    print(f"[PASS] test_backtesting_panel_torch_boosting: mean_mae={summary['mean']:.4f}")
 
 
 def test_backtesting_single_series_unchanged():
@@ -494,9 +479,8 @@ if __name__ == '__main__':
         test_lag_splits_panel_basic,
         test_lag_splits_panel_short_series,
         # GBDT multi-series
-        test_catboost_multi_series,
-        test_lightgbm_multi_series,
-        test_xgboost_multi_series,
+        test_torch_boosting_multi_series,
+        test_torch_bagging_multi_series,
         test_gbdt_predict_with_data,
         test_gbdt_single_series_unchanged,
         # ModelPipeline
@@ -519,7 +503,7 @@ if __name__ == '__main__':
         test_pipeline_all_model_types,
         # Backtesting
         test_backtesting_panel_prophet,
-        test_backtesting_panel_catboost,
+        test_backtesting_panel_torch_boosting,
         test_backtesting_single_series_unchanged,
     ]
 
