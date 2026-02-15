@@ -11,7 +11,7 @@ from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
 from PipelineTS.base.spines_base import SpinesMLModelMixin
-from PipelineTS.utils import check_time_col_is_timestamp
+from PipelineTS.utils import check_time_col_is_timestamp, infer_freq, make_future_dates
 
 
 class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
@@ -139,10 +139,17 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             cv_configs['n_estimators'] = min(100, cv_configs.get('n_estimators', 500))
         return RegressorChain(self._estimator(**cv_configs))
 
+    def calculate_confidence_interval_gbrt(self, data, cv=5, fit_kwargs=None):
+        return self._calculate_confidence_interval_sps(
+            data, fit_kwargs=fit_kwargs,
+            train_data_process_kwargs={'mode': 'train'},
+            valid_data_process_kwargs={'mode': 'train', 'refit_processor': False},
+            cv=cv, is_gbrt=True)
+
     @ParameterValuesAssert({
         'mode': ('train', 'predict')
     })
-    def _data_preprocess(self, data, mode='train', update_last_dt=False):
+    def _data_preprocess(self, data, mode='train', update_last_dt=False, refit_processor=True):
         """
         Preprocess the input data for training or prediction.
 
@@ -166,7 +173,8 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             self.last_dt = data[self.all_configs['time_col']].max()
 
         if mode == 'train':
-            self.processor.fit(data)
+            if refit_processor:
+                self.processor.fit(data)
 
             x, y = self.processor.transform(data, mode=mode)  # X, y
             return x.astype(np.float32), y.astype(np.float32)
@@ -202,6 +210,8 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
         if fit_kwargs is None:
             fit_kwargs = {}
 
+        self._freq = infer_freq(data, self.all_configs['time_col'])
+
         x, y = self._data_preprocess(data, 'train', update_last_dt=True)
         x = pd.DataFrame(x)
 
@@ -214,6 +224,8 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
         if self.all_configs['quantile'] is not None:
             self.all_configs['quantile_error'] = \
                 self.calculate_confidence_interval_gbrt(data, fit_kwargs=fit_kwargs, cv=cv)
+            # Restore processor after CV (CV re-fits it on subsets)
+            self.processor.fit(data)
 
         del x, y
 
@@ -314,8 +326,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
                      'The length of the predicted values must be equal to the number of steps.')
 
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
-        res[self.all_configs['time_col']] = \
-            last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
+        res[self.all_configs['time_col']] = make_future_dates(last_dt, len(res), self._freq)
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

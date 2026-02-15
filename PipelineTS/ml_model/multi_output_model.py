@@ -11,7 +11,7 @@ from PipelineTS.spinesTS.pipeline import Pipeline
 
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
 from PipelineTS.base.spines_base import SpinesMLModelMixin
-from PipelineTS.utils import check_time_col_is_timestamp
+from PipelineTS.utils import check_time_col_is_timestamp, infer_freq, make_future_dates
 
 
 class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
@@ -156,6 +156,8 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
         if fit_kwargs is None:
             fit_kwargs = {}
 
+        self._freq = infer_freq(data, self.all_configs['time_col'])
+
         x, y = self._data_preprocess(data, update_last_dt=True, mode='train')
         x = pd.DataFrame(x)
 
@@ -263,8 +265,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
         raise_if_not(ValueError, len(res) == n, 'The length of the prediction must be equal to n.')
 
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
-        res[self.all_configs['time_col']] = \
-            last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
+        res[self.all_configs['time_col']] = make_future_dates(last_dt, len(res), self._freq)
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

@@ -8,7 +8,7 @@ from statsmodels.tsa.stattools import adfuller
 from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
-from PipelineTS.utils import check_time_col_is_timestamp
+from PipelineTS.utils import check_time_col_is_timestamp, infer_freq, make_future_dates
 
 
 def _determine_d(y, max_d=2):
@@ -241,6 +241,8 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
         known_covs = self.all_configs.get('known_covariates') or []
         self._known_cov_cols = [c for c in known_covs if c in data.columns]
 
+        self._freq = infer_freq(data, self.all_configs['time_col'])
+
         if id_col is not None and id_col in data.columns:
             # Multi-series: train per-series local ARIMA models
             self._panel_models = {}
@@ -333,8 +335,7 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
                 res = pd.DataFrame({
                     self.all_configs['target_col']: preds
                 })
-                res[self.all_configs['time_col']] = \
-                    last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+                res[self.all_configs['time_col']] = make_future_dates(last_dt, n, self._freq)
                 if self.all_configs['quantile'] is not None:
                     res = self.interval_predict(res)
                 res = self.chosen_cols(res)
@@ -356,8 +357,7 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
         res = pd.DataFrame({
             self.all_configs['target_col']: preds
         })
-        res[self.all_configs['time_col']] = \
-            self.last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+        res[self.all_configs['time_col']] = make_future_dates(self.last_dt, n, self._freq)
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

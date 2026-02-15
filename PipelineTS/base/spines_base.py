@@ -8,7 +8,7 @@ from spinesUtils.logging import Logger
 
 from PipelineTS.base.base import NNModelMixin, IntervalEstimationMixin
 from PipelineTS.base.base_utils import generate_valid_data
-from PipelineTS.utils import check_time_col_is_timestamp
+from PipelineTS.utils import check_time_col_is_timestamp, infer_freq, make_future_dates
 
 
 logger = Logger(with_time=False)
@@ -225,6 +225,8 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
             data = data[[self.all_configs['time_col'], self.all_configs['target_col']]]
             id_col = None
 
+        self._freq = infer_freq(data, self.all_configs['time_col'])
+
         if fit_kwargs is None:
             fit_kwargs = {}
 
@@ -277,7 +279,12 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
 
                 valid_x, valid_y = self._data_preprocess(valid_data, mode='train')
 
-                eval_set = [(valid_x, valid_y)]
+                # Guard: if panel split produced empty windows (e.g. too few rows
+                # per series for window_size + pred_steps), skip eval_set.
+                if valid_x.shape[0] == 0 or valid_y.shape[0] == 0:
+                    eval_set = None
+                else:
+                    eval_set = [(valid_x, valid_y)]
 
         # Enable mHC-inspired residual gate if requested
         if self.all_configs.get('use_residual_gate', False):
@@ -521,14 +528,14 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                 if getattr(self.model, '_cqr_enabled', False) and self.all_configs['quantile'] is not None:
                     cqr = self._extend_predict_cqr(x, n, predict_kwargs=predict_kwargs)
                     res = pd.DataFrame(cqr['median'], columns=[target_col])
-                    res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+                    res[time_col] = make_future_dates(last_dt, n, self._freq)
                     q_hat = self.all_configs['quantile_error']
                     res[f"{target_col}_lower"] = np.array(cqr['lower']) - q_hat
                     res[f"{target_col}_upper"] = np.array(cqr['upper']) + q_hat
                 else:
                     preds = self._extend_predict(x, n, predict_kwargs=predict_kwargs)
                     res = pd.DataFrame(preds, columns=[target_col])
-                    res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+                    res[time_col] = make_future_dates(last_dt, n, self._freq)
                     if self.all_configs['quantile'] is not None:
                         res = self.interval_predict(res)
 
@@ -564,7 +571,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                          "The length of the predictions must equal to n.")
 
             res = pd.DataFrame(cqr['median'], columns=[target_col])
-            res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+            res[time_col] = make_future_dates(last_dt, n, self._freq)
 
             q_hat = self.all_configs['quantile_error']
             res[f"{target_col}_lower"] = np.array(cqr['lower']) - q_hat
@@ -577,7 +584,7 @@ class SpinesNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         raise_if_not(ValueError, len(res) == n, "The length of the predictions must equal to n.")
 
         res = pd.DataFrame(res, columns=[target_col])
-        res[time_col] = last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
+        res[time_col] = make_future_dates(last_dt, len(res), self._freq)
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)
@@ -780,6 +787,8 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         for p, default in _stability_defaults.items():
             if p not in fit_kwargs:
                 fit_kwargs[p] = self.all_configs.get(p, default)
+
+        self._freq = infer_freq(data, self.all_configs['time_col'])
 
         if id_col is not None:
             # Multi-series: store per-series last features and timestamps
@@ -1144,7 +1153,7 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                 last_dt = panel_last_dts[sid]
                 preds = self._extend_predict(x, n, predict_kwargs=predict_kwargs)
                 res = pd.DataFrame(preds, columns=[self._primary_target])
-                res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+                res[time_col] = make_future_dates(last_dt, n, self._freq)
                 if self.all_configs.get('quantile') is not None:
                     res = self.interval_predict(res)
                 res = self.chosen_cols(res)
@@ -1213,7 +1222,7 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
                     hi_res.append(q_hi.squeeze().tolist()[-1])
 
             res = pd.DataFrame(med_res, columns=[self._primary_target])
-            res[time_col] = last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+            res[time_col] = make_future_dates(last_dt, n, self._freq)
 
             q_hat = self.all_configs['quantile_error']
             res[f"{target_col}_lower"] = np.array(lo_res) - q_hat
@@ -1229,7 +1238,7 @@ class SpinesMultivariateNNModelMixin(NNModelMixin, IntervalEstimationMixin):
         else:
             res = pd.DataFrame(res_data, columns=[self._primary_target])
 
-        res[time_col] = last_dt + pd.to_timedelta(range(len(res) + 1), unit='D')[1:]
+        res[time_col] = make_future_dates(last_dt, len(res), self._freq)
 
         if self.all_configs.get('quantile') is not None and not self._multi_target:
             res = self.interval_predict(res)

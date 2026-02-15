@@ -526,7 +526,11 @@ class SmartRouter:
                 full_processed, self.strategy_['lags']
             )
 
-        self._preprocessed_data = processed_train
+        # The pipeline trains on ALL data and evaluates on the valid tail.
+        # When valid_data is passed explicitly, pipeline uses data.copy()
+        # for training — so we pass the full dataset, not just the train split.
+        # The valid split is only used for metric evaluation.
+        self._preprocessed_data = full_processed
         self._valid_data = processed_valid
 
         # Step 4: Quick screening (eliminate weak candidates with holdout)
@@ -1217,6 +1221,11 @@ class SmartRouter:
             params['prophet__use_lag_features'] = True
         if fe.get('prophet_seasonality_mode', 'auto') != 'auto':
             params['prophet__seasonality_mode'] = fe['prophet_seasonality_mode']
+
+        # --- All tree models: verbose off by default ---
+        for m in ['torch_boosting_forest', 'torch_bagging_forest', 'deep_forest',
+                   'multi_output_model', 'multi_step_model', 'wide_gbrt']:
+            params[f'{m}__verbose'] = False
 
         # --- All tree models: adapt to data size ---
         torch_tree_models = ['torch_boosting_forest', 'torch_bagging_forest']
@@ -2548,7 +2557,9 @@ class SmartRouter:
         """Split data into train/valid with valid strictly after train.
 
         Uses the last 2*lags rows as validation data, and everything
-        before that as training data.
+        before that as training data.  For panel data (id_col set),
+        the split is performed per-series so that every series is
+        represented in both train and valid sets.
 
         Parameters
         ----------
@@ -2562,6 +2573,40 @@ class SmartRouter:
         tuple of (pd.DataFrame, pd.DataFrame)
             (train_data, valid_data) with non-overlapping time ranges.
         """
+        if self.id_col is not None and self.id_col in data.columns:
+            # Panel mode: split per-series to preserve series boundaries.
+            # Each series needs at least 2*lags rows in valid so that
+            # split_series_panel (window_size=lags, pred_steps=lags) can
+            # create at least one sliding window for evaluation.
+            train_parts, valid_parts = [], []
+            for sid, sdf in data.groupby(self.id_col):
+                sdf = sdf.sort_values(self.time_col)
+                n_s = len(sdf)
+                # Target: 2*lags for valid, but keep at least 2*lags for train too
+                n_valid = 2 * lags
+                if n_s < 2 * n_valid:
+                    # Not enough to give 2*lags to both — split 50/50
+                    n_valid = n_s // 2
+                n_valid = min(n_valid, n_s - lags)  # keep at least lags rows for train
+                if n_valid <= 0:
+                    # Series too short — put all in train
+                    train_parts.append(sdf)
+                    continue
+                split_idx = n_s - n_valid
+                train_parts.append(sdf.iloc[:split_idx])
+                valid_parts.append(sdf.iloc[split_idx:])
+            train = pd.concat(train_parts, ignore_index=True)
+            if valid_parts:
+                valid = pd.concat(valid_parts, ignore_index=True)
+            else:
+                # Fallback: use last lags rows per series
+                vparts = []
+                for sid, sdf in data.groupby(self.id_col):
+                    sdf = sdf.sort_values(self.time_col)
+                    vparts.append(sdf.iloc[-lags:])
+                valid = pd.concat(vparts, ignore_index=True)
+            return train, valid
+
         data = data.sort_values(self.time_col).reset_index(drop=True)
         n = len(data)
         n_valid = min(2 * lags, n // 3)  # at most 1/3 of data for validation
@@ -2632,35 +2677,39 @@ class SmartRouter:
         """List all model names available for routing."""
         return ModelPipeline.list_all_available_models()
 
-    def save(self, path):
-        """Save this fitted SmartRouter to a zip file.
+    def save(self, path, metadata=None):
+        """Save this fitted SmartRouter to a file.
 
         Parameters
         ----------
         path : str
-            File path ending with '.zip'.
+            File path ending with '.pts'.
+        metadata : dict, optional
+            Arbitrary JSON-serializable metadata to embed in the file header.
 
         Returns
         -------
         str
-            The path to the saved zip file.
+            The path to the saved file.
 
         Examples
         --------
-        >>> router.save('my_router.zip')
-        >>> loaded = SmartRouter.load('my_router.zip')
+        >>> router.save('my_router.pts')
+        >>> loaded = SmartRouter.load('my_router.pts')
         """
         from PipelineTS.io import save_model
-        return save_model(path, self)
+        return save_model(path, self, metadata=metadata)
 
     @staticmethod
-    def load(path):
-        """Load a fitted SmartRouter from a zip file.
+    def load(path, verify_checksum=True):
+        """Load a fitted SmartRouter from a file.
 
         Parameters
         ----------
         path : str
-            File path ending with '.zip'.
+            File path ending with '.pts' or '.zip' (legacy, read-only).
+        verify_checksum : bool, default True
+            If True, verify SHA-256 checksums when loading .pts files.
 
         Returns
         -------
@@ -2669,11 +2718,11 @@ class SmartRouter:
 
         Examples
         --------
-        >>> router = SmartRouter.load('my_router.zip')
+        >>> router = SmartRouter.load('my_router.pts')
         >>> router.predict(n=12)
         """
         from PipelineTS.io import load_model
-        return load_model(path)
+        return load_model(path, verify_checksum=verify_checksum)
 
     def __repr__(self):
         status = "fitted" if self.pipeline_ is not None else "not fitted"

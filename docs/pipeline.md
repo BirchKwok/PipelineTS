@@ -137,14 +137,119 @@ pipeline = ModelPipeline(
 )
 ```
 
-The config dict supports three keys:
-配置字典支持三个键：
+The config dict supports four keys:
+配置字典支持四个键：
 
 | Key / 键 | Description / 描述 |
 |---|---|
 | `init_configs` | Model initialization parameters / 模型初始化参数 |
 | `fit_configs` | Parameters passed to `fit()` / 传递给 `fit()` 的参数 |
 | `predict_configs` | Parameters passed to `predict()` / 传递给 `predict()` 的参数 |
+| `pipeline_configs` | Pipeline-level per-model settings (lags, scaler, etc.) / 管道级别的每模型设置（滞后窗口、缩放器等） |
+
+---
+
+## Per-Model Pipeline Configuration / 每模型管道配置
+
+`pipeline_configs` allows each model variant to use different pipeline-level settings such as lags, scalers, and differencing. This is useful when you want to compare models under different preprocessing conditions.
+
+`pipeline_configs` 允许每个模型变体使用不同的管道级别设置，如滞后窗口、缩放器和差分。当你想在不同预处理条件下比较模型时非常有用。
+
+### Supported Keys / 支持的键
+
+| Key / 键 | Type / 类型 | Description / 描述 |
+|---|---|---|
+| `lags` | int | Per-model input window size (overrides global `lags`) / 每模型输入窗口大小（覆盖全局 `lags`） |
+| `scaler` | bool, None, or TransformerMixin | Per-model scaler: `True`=MinMaxScaler, `None`=no scaling, or a custom scaler instance / 每模型缩放器：`True`=MinMaxScaler，`None`=不缩放，或自定义缩放器实例 |
+| `differential_n` | int | Per-model differencing order (only for models that accept it) / 每模型差分阶数（仅适用于支持该参数的模型） |
+| `feature_cols` | list | Per-model feature columns / 每模型特征列 |
+
+### Example: Different Lags / 示例：不同滞后窗口
+
+```python
+from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+
+configs = PipelineConfigs([
+    ('torch_boosting_forest', 'boost_short', {
+        'init_configs': {'n_trees': 32},
+        'pipeline_configs': {'lags': 6},
+    }),
+    ('torch_boosting_forest', 'boost_long', {
+        'init_configs': {'n_trees': 32},
+        'pipeline_configs': {'lags': 24},
+    }),
+])
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,  # Global default
+    include_models=['torch_boosting_forest'],
+    configs=configs,
+)
+leaderboard = pipeline.fit(data)
+# boost_short uses lags=6, boost_long uses lags=24
+# boost_short 使用 lags=6，boost_long 使用 lags=24
+```
+
+### Example: Different Scalers / 示例：不同缩放器
+
+```python
+from sklearn.preprocessing import StandardScaler
+from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+
+configs = PipelineConfigs([
+    ('torch_boosting_forest', 'boost_standard', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'scaler': StandardScaler()},
+    }),
+    ('torch_boosting_forest', 'boost_noscale', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'scaler': None},  # No scaling
+    }),
+])
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models=['torch_boosting_forest'],
+    configs=configs,
+    scaler=True,  # Global default: MinMaxScaler
+)
+leaderboard = pipeline.fit(data)
+# boost_standard uses StandardScaler, boost_noscale uses no scaler
+# boost_standard 使用 StandardScaler，boost_noscale 不使用缩放器
+```
+
+### Example: Combined Settings / 示例：组合设置
+
+```python
+from sklearn.preprocessing import StandardScaler
+from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+
+configs = PipelineConfigs([
+    ('torch_boosting_forest', 'boost_custom', {
+        'init_configs': {'n_trees': 128},
+        'pipeline_configs': {
+            'lags': 20,
+            'scaler': StandardScaler(),
+        },
+    }),
+    ('torch_boosting_forest', 'boost_default', {
+        'init_configs': {'n_trees': 64},
+        # No pipeline_configs: uses global lags and scaler
+        # 不指定 pipeline_configs：使用全局 lags 和 scaler
+    }),
+])
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models=['torch_boosting_forest'],
+    configs=configs,
+)
+leaderboard = pipeline.fit(data)
+```
+
+**Priority order / 优先级顺序**: `pipeline_configs` overrides global settings, and `init_configs` has the highest priority for model initialization parameters.
+
+**优先级顺序**：`pipeline_configs` 覆盖全局设置，而 `init_configs` 对模型初始化参数具有最高优先级。
 
 ---
 

@@ -7,7 +7,7 @@ from spinesUtils.preprocessing import gc_collector
 from PipelineTS.spinesTS.preprocessing import split_series, lag_splits, split_series_panel, lag_splits_panel
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
 from PipelineTS.base.spines_base import SpinesMLModelMixin
-from PipelineTS.utils import check_time_col_is_timestamp
+from PipelineTS.utils import check_time_col_is_timestamp, infer_freq, make_future_dates
 
 
 class _DirectGBDTMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
@@ -305,6 +305,8 @@ class _DirectGBDTMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMix
         self._panel_past_cov_lags = {}  # {sid: {col: array(1, lags)}}
         self._past_cov_lags = {}  # {col: array(1, lags)} for single-series
 
+        self._freq = infer_freq(data, self.all_configs['time_col'])
+
         if id_col is not None and id_col in data.columns:
             # Multi-series: store per-series last windows and last datetimes
             self._panel_raw_lags = {}
@@ -536,8 +538,7 @@ class _DirectGBDTMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMix
                         last_dt = sdf[self.all_configs['time_col']].max()
 
                 res = pd.DataFrame(preds, columns=[self.all_configs['target_col']])
-                res[self.all_configs['time_col']] = \
-                    last_dt + pd.to_timedelta(range(n + 1), unit='D')[1:]
+                res[self.all_configs['time_col']] = make_future_dates(last_dt, n, self._freq)
                 if self.all_configs['quantile'] is not None:
                     res = self.interval_predict(res)
                 res = self.chosen_cols(res)
@@ -583,8 +584,7 @@ class _DirectGBDTMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMix
         raise_if_not(ValueError, len(res) == n, 'len(predictions) must == n')
 
         res = pd.DataFrame(res, columns=[self.all_configs['target_col']])
-        res[self.all_configs['time_col']] = \
-            last_dt + pd.to_timedelta(range(res.index.shape[0] + 1), unit='D')[1:]
+        res[self.all_configs['time_col']] = make_future_dates(last_dt, len(res), self._freq)
 
         if self.all_configs['quantile'] is not None:
             res = self.interval_predict(res)

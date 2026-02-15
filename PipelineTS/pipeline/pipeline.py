@@ -33,6 +33,9 @@ from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_tim
 from PipelineTS.base.base_utils import generate_models_set
 
 
+_UNSET = object()  # sentinel to distinguish "not set" from None
+
+
 class ModelPipeline:
     @ParameterTypeAssert({
         'time_col': str,
@@ -238,12 +241,18 @@ class ModelPipeline:
 
         self._model_init_kwargs = {}
         self._training_data = None
+        self._model_pipeline_configs = {}  # {model_name_after_rename: pipeline_configs dict}
+        self._model_scalers = {}  # {model_name_after_rename: fitted scaler or None}
+        self._model_panel_scalers = {}  # {model_name_after_rename: {series_id: fitted scaler}}
 
         model_init_kwargs = update_dict_without_conflict(model_init_kwargs,
                                                          {
-                                                             'multi_output_model__verbose': -1,
-                                                             'multi_step_model__verbose': -1,
-                                                             'wide_gbrt__verbose': -1
+                                                             'multi_output_model__verbose': False,
+                                                             'multi_step_model__verbose': False,
+                                                             'wide_gbrt__verbose': False,
+                                                             'torch_boosting_forest__verbose': False,
+                                                             'torch_bagging_forest__verbose': False,
+                                                             'deep_forest__verbose': False,
                                                          })
 
         if time_limit is not None and time_limit <= 0:
@@ -387,6 +396,22 @@ class ModelPipeline:
                         include_in_configs = True
                         new_model_kwargs = deepcopy(model_kwargs)
 
+                        # Extract pipeline_configs (lags, scaler, differential_n, feature_cols, etc.)
+                        pipeline_cfg = self.configs.get_configs(
+                            model_name_after_rename_in_config
+                        ).get('pipeline_configs', {})
+
+                        # Store pipeline_configs for fit-time use (scaler handling, etc.)
+                        if pipeline_cfg:
+                            self._model_pipeline_configs[model_name_after_rename_in_config] = pipeline_cfg
+
+                        # Apply pipeline_configs overrides to model init kwargs
+                        # 'scaler' is pipeline-level only, handled separately during fit
+                        _pipeline_init_keys = {'lags', 'differential_n', 'feature_cols'}
+                        for pk in _pipeline_init_keys:
+                            if pk in pipeline_cfg and check_has_param(model, pk):
+                                new_model_kwargs[pk] = pipeline_cfg[pk]
+
                         new_model_kwargs.update(
                             self.configs.get_configs(model_name_after_rename_in_config).get('init_configs')
                         )
@@ -490,21 +515,81 @@ class ModelPipeline:
 
         return df, valid_df
 
-    def _inverse_data(self, df, columns=None, use_scaler=True):
-        if use_scaler:
+    def _prepare_model_data(self, model_name, original_df, original_valid_df,
+                            default_df, default_valid_df):
+        """Prepare scaled data for a specific model, respecting per-model scaler config.
+
+        Returns (model_df, model_valid_df, model_scaler, model_panel_scalers).
+        """
+        pcfg = self._model_pipeline_configs.get(model_name, {})
+
+        if 'scaler' not in pcfg:
+            # Use default (globally scaled) data and global scaler
+            return default_df, default_valid_df, _UNSET, {}
+
+        # Custom scaler specified in pipeline_configs
+        scaler_spec = pcfg['scaler']
+        if augmented_isinstance(scaler_spec, bool) and scaler_spec is True:
+            custom_scaler = MinMaxScaler()
+        elif scaler_spec is False or scaler_spec is None:
+            custom_scaler = None
+        else:
+            custom_scaler = deepcopy(scaler_spec)
+
+        if custom_scaler is None:
+            # No scaling for this model — use original unscaled data
+            return original_df.copy(), original_valid_df.copy(), None, {}
+
+        # Scale data with model-specific scaler
+        df = original_df.copy()
+        panel_scalers = {}
+
+        if self.id_col is not None and self.id_col in df.columns:
+            for sid, idx in df.groupby(self.id_col).groups.items():
+                s = deepcopy(custom_scaler)
+                df.loc[idx, self.target_col] = s.fit_transform(
+                    df.loc[idx, self.target_col].values.reshape(-1, 1)
+                ).squeeze()
+                panel_scalers[sid] = s
+
+            valid_df = original_valid_df.copy()
+            for sid, idx in valid_df.groupby(self.id_col).groups.items():
+                if sid in panel_scalers:
+                    valid_df.loc[idx, self.target_col] = panel_scalers[sid].transform(
+                        valid_df.loc[idx, self.target_col].values.reshape(-1, 1)
+                    ).squeeze()
+        else:
+            df[self.target_col] = custom_scaler.fit_transform(
+                df[self.target_col].values.reshape(-1, 1)
+            ).squeeze()
+
+            valid_df = original_valid_df.copy()
+            valid_df[self.target_col] = custom_scaler.transform(
+                valid_df[self.target_col].values.reshape(-1, 1)
+            ).squeeze()
+
+        return df, valid_df, custom_scaler, panel_scalers
+
+    def _inverse_data(self, df, columns=None, use_scaler=True,
+                      scaler_override=_UNSET, panel_scalers_override=None):
+        if scaler_override is not _UNSET:
+            scaler = scaler_override
+            panel_scalers = panel_scalers_override or {}
+        elif use_scaler:
             scaler = self.scaler
+            panel_scalers = self._panel_scalers
         else:
             scaler = self._temp_scaler
+            panel_scalers = self._temp_panel_scalers
 
         if columns is None:
             columns = self.target_col
 
         if scaler is not None:
-            if self.id_col is not None and self.id_col in df.columns:
-                scalers = self._panel_scalers if use_scaler else self._temp_panel_scalers
+            if self.id_col is not None and self.id_col in df.columns and panel_scalers:
                 for sid, idx in df.groupby(self.id_col).groups.items():
-                    if sid in scalers:
-                        df.loc[idx, columns] = scalers[sid].inverse_transform(
+                    if sid in panel_scalers:
+                        df.loc[idx, columns] = panel_scalers[sid].inverse_transform(
                             df.loc[idx, columns].values.reshape(-1, 1)
                         ).squeeze()
             else:
@@ -525,7 +610,8 @@ class ModelPipeline:
         return init_kwargs
 
     @gc_collector(3)
-    def _fit(self, model_name_after_rename, model, train_df, valid_df, res_df, use_scaler=True):
+    def _fit(self, model_name_after_rename, model, train_df, valid_df, res_df,
+             use_scaler=True, scaler_override=_UNSET, panel_scalers_override=None):
         self._timer.start()
 
         # -------------------- fitting -------------------------
@@ -569,10 +655,16 @@ class ModelPipeline:
         else:
             eval_res = model.predict(n_predict)
 
-        if use_scaler:
+        # Determine the correct scaler and panel_scalers for inverse transform
+        if scaler_override is not _UNSET:
+            scaler = scaler_override
+            _panel_scalers_for_inv = panel_scalers_override or {}
+        elif use_scaler:
             scaler = self.scaler
+            _panel_scalers_for_inv = self._panel_scalers
         else:
             scaler = self._temp_scaler
+            _panel_scalers_for_inv = self._temp_panel_scalers
 
         yt = valid_df[self.target_col].values
         yp = eval_res[self.target_col].values
@@ -583,12 +675,12 @@ class ModelPipeline:
             right_pred = eval_res[f"{self.target_col}_upper"].values
 
         if scaler is not None:
-            if _is_panel and self._panel_scalers:
+            if _is_panel and _panel_scalers_for_inv:
                 # Per-series inverse transform for both actuals and predictions
                 yt_inv, yp_inv = [], []
                 lp_inv, rp_inv = [], []
                 for sid in valid_df[self.id_col].unique():
-                    s = self._panel_scalers.get(sid)
+                    s = _panel_scalers_for_inv.get(sid)
                     if s is None:
                         continue
                     v_mask = valid_df[self.id_col] == sid
@@ -746,6 +838,9 @@ class ModelPipeline:
             else:
                 df, valid_df = data.copy(), data.iloc[-(2 * self.lags):, :]
 
+        # Keep original unscaled data for per-model re-scaling
+        original_df, original_valid_df = df.copy(), valid_df.copy()
+
         # 如果指定scaler，此语句会对数据缩放
         df, valid_df = self._scale_data(df, valid_df, refit_scaler=True)
 
@@ -761,6 +856,26 @@ class ModelPipeline:
             lag_info = ', '.join(f"{m}={l}" for m, l in sorted(self.per_model_lags.items()) if m in model_names)
             if lag_info:
                 self.logger.info(f"Per-model lags: {lag_info} (primary={self.lags})")
+
+        # Log per-model pipeline_configs if any
+        if self._model_pipeline_configs:
+            pcfg_info = []
+            for mname, pcfg in self._model_pipeline_configs.items():
+                parts = []
+                if 'lags' in pcfg:
+                    parts.append(f"lags={pcfg['lags']}")
+                if 'scaler' in pcfg:
+                    s = pcfg['scaler']
+                    sname = type(s).__name__ if hasattr(s, '__class__') and s is not None and s is not True and s is not False else str(s)
+                    parts.append(f"scaler={sname}")
+                if 'differential_n' in pcfg:
+                    parts.append(f"diff_n={pcfg['differential_n']}")
+                if 'feature_cols' in pcfg:
+                    parts.append(f"feature_cols={pcfg['feature_cols']}")
+                if parts:
+                    pcfg_info.append(f"{mname}({', '.join(parts)})")
+            if pcfg_info:
+                self.logger.info(f"Per-model pipeline_configs: {'; '.join(pcfg_info)}")
 
         for idx, (model_name_after_rename, model) in enumerate(models):
             # Check time budget before starting next model
@@ -782,9 +897,25 @@ class ModelPipeline:
             )
 
             try:
+                # Prepare per-model data (custom scaler if specified in pipeline_configs)
+                model_df, model_valid_df, model_scaler, model_panel_scalers = \
+                    self._prepare_model_data(
+                        model_name_after_rename,
+                        original_df, original_valid_df,
+                        df, valid_df
+                    )
+
+                # Store model's scaler info for predict-time use
+                if model_scaler is not _UNSET:
+                    self._model_scalers[model_name_after_rename] = model_scaler
+                    if model_panel_scalers:
+                        self._model_panel_scalers[model_name_after_rename] = model_panel_scalers
+
                 model_name_after_rename, model, res, fit_info = self._fit(
-                    model_name_after_rename, model, df, valid_df, res,
-                    use_scaler=True
+                    model_name_after_rename, model, model_df, model_valid_df, res,
+                    use_scaler=True,
+                    scaler_override=model_scaler,
+                    panel_scalers_override=model_panel_scalers if model_panel_scalers else None
                 )
                 self.models_.append((model_name_after_rename, model))
 
@@ -964,18 +1095,31 @@ class ModelPipeline:
         predictions : pd.DataFrame
             DataFrame containing the predicted values for the specified model or the best model.
         """
+        # Resolve model name for scaler lookup
+        effective_model_name = model_name
+        if effective_model_name is None and self.leader_board_ is not None and not self.leader_board_.empty:
+            effective_model_name = self.leader_board_.iloc[0]['model']
+
+        # Determine scaler for this model
+        if effective_model_name is not None and effective_model_name in self._model_scalers:
+            _scaler = self._model_scalers[effective_model_name]
+            _panel_scalers = self._model_panel_scalers.get(effective_model_name, {})
+        else:
+            _scaler = self.scaler
+            _panel_scalers = self._panel_scalers
+
         df = None
         if data is not None:
             df = data.copy()
-            if self.scaler is not None:
-                if self.id_col is not None and self.id_col in df.columns and self._panel_scalers:
+            if _scaler is not None:
+                if self.id_col is not None and self.id_col in df.columns and _panel_scalers:
                     for sid, idx in df.groupby(self.id_col).groups.items():
-                        if sid in self._panel_scalers:
-                            df.loc[idx, self.target_col] = self._panel_scalers[sid].transform(
+                        if sid in _panel_scalers:
+                            df.loc[idx, self.target_col] = _panel_scalers[sid].transform(
                                 df.loc[idx, self.target_col].values.reshape(-1, 1)
                             ).squeeze()
                 else:
-                    df[self.target_col] = self.scaler.transform(
+                    df[self.target_col] = _scaler.transform(
                         df[self.target_col].values.reshape(-1, 1)).squeeze()
 
         target_model = self.get_model(model_name) if model_name is not None else self.best_model_
@@ -991,7 +1135,9 @@ class ModelPipeline:
 
         for i in res.columns:
             if i.startswith(self.target_col):
-                res = self._inverse_data(res, columns=i)
+                res = self._inverse_data(res, columns=i,
+                                         scaler_override=_scaler,
+                                         panel_scalers_override=_panel_scalers)
 
         return res
 
@@ -1038,12 +1184,21 @@ class ModelPipeline:
         if not hasattr(target_model, 'predict_quantiles'):
             return point_df
 
+        # Resolve per-model scaler
+        effective_model_name = model_name
+        if effective_model_name is None and self.leader_board_ is not None and not self.leader_board_.empty:
+            effective_model_name = self.leader_board_.iloc[0]['model']
+        if effective_model_name is not None and effective_model_name in self._model_scalers:
+            _scaler = self._model_scalers[effective_model_name]
+        else:
+            _scaler = self.scaler
+
         # Conformal residuals were collected in *scaled* space, so we need
         # to compute bounds in scaled space then inverse-transform them.
         # Re-scale the point predictions back to scaled space for offset math.
         point_vals = point_df[self.target_col].values.copy()
-        if self.scaler is not None:
-            scaled_pts = self.scaler.transform(
+        if _scaler is not None:
+            scaled_pts = _scaler.transform(
                 point_vals.reshape(-1, 1)).squeeze()
         else:
             scaled_pts = point_vals
@@ -1059,10 +1214,10 @@ class ModelPipeline:
         for lv in sorted(levels):
             lo, hi = q_result[lv]
             # Inverse-transform bounds from scaled space to original
-            if self.scaler is not None:
-                lo = self.scaler.inverse_transform(
+            if _scaler is not None:
+                lo = _scaler.inverse_transform(
                     np.asarray(lo).reshape(-1, 1)).squeeze()
-                hi = self.scaler.inverse_transform(
+                hi = _scaler.inverse_transform(
                     np.asarray(hi).reshape(-1, 1)).squeeze()
 
             lv_str = f"{lv:.2f}".rstrip('0').rstrip('.')
@@ -1230,35 +1385,39 @@ class ModelPipeline:
             self.leader_board_, lang=lang, figsize=figsize, show=show,
         )
 
-    def save(self, path):
-        """Save this fitted pipeline to a zip file.
+    def save(self, path, metadata=None):
+        """Save this fitted pipeline to a file.
 
         Parameters
         ----------
         path : str
-            File path ending with '.zip'.
+            File path ending with '.pts'.
+        metadata : dict, optional
+            Arbitrary JSON-serializable metadata to embed in the file header.
 
         Returns
         -------
         str
-            The path to the saved zip file.
+            The path to the saved file.
 
         Examples
         --------
-        >>> pipeline.save('my_pipeline.zip')
-        >>> loaded = ModelPipeline.load('my_pipeline.zip')
+        >>> pipeline.save('my_pipeline.pts')
+        >>> loaded = ModelPipeline.load('my_pipeline.pts')
         """
         from PipelineTS.io import save_model
-        return save_model(path, self)
+        return save_model(path, self, metadata=metadata)
 
     @staticmethod
-    def load(path):
-        """Load a fitted pipeline from a zip file.
+    def load(path, verify_checksum=True):
+        """Load a fitted pipeline from a file.
 
         Parameters
         ----------
         path : str
-            File path ending with '.zip'.
+            File path ending with '.pts' or '.zip' (legacy, read-only).
+        verify_checksum : bool, default True
+            If True, verify SHA-256 checksums when loading .pts files.
 
         Returns
         -------
@@ -1267,8 +1426,8 @@ class ModelPipeline:
 
         Examples
         --------
-        >>> pipeline = ModelPipeline.load('my_pipeline.zip')
+        >>> pipeline = ModelPipeline.load('my_pipeline.pts')
         >>> pipeline.predict(n=12)
         """
         from PipelineTS.io import load_model
-        return load_model(path)
+        return load_model(path, verify_checksum=verify_checksum)

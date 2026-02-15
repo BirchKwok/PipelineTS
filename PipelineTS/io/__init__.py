@@ -1,366 +1,444 @@
+"""
+PipelineTS Custom Binary Format (.pts)
+=======================================
+
+A self-contained binary format for saving and loading PipelineTS models,
+pipelines, and SmartRouters with built-in integrity verification.
+
+File Layout
+-----------
+┌──────────────────────────────────┐
+│ Magic Number       (8 bytes)     │  b'PPTS\\x00\\x01\\x00\\x00'
+├──────────────────────────────────┤
+│ Format Version     (2 bytes)     │  uint16 LE
+├──────────────────────────────────┤
+│ Header Length       (4 bytes)    │  uint32 LE
+├──────────────────────────────────┤
+│ Header (JSON bytes, variable)    │  model_type, sections[], metadata
+├──────────────────────────────────┤
+│ Section 1 data     (variable)    │  cloudpickle bytes
+├──────────────────────────────────┤
+│ Section N data     (variable)    │  ...
+├──────────────────────────────────┤
+│ Global SHA-256     (32 bytes)    │  over all bytes above
+├──────────────────────────────────┤
+│ Footer Magic       (4 bytes)     │  b'PTSE'
+└──────────────────────────────────┘
+
+Security features:
+- SHA-256 global checksum over the entire payload (magic → last section byte)
+- Per-section SHA-256 checksums stored in the header
+- Magic number validation for quick file identification
+- Format version for forward/backward compatibility
+- Backward compatible: load_model() still accepts legacy .zip files (read-only)
+"""
+
 import datetime
+import hashlib
+import json
+import struct
 from copy import deepcopy
+from pathlib import Path
+
+# ─── Constants ────────────────────────────────────────────────────────────────
+
+MAGIC = b'PPTS\x00\x01\x00\x00'   # 8 bytes: PipelineTS format identifier
+FOOTER_MAGIC = b'PTSE'             # 4 bytes: PipelineTS End marker
+FORMAT_VERSION = 1                 # uint16
+FILE_EXTENSION = '.pts'
+
+# Model type identifiers stored in header
+MODEL_TYPE_SINGLE = 'single_model'
+MODEL_TYPE_PIPELINE = 'pipeline'
+MODEL_TYPE_SMART_ROUTER = 'smart_router'
 
 
-def _get_object_name(model_obj):
-    """
-    Extracts and returns the object name from its string representation.
+# ─── Low-level binary helpers ─────────────────────────────────────────────────
 
-    Parameters
-    ----------
-    model_obj : object
-        The object for which the name needs to be extracted.
-
-    Returns
-    -------
-    str
-        The extracted object name.
-    """
-    import re
-    return re.split('<|>', str(model_obj))[1].split(' ')[0].strip().split('.')[-1]
+def _sha256(data):
+    """Compute SHA-256 hex digest of bytes."""
+    return hashlib.sha256(data).hexdigest()
 
 
-def _hash_string(string):
-    """
-    Hashes a given string using MD5 algorithm.
-
-    Parameters
-    ----------
-    string : str
-        The input string to be hashed.
-
-    Returns
-    -------
-    str
-        The first 12 characters of the hashed string.
-    """
-    import hashlib
-    import random
-    import time
-
-    # Create an MD5 hash object
-    hash_object = hashlib.md5()
-
-    # Update the hash object's value with the string to be encrypted
-    hash_object.update((string + str(random.random()) + str(time.time())).encode('utf-8'))
-
-    # Get the encrypted result
-    encrypted_string = hash_object.hexdigest()
-
-    return encrypted_string[:12]
+def _sha256_bytes(data):
+    """Compute SHA-256 raw digest (32 bytes) of bytes."""
+    return hashlib.sha256(data).digest()
 
 
-def _zip_file(zipfile_fp, *file_fp):
-    """
-    Compresses multiple files into a zip archive.
-
-    Parameters
-    ----------
-    zipfile_fp : str
-        The path to the zip file.
-
-    *file_fp : str
-        Variable length list of file paths to be compressed.
-    """
-    import zipfile
-    from pathlib import Path
-
-    from spinesUtils.asserts import raise_if_not
-
-    raise_if_not(ValueError, zipfile_fp.endswith('.zip'), "`zipfile_fp` must be a string with the `.zip` suffix")
-
-    with zipfile.ZipFile(zipfile_fp, 'w') as zipf:
-        for file in file_fp:
-            zipf.write(file, Path(file).name)
+def _serialize_obj(obj):
+    """Serialize a Python object to bytes using cloudpickle."""
+    import cloudpickle
+    import io
+    buf = io.BytesIO()
+    cloudpickle.dump(obj, buf, protocol=5)
+    return buf.getvalue()
 
 
-def _load_zip_file(zipfile_fp):
-    """
-    Extracts the contents of a zip file to a temporary directory.
-
-    Parameters
-    ----------
-    zipfile_fp : str
-        The path to the zip file.
-
-    Returns
-    -------
-    str
-        The path to the temporary directory containing the extracted contents.
-    """
-    import zipfile
-    from pathlib import Path
-
-    from spinesUtils.asserts import raise_if, raise_if_not
-    raise_if(ValueError, Path(zipfile_fp).is_dir(), "`zipfile_fp` must be a file name, not a directory.")
-
-    raise_if_not(ValueError, zipfile_fp.strip().endswith('.zip'),
-                 "`zipfile_fp` must be a string with the `.zip` suffix")
-
-    # To ensure that folder names are as unique as possible
-    tmp_unzip_fp = str(Path(zipfile_fp).parent.absolute().joinpath(
-        f'PIPELINETS_MODEL_{_hash_string(zipfile_fp)}_{int(datetime.datetime.now().timestamp()*1e6)}/'))
-
-    with zipfile.ZipFile(zipfile_fp, 'r') as zip_ref:
-        zip_ref.extractall(tmp_unzip_fp)
-
-    return tmp_unzip_fp
+def _deserialize_obj(data):
+    """Deserialize bytes back to a Python object using cloudpickle."""
+    import cloudpickle
+    import io
+    return cloudpickle.load(io.BytesIO(data))
 
 
-def _save_single_model(path, model, scaler=None):
-    """
-    Save a machine learning model along with its scaler to a zip file.
+def _validate_path(path, for_save=True):
+    """Validate file path for save/load operations.
 
     Parameters
     ----------
     path : str
-        The path to the zip file.
+        File path to validate.
+    for_save : bool
+        If True, validates for save (only .pts allowed).
+        If False, validates for load (.pts or legacy .zip).
 
-    model : object
-        The machine learning model to be saved.
+    Raises
+    ------
+    ValueError
+        If the path is invalid.
+    """
+    p = Path(path)
+    if p.is_dir():
+        raise ValueError(f"`path` must be a file name, not a directory: {path}")
+    if for_save:
+        if not path.endswith(FILE_EXTENSION):
+            raise ValueError(
+                f"`path` must end with '{FILE_EXTENSION}'. Got: {path}"
+            )
+    else:
+        if not path.endswith(FILE_EXTENSION) and not path.endswith('.zip'):
+            raise ValueError(
+                f"`path` must end with '{FILE_EXTENSION}' or '.zip' (legacy). Got: {path}"
+            )
+    if not for_save and not p.exists():
+        raise ValueError(f"File does not exist: {path}")
 
-    scaler : object, optional
-        The scaler associated with the model.
+
+# ─── Core binary write / read ────────────────────────────────────────────────
+
+def _write_pts(path, model_type, sections, metadata=None):
+    """Write a .pts binary file.
+
+    Parameters
+    ----------
+    path : str
+        Output file path (must end with .pts).
+    model_type : str
+        One of MODEL_TYPE_SINGLE, MODEL_TYPE_PIPELINE, MODEL_TYPE_SMART_ROUTER.
+    sections : list of dict
+        Each dict has 'name' (str) and 'data' (bytes).
+    metadata : dict, optional
+        Arbitrary JSON-serializable metadata to store in the header.
 
     Returns
     -------
     str
-        The path to the saved zip file.
+        The absolute path to the saved file.
     """
-    from pathlib import Path
-    import shutil
-
-    import cloudpickle
-    from spinesUtils.asserts import raise_if, raise_if_not
-
-    raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
-    raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
+    import platform
+    from PipelineTS import __version__
 
     path = str(Path(path).absolute())
 
-    zipfile_fp = path
+    # Build section descriptors (offset/size/checksum filled after serialization)
+    section_descriptors = []
+    section_blobs = []
+    current_offset = 0  # relative to start of section data area
 
-    model_fp = Path(path.strip()[:-4] + '/')
+    for sec in sections:
+        blob = sec['data']
+        desc = {
+            'name': sec['name'],
+            'offset': current_offset,
+            'size': len(blob),
+            'checksum': _sha256(blob),
+        }
+        section_descriptors.append(desc)
+        section_blobs.append(blob)
+        current_offset += len(blob)
 
-    # Create model directory
-    Path.mkdir(model_fp)
+    # Build header
+    header = {
+        'model_type': model_type,
+        'format_version': FORMAT_VERSION,
+        'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'pipelinets_version': __version__,
+        'python_version': platform.python_version(),
+        'checksum_algo': 'sha256',
+        'sections': section_descriptors,
+        'metadata': metadata or {},
+    }
 
-    pkl_file_fp = str(model_fp.joinpath(Path(path.strip()[:-4] + '.pkl').name))
+    header_bytes = json.dumps(header, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
 
-    with open(pkl_file_fp, 'wb') as f:
-        if scaler is not None:
-            cloudpickle.dump([model, scaler], f)
-        else:
-            cloudpickle.dump(model, f)
+    # Assemble the payload (everything that gets checksummed)
+    payload = bytearray()
+    payload.extend(MAGIC)                                    # 8 bytes
+    payload.extend(struct.pack('<H', FORMAT_VERSION))        # 2 bytes
+    payload.extend(struct.pack('<I', len(header_bytes)))     # 4 bytes
+    payload.extend(header_bytes)                             # variable
+    for blob in section_blobs:
+        payload.extend(blob)                                 # variable
 
-    _zip_file(zipfile_fp, pkl_file_fp)
+    # Global checksum over the entire payload
+    global_checksum = _sha256_bytes(bytes(payload))          # 32 bytes
 
-    shutil.rmtree(model_fp)
+    # Write to file atomically (write to tmp then rename)
+    import tempfile
+    import os
 
-    return zipfile_fp
+    dir_path = os.path.dirname(path) or '.'
+    fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix='.pts.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(payload)
+            f.write(global_checksum)
+            f.write(FOOTER_MAGIC)                            # 4 bytes
+        os.replace(tmp_path, path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+    return path
 
 
-def _load_single_model(path, unzip_file_path=None, unzip=True):
-    """
-    Load a machine learning model from a zip file.
+def _read_pts(path, verify_checksum=True):
+    """Read a .pts binary file.
 
     Parameters
     ----------
     path : str
-        The path to the zip file.
-
-    unzip_file_path : str, optional
-        The path to a pre-extracted directory containing the contents of the zip file.
-
-    unzip : bool, optional
-        If True, the zip file is extracted to a temporary directory.
+        Input file path.
+    verify_checksum : bool
+        If True, verify the global SHA-256 checksum and per-section checksums.
 
     Returns
     -------
-    tuple or object
-        If a scaler is saved along with the model, returns a tuple (model, scaler). Otherwise, returns the model.
+    dict
+        Keys: 'header' (dict), 'sections' (dict of name -> bytes).
+
+    Raises
+    ------
+    ValueError
+        If magic number, footer, or checksums don't match.
     """
-    import os
-    from pathlib import Path
-    import shutil
+    path = str(Path(path).absolute())
 
-    import cloudpickle
-    from spinesUtils.asserts import raise_if, raise_if_not
+    with open(path, 'rb') as f:
+        data = f.read()
 
-    raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
-    raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
-    raise_if(ValueError, unzip_file_path is None and unzip is False,
-             "`unzip_file_path` must be specified when `unzip` is False.")
-    raise_if(ValueError, unzip_file_path is not None and unzip is True,
-             "`unzip_file_path` must be None when `unzip` is True.")
+    # Validate footer magic (last 4 bytes)
+    if data[-4:] != FOOTER_MAGIC:
+        raise ValueError(
+            f"Invalid file: footer magic mismatch. "
+            f"Expected {FOOTER_MAGIC!r}, got {data[-4:]!r}. File may be corrupted."
+        )
 
-    if unzip:
-        unzip_file_fp = _load_zip_file(path)
-    else:
-        unzip_file_fp = unzip_file_path
+    # Validate magic number (first 8 bytes)
+    if data[:8] != MAGIC:
+        raise ValueError(
+            f"Invalid file: magic number mismatch. "
+            f"Expected {MAGIC!r}, got {data[:8]!r}. Not a PipelineTS .pts file."
+        )
 
-    raise_if_not(ValueError, any([i.endswith('.pkl') for i in os.listdir(unzip_file_fp)]),
-                 "Zip file must contain one file with the `.pkl` suffix.")
+    # Extract global checksum (32 bytes before footer)
+    stored_checksum = data[-36:-4]
 
-    model = None
-    scaler = None
+    # The payload is everything before the checksum + footer
+    payload = data[:-36]
 
-    for i in os.listdir(unzip_file_fp):
-        if i.endswith('.pkl'):
-            with open(str(Path(unzip_file_fp).joinpath(i)), 'rb') as f:
-                model = cloudpickle.load(f)
+    # Verify global checksum
+    if verify_checksum:
+        computed_checksum = _sha256_bytes(payload)
+        if computed_checksum != stored_checksum:
+            raise ValueError(
+                "Integrity check failed: global SHA-256 checksum mismatch. "
+                "The file may have been corrupted or tampered with."
+            )
 
-            if isinstance(model, list) and len(model) == 2:
-                (model, scaler) = model
+    # Parse format version
+    fmt_version = struct.unpack('<H', data[8:10])[0]
+    if fmt_version > FORMAT_VERSION:
+        raise ValueError(
+            f"Unsupported format version {fmt_version}. "
+            f"This build supports version <= {FORMAT_VERSION}. "
+            f"Please upgrade PipelineTS."
+        )
 
-    shutil.rmtree(unzip_file_fp)
+    # Parse header length and header JSON
+    header_len = struct.unpack('<I', data[10:14])[0]
+    header_bytes = data[14:14 + header_len]
+    header = json.loads(header_bytes.decode('utf-8'))
+
+    # Extract sections
+    section_data_start = 14 + header_len
+    sections = {}
+    for desc in header['sections']:
+        start = section_data_start + desc['offset']
+        end = start + desc['size']
+        blob = data[start:end]
+
+        # Verify per-section checksum
+        if verify_checksum:
+            computed = _sha256(blob)
+            if computed != desc['checksum']:
+                raise ValueError(
+                    f"Integrity check failed: section '{desc['name']}' checksum mismatch. "
+                    f"Expected {desc['checksum'][:16]}..., got {computed[:16]}..."
+                )
+
+        sections[desc['name']] = blob
+
+    return {'header': header, 'sections': sections}
+
+
+# ─── Save / Load: Single Model ───────────────────────────────────────────────
+
+def _save_single_model_pts(path, model, scaler=None, metadata=None):
+    """Save a single model (and optional scaler) to a .pts file.
+
+    Parameters
+    ----------
+    path : str
+        Output file path.
+    model : object
+        The model to save.
+    scaler : object, optional
+        Optional scaler to save alongside the model.
+    metadata : dict, optional
+        Extra metadata to embed in the file header.
+
+    Returns
+    -------
+    str
+        The absolute path to the saved file.
+    """
+    sections = [{'name': 'model', 'data': _serialize_obj(model)}]
+
+    meta = metadata or {}
+    meta['has_scaler'] = scaler is not None
 
     if scaler is not None:
+        sections.append({'name': 'scaler', 'data': _serialize_obj(scaler)})
+
+    return _write_pts(path, MODEL_TYPE_SINGLE, sections, metadata=meta)
+
+
+def _load_single_model_pts(path, verify_checksum=True):
+    """Load a single model from a .pts file.
+
+    Returns
+    -------
+    object or tuple
+        If a scaler was saved, returns (model, scaler). Otherwise returns the model.
+    """
+    result = _read_pts(path, verify_checksum=verify_checksum)
+    header = result['header']
+    sections = result['sections']
+
+    model = _deserialize_obj(sections['model'])
+
+    if header.get('metadata', {}).get('has_scaler', False) and 'scaler' in sections:
+        scaler = _deserialize_obj(sections['scaler'])
         return model, scaler
 
     return model
 
 
-def _save_pipeline(path, model):
+# ─── Save / Load: Pipeline ───────────────────────────────────────────────────
+
+def _save_pipeline_pts(path, pipeline, metadata=None):
+    """Save a ModelPipeline to a .pts file.
+
+    Each sub-model is stored as a separate section for granular integrity checks.
     """
-    Save a machine learning pipeline to a zip file.
+    sections = []
 
-    Parameters
-    ----------
-    path : str
-        The path to the zip file.
+    # Serialize pipeline shell (without models)
+    pipeline_shell = deepcopy(pipeline)
+    pipeline_shell.models_ = []
+    pipeline_shell.best_model_ = None
+    sections.append({'name': 'pipeline_meta', 'data': _serialize_obj(pipeline_shell)})
 
-    model : object
-        The machine learning pipeline to be saved.
-    """
-    from pathlib import Path
-    import shutil
+    # Serialize each sub-model as a separate section
+    model_names = []
+    for (sub_model_name, sub_model) in pipeline.models_:
+        section_name = f'model:{sub_model_name}'
+        sections.append({'name': section_name, 'data': _serialize_obj(sub_model)})
+        model_names.append(sub_model_name)
 
-    import cloudpickle
-    from spinesUtils.asserts import raise_if, raise_if_not
+    meta = metadata or {}
+    meta['model_names'] = model_names
+    meta['n_models'] = len(model_names)
 
-    raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
-    raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
-
-    zipfile_fp = path
-
-    # Make a directory with the pkl file name
-    name_subfix = _hash_string(path.strip()[:-4])
-    pipeline_path = Path(path).parent.joinpath(path.strip()[:-4] + name_subfix + '/')
-    Path.mkdir(pipeline_path)
-
-    pkl_file_fp = str(Path(pipeline_path).joinpath('pipeline.pkl'))
-
-    file_fps = [pkl_file_fp]
-    for (sub_model_name, sub_model) in model.models_:
-        mpath = str(pipeline_path.joinpath(sub_model_name + '.zip'))
-        file_fps.append(mpath)
-        _save_single_model(mpath, sub_model)
-
-    with open(pkl_file_fp, 'wb') as f:
-        new_model = deepcopy(model)
-        new_model.models_ = []
-        new_model.best_model_ = None
-        cloudpickle.dump(new_model, f)
-
-    _zip_file(zipfile_fp, *file_fps)
-
-    shutil.rmtree(pipeline_path)
-
-    return zipfile_fp
+    return _write_pts(path, MODEL_TYPE_PIPELINE, sections, metadata=meta)
 
 
-def _load_pipeline(path, unzip_file_path=None, unzip=True):
-    """
-    Load a machine learning pipeline from a zip file.
+def _load_pipeline_pts(path, verify_checksum=True):
+    """Load a ModelPipeline from a .pts file."""
+    result = _read_pts(path, verify_checksum=verify_checksum)
+    header = result['header']
+    sections = result['sections']
 
-    Parameters
-    ----------
-    path : str
-        The path to the zip file.
+    # Restore pipeline shell
+    pipeline = _deserialize_obj(sections['pipeline_meta'])
 
-    unzip_file_path : str, optional
-        The path to a pre-extracted directory containing the contents of the zip file.
-
-    unzip : bool, optional
-        If True, the zip file is extracted to a temporary directory.
-
-    Returns
-    -------
-    object
-        The loaded machine learning pipeline.
-    """
-    import os
-    from pathlib import Path
-    import shutil
-
-    import cloudpickle
-    from spinesUtils.asserts import raise_if, raise_if_not
-
-    raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
-    raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
-    raise_if(ValueError, unzip_file_path is None and unzip is False,
-             "`unzip_file_path` must be specified when `unzip` is False.")
-    raise_if(ValueError, unzip_file_path is not None and unzip is True,
-             "`unzip_file_path` must be None when `unzip` is True.")
-
-    if unzip:
-        unzip_file_fp = _load_zip_file(path)
-        unzip_file_fp = str(Path(unzip_file_fp))
-    else:
-        unzip_file_fp = unzip_file_path
-
-    raise_if_not(ValueError, os.listdir(unzip_file_fp).count('pipeline.pkl') == 1,
-                 "Zip file must contain one file which be named `pipeline.pkl`")
-
-    pipeline = None
+    # Restore sub-models
+    model_names = header.get('metadata', {}).get('model_names', [])
     models = []
-    for i in os.listdir(unzip_file_fp):
-        if i == 'pipeline.pkl':
-            with open(str(Path(unzip_file_fp).joinpath(i)), 'rb') as f:
-                pipeline = cloudpickle.load(f)
-        else:
-            models.append([i[:-4], _load_single_model(str(Path(unzip_file_fp).joinpath(i)))])
+    for name in model_names:
+        section_name = f'model:{name}'
+        if section_name in sections:
+            sub_model = _deserialize_obj(sections[section_name])
+            models.append([name, sub_model])
 
     pipeline.models_ = models
-    for (sub_model_name, sub_model) in pipeline.models_:
-        if sub_model_name == pipeline.leader_board_.iloc[0, :]['model']:
-            pipeline.best_model_ = sub_model
 
-    shutil.rmtree(unzip_file_fp)
+    # Restore best_model_ reference
+    if pipeline.leader_board_ is not None and len(pipeline.leader_board_) > 0:
+        best_name = pipeline.leader_board_.iloc[0, :]['model']
+        for (sub_model_name, sub_model) in pipeline.models_:
+            if sub_model_name == best_name:
+                pipeline.best_model_ = sub_model
+                break
 
     return pipeline
 
 
-def _save_smart_router(path, router):
-    """Save a SmartRouter to a zip file.
+# ─── Save / Load: SmartRouter ────────────────────────────────────────────────
 
-    Saves the router metadata and the inner pipeline separately.
+def _save_smart_router_pts(path, router, metadata=None):
+    """Save a SmartRouter to a .pts file.
+
+    The inner pipeline is serialized as a nested .pts blob within a section.
     """
-    from pathlib import Path
-    import shutil
-    import cloudpickle
-    from spinesUtils.asserts import raise_if, raise_if_not
+    if router.pipeline_ is None:
+        raise ValueError("SmartRouter has not been fitted. Call fit() first.")
 
-    raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
-    raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
-    raise_if(ValueError, router.pipeline_ is None, "SmartRouter has not been fitted. Call fit() first.")
+    import io as _io
 
-    zipfile_fp = path
-    name_subfix = _hash_string(path.strip()[:-4])
-    router_dir = Path(path).parent.joinpath(path.strip()[:-4] + name_subfix + '/')
-    Path.mkdir(router_dir)
+    sections = []
 
-    file_fps = []
+    # Save inner pipeline as a nested .pts blob
+    # We serialize it to memory, not to a temp file
+    import tempfile
+    import os
 
-    # Save inner pipeline as nested zip
-    pipeline_zip = str(router_dir.joinpath('inner_pipeline.zip'))
-    _save_pipeline(pipeline_zip, router.pipeline_)
-    file_fps.append(pipeline_zip)
+    fd, tmp_pipeline = tempfile.mkstemp(suffix=FILE_EXTENSION)
+    os.close(fd)
+    try:
+        _save_pipeline_pts(tmp_pipeline, router.pipeline_)
+        with open(tmp_pipeline, 'rb') as f:
+            pipeline_blob = f.read()
+    finally:
+        if os.path.exists(tmp_pipeline):
+            os.unlink(tmp_pipeline)
 
-    # Save router metadata (everything except pipeline_ and logger)
-    meta_fp = str(router_dir.joinpath('router_meta.pkl'))
-    meta = {
+    sections.append({'name': 'inner_pipeline', 'data': pipeline_blob})
+
+    # Save router metadata
+    router_meta = {
         'time_col': router.time_col,
         'target_col': router.target_col,
         'n_predict': router.n_predict,
@@ -384,45 +462,33 @@ def _save_smart_router(path, router):
         '_lag_exploration_results': router._lag_exploration_results,
         '_calibration_rho': router._calibration_rho,
     }
-    with open(meta_fp, 'wb') as f:
-        cloudpickle.dump(meta, f)
-    file_fps.append(meta_fp)
+    sections.append({'name': 'router_meta', 'data': _serialize_obj(router_meta)})
 
-    # Marker file so load_model can detect SmartRouter
-    marker_fp = str(router_dir.joinpath('smart_router.marker'))
-    with open(marker_fp, 'w') as f:
-        f.write('SmartRouter')
-    file_fps.append(marker_fp)
-
-    _zip_file(zipfile_fp, *file_fps)
-    shutil.rmtree(router_dir)
-    return zipfile_fp
+    return _write_pts(path, MODEL_TYPE_SMART_ROUTER, sections, metadata=metadata)
 
 
-def _load_smart_router(path, unzip_file_path=None, unzip=True):
-    """Load a SmartRouter from a zip file."""
+def _load_smart_router_pts(path, verify_checksum=True):
+    """Load a SmartRouter from a .pts file."""
+    import tempfile
     import os
-    from pathlib import Path
-    import shutil
-    import cloudpickle
-    from spinesUtils.asserts import raise_if, raise_if_not
 
-    raise_if(ValueError, Path(path).is_dir(), "`path` must be a file name, not a directory.")
-    raise_if_not(ValueError, path.endswith('.zip'), "`path` must be a string with the `.zip` suffix")
+    result = _read_pts(path, verify_checksum=verify_checksum)
+    sections = result['sections']
 
-    if unzip:
-        unzip_file_fp = _load_zip_file(path)
-    else:
-        unzip_file_fp = unzip_file_path
+    # Load inner pipeline from nested .pts blob
+    pipeline_blob = sections['inner_pipeline']
+    fd, tmp_pipeline = tempfile.mkstemp(suffix=FILE_EXTENSION)
+    os.close(fd)
+    try:
+        with open(tmp_pipeline, 'wb') as f:
+            f.write(pipeline_blob)
+        pipeline = _load_pipeline_pts(tmp_pipeline, verify_checksum=verify_checksum)
+    finally:
+        if os.path.exists(tmp_pipeline):
+            os.unlink(tmp_pipeline)
 
-    # Load metadata
-    meta_fp = str(Path(unzip_file_fp).joinpath('router_meta.pkl'))
-    with open(meta_fp, 'rb') as f:
-        meta = cloudpickle.load(f)
-
-    # Load inner pipeline
-    pipeline_zip = str(Path(unzip_file_fp).joinpath('inner_pipeline.zip'))
-    pipeline = _load_pipeline(pipeline_zip)
+    # Load router metadata
+    meta = _deserialize_obj(sections['router_meta'])
 
     # Reconstruct SmartRouter
     from PipelineTS.pipeline.smart_router import SmartRouter
@@ -457,62 +523,396 @@ def _load_smart_router(path, unzip_file_path=None, unzip=True):
     if router.ensemble_ is not None:
         router.ensemble_.pipeline = pipeline
 
-    shutil.rmtree(unzip_file_fp)
     return router
 
 
-def save_model(path, model, scaler=None):
-    """
-    Save a machine learning model, pipeline, or SmartRouter to a zip file.
+# ─── Legacy .zip support (backward compatibility) ────────────────────────────
 
-    [Note that]: A loaded model cannot be saved.
+def _hash_string(string):
+    """
+    Hashes a given string using MD5 algorithm.
 
     Parameters
     ----------
-    path : str
-        The path to the zip file.
-
-    model : object
-        The fitted machine learning model, ModelPipeline, or SmartRouter.
-
-    scaler : object, optional
-        The scaler associated with the model (only for single models).
+    string : str
+        The input string to be hashed.
 
     Returns
     -------
     str
-        The path to the saved zip file.
+        The first 12 characters of the hashed string.
     """
-    from PipelineTS.pipeline import ModelPipeline
-    from PipelineTS.pipeline.smart_router import SmartRouter
-    if isinstance(model, SmartRouter):
-        return _save_smart_router(path, model)
-    elif isinstance(model, ModelPipeline):
-        return _save_pipeline(path, model)
+    import random
+    import time
+
+    hash_object = hashlib.md5()
+    hash_object.update((string + str(random.random()) + str(time.time())).encode('utf-8'))
+    encrypted_string = hash_object.hexdigest()
+    return encrypted_string[:12]
+
+
+def _zip_file(zipfile_fp, *file_fp):
+    """Compresses multiple files into a zip archive (legacy)."""
+    import zipfile
+
+    if not zipfile_fp.endswith('.zip'):
+        raise ValueError("`zipfile_fp` must be a string with the `.zip` suffix")
+
+    with zipfile.ZipFile(zipfile_fp, 'w') as zipf:
+        for file in file_fp:
+            zipf.write(file, Path(file).name)
+
+
+def _load_zip_file(zipfile_fp):
+    """Extracts a zip file to a temporary directory (legacy)."""
+    import zipfile
+
+    if Path(zipfile_fp).is_dir():
+        raise ValueError("`zipfile_fp` must be a file name, not a directory.")
+    if not zipfile_fp.strip().endswith('.zip'):
+        raise ValueError("`zipfile_fp` must be a string with the `.zip` suffix")
+
+    tmp_unzip_fp = str(Path(zipfile_fp).parent.absolute().joinpath(
+        f'PIPELINETS_MODEL_{_hash_string(zipfile_fp)}_{int(datetime.datetime.now().timestamp()*1e6)}/'))
+
+    with zipfile.ZipFile(zipfile_fp, 'r') as zip_ref:
+        zip_ref.extractall(tmp_unzip_fp)
+
+    return tmp_unzip_fp
+
+
+
+def _load_single_model_zip(path, unzip_file_path=None, unzip=True):
+    """Load a single model from a legacy .zip file."""
+    import os
+    import shutil
+    import cloudpickle
+
+    if unzip:
+        unzip_file_fp = _load_zip_file(path)
     else:
-        return _save_single_model(path, model, scaler)
+        unzip_file_fp = unzip_file_path
+
+    if not any(i.endswith('.pkl') for i in os.listdir(unzip_file_fp)):
+        raise ValueError("Zip file must contain one file with the `.pkl` suffix.")
+
+    model = None
+    scaler = None
+
+    for i in os.listdir(unzip_file_fp):
+        if i.endswith('.pkl'):
+            with open(str(Path(unzip_file_fp).joinpath(i)), 'rb') as f:
+                model = cloudpickle.load(f)
+            if isinstance(model, list) and len(model) == 2:
+                (model, scaler) = model
+
+    shutil.rmtree(unzip_file_fp)
+
+    if scaler is not None:
+        return model, scaler
+    return model
 
 
-def load_model(path):
-    """
-    Load a machine learning model, pipeline, or SmartRouter from a zip file.
+
+def _load_pipeline_zip(path, unzip_file_path=None, unzip=True):
+    """Load a pipeline from a legacy .zip file."""
+    import os
+    import shutil
+    import cloudpickle
+
+    if unzip:
+        unzip_file_fp = _load_zip_file(path)
+        unzip_file_fp = str(Path(unzip_file_fp))
+    else:
+        unzip_file_fp = unzip_file_path
+
+    if os.listdir(unzip_file_fp).count('pipeline.pkl') != 1:
+        raise ValueError("Zip file must contain one file which be named `pipeline.pkl`")
+
+    pipeline = None
+    models = []
+    for i in os.listdir(unzip_file_fp):
+        if i == 'pipeline.pkl':
+            with open(str(Path(unzip_file_fp).joinpath(i)), 'rb') as f:
+                pipeline = cloudpickle.load(f)
+        else:
+            models.append([i[:-4], _load_single_model_zip(str(Path(unzip_file_fp).joinpath(i)))])
+
+    pipeline.models_ = models
+    for (sub_model_name, sub_model) in pipeline.models_:
+        if sub_model_name == pipeline.leader_board_.iloc[0, :]['model']:
+            pipeline.best_model_ = sub_model
+
+    shutil.rmtree(unzip_file_fp)
+    return pipeline
+
+
+
+def _load_smart_router_zip(path, unzip_file_path=None, unzip=True):
+    """Load a SmartRouter from a legacy .zip file."""
+    import os
+    import shutil
+    import cloudpickle
+
+    if unzip:
+        unzip_file_fp = _load_zip_file(path)
+    else:
+        unzip_file_fp = unzip_file_path
+
+    meta_fp = str(Path(unzip_file_fp).joinpath('router_meta.pkl'))
+    with open(meta_fp, 'rb') as f:
+        meta = cloudpickle.load(f)
+
+    pipeline_zip = str(Path(unzip_file_fp).joinpath('inner_pipeline.zip'))
+    pipeline = _load_pipeline_zip(pipeline_zip)
+
+    from PipelineTS.pipeline.smart_router import SmartRouter
+    router = SmartRouter(
+        time_col=meta['time_col'],
+        target_col=meta['target_col'],
+        n_predict=meta.get('n_predict'),
+        quantile=meta.get('quantile'),
+        accelerator=meta.get('accelerator', 'auto'),
+        random_state=meta.get('random_state', 0),
+        verbose=meta.get('verbose', True),
+        max_models=meta.get('max_models', 8),
+        cv=meta.get('cv', 5),
+        time_limit=meta.get('time_limit'),
+        ensemble_strategy=meta.get('ensemble_strategy', 'auto'),
+        ensemble_top_k=meta.get('ensemble_top_k', 3),
+        search_strategy=meta.get('search_strategy', 'auto'),
+    )
+    router.pipeline_ = pipeline
+    router.profile_ = meta.get('profile_')
+    router.strategy_ = meta.get('strategy_')
+    router.leader_board_ = meta.get('leader_board_')
+    router.best_model_ = pipeline.best_model_
+    router.model_scores_ = meta.get('model_scores_')
+    router.ensemble_ = meta.get('ensemble_')
+    router._scaler_obj = meta.get('_scaler_obj')
+    router._screening_results = meta.get('_screening_results')
+    router._lag_exploration_results = meta.get('_lag_exploration_results')
+    router._calibration_rho = meta.get('_calibration_rho')
+
+    if router.ensemble_ is not None:
+        router.ensemble_.pipeline = pipeline
+
+    shutil.rmtree(unzip_file_fp)
+    return router
+
+
+# ─── Utility: File info / verification ────────────────────────────────────────
+
+def get_file_info(path):
+    """Read and return metadata from a .pts file without loading model data.
 
     Parameters
     ----------
     path : str
-        The path to the zip file.
+        Path to a .pts file.
+
+    Returns
+    -------
+    dict
+        File header containing model_type, created_at, version info,
+        section descriptors with checksums, and user metadata.
+
+    Raises
+    ------
+    ValueError
+        If the file is not a valid .pts file.
+
+    Examples
+    --------
+    >>> info = get_file_info('my_model.pts')
+    >>> print(info['model_type'])       # 'single_model', 'pipeline', or 'smart_router'
+    >>> print(info['created_at'])       # ISO timestamp
+    >>> print(info['sections'])         # list of {name, offset, size, checksum}
+    """
+    path = str(Path(path).absolute())
+
+    with open(path, 'rb') as f:
+        data = f.read()
+
+    if data[-4:] != FOOTER_MAGIC:
+        raise ValueError("Invalid file: footer magic mismatch.")
+    if data[:8] != MAGIC:
+        raise ValueError("Invalid file: magic number mismatch.")
+
+    header_len = struct.unpack('<I', data[10:14])[0]
+    header_bytes = data[14:14 + header_len]
+    header = json.loads(header_bytes.decode('utf-8'))
+
+    # Add file size info
+    import os
+    header['file_size_bytes'] = os.path.getsize(path)
+
+    return header
+
+
+def verify_file(path):
+    """Verify the integrity of a .pts file.
+
+    Parameters
+    ----------
+    path : str
+        Path to a .pts file.
+
+    Returns
+    -------
+    dict
+        Keys: 'valid' (bool), 'global_checksum_ok' (bool),
+        'section_checksums' (dict of name -> bool), 'errors' (list of str).
+
+    Examples
+    --------
+    >>> result = verify_file('my_model.pts')
+    >>> assert result['valid'], result['errors']
+    """
+    result = {
+        'valid': True,
+        'global_checksum_ok': True,
+        'section_checksums': {},
+        'errors': [],
+    }
+
+    try:
+        _read_pts(path, verify_checksum=True)
+    except ValueError as e:
+        error_msg = str(e)
+        result['valid'] = False
+        result['errors'].append(error_msg)
+        if 'global SHA-256' in error_msg:
+            result['global_checksum_ok'] = False
+        if 'section' in error_msg:
+            # Try to identify which section failed
+            for part in error_msg.split("'"):
+                if ':' not in part and len(part) > 0:
+                    result['section_checksums'][part] = False
+        return result
+
+    # If we get here, all checks passed — fill in section details
+    try:
+        info = get_file_info(path)
+        for sec in info.get('sections', []):
+            result['section_checksums'][sec['name']] = True
+    except Exception:
+        pass
+
+    return result
+
+
+# ─── Public API ───────────────────────────────────────────────────────────────
+
+def save_model(path, model, scaler=None, metadata=None):
+    """Save a machine learning model, pipeline, or SmartRouter.
+
+    Saves to the PipelineTS binary format (.pts).
+
+    Parameters
+    ----------
+    path : str
+        The output file path. Must end with '.pts'.
+    model : object
+        The fitted model, ModelPipeline, or SmartRouter.
+    scaler : object, optional
+        The scaler associated with the model (only for single models).
+    metadata : dict, optional
+        Arbitrary JSON-serializable metadata to embed in the file header.
+
+    Returns
+    -------
+    str
+        The path to the saved file.
+
+    Examples
+    --------
+    >>> from PipelineTS.io import save_model, load_model
+    >>> save_model('my_pipeline.pts', pipeline)
+    >>> loaded = load_model('my_pipeline.pts')
+
+    >>> # With metadata
+    >>> save_model('model.pts', model, metadata={'author': 'Alice', 'dataset': 'v2'})
+    """
+    _validate_path(path, for_save=True)
+
+    from PipelineTS.pipeline import ModelPipeline
+    from PipelineTS.pipeline.smart_router import SmartRouter
+
+    if isinstance(model, SmartRouter):
+        return _save_smart_router_pts(path, model, metadata=metadata)
+    elif isinstance(model, ModelPipeline):
+        return _save_pipeline_pts(path, model, metadata=metadata)
+    else:
+        return _save_single_model_pts(path, model, scaler=scaler, metadata=metadata)
+
+
+def load_model(path, verify_checksum=True):
+    """Load a machine learning model, pipeline, or SmartRouter.
+
+    Supports .pts format and legacy .zip files (backward compatible, read-only).
+
+    Parameters
+    ----------
+    path : str
+        The file path. Must end with '.pts' or '.zip' (legacy, read-only).
+    verify_checksum : bool, default True
+        If True, verify SHA-256 checksums when loading .pts files.
+        Set to False to skip integrity verification (faster but less safe).
 
     Returns
     -------
     object
-        The loaded machine learning model, ModelPipeline, or SmartRouter.
+        The loaded model, ModelPipeline, or SmartRouter.
+
+    Raises
+    ------
+    ValueError
+        If checksum verification fails (file corrupted or tampered with).
+
+    Examples
+    --------
+    >>> model = load_model('my_pipeline.pts')
+    >>> model.predict(n=12)
+
+    >>> # Skip checksum for faster loading (not recommended for untrusted files)
+    >>> model = load_model('my_pipeline.pts', verify_checksum=False)
+
+    >>> # Legacy .zip files can still be loaded (read-only)
+    >>> model = load_model('old_pipeline.zip')
     """
     import os
-    unzip_file_fp = _load_zip_file(path)
 
-    if 'smart_router.marker' in os.listdir(unzip_file_fp):
-        return _load_smart_router(path, unzip_file_path=unzip_file_fp, unzip=False)
-    elif 'pipeline.pkl' in os.listdir(unzip_file_fp):
-        return _load_pipeline(path, unzip_file_path=unzip_file_fp, unzip=False)
+    p = Path(path)
+    if not p.exists():
+        raise ValueError(f"File does not exist: {path}")
+    if p.is_dir():
+        raise ValueError(f"`path` must be a file name, not a directory: {path}")
+
+    if path.endswith('.zip'):
+        # Legacy .zip format
+        unzip_file_fp = _load_zip_file(path)
+        if 'smart_router.marker' in os.listdir(unzip_file_fp):
+            return _load_smart_router_zip(path, unzip_file_path=unzip_file_fp, unzip=False)
+        elif 'pipeline.pkl' in os.listdir(unzip_file_fp):
+            return _load_pipeline_zip(path, unzip_file_path=unzip_file_fp, unzip=False)
+        else:
+            return _load_single_model_zip(path, unzip_file_path=unzip_file_fp, unzip=False)
+
+    elif path.endswith(FILE_EXTENSION):
+        # New .pts binary format
+        result = _read_pts(path, verify_checksum=verify_checksum)
+        model_type = result['header']['model_type']
+
+        if model_type == MODEL_TYPE_SMART_ROUTER:
+            return _load_smart_router_pts(path, verify_checksum=verify_checksum)
+        elif model_type == MODEL_TYPE_PIPELINE:
+            return _load_pipeline_pts(path, verify_checksum=verify_checksum)
+        elif model_type == MODEL_TYPE_SINGLE:
+            return _load_single_model_pts(path, verify_checksum=verify_checksum)
+        else:
+            raise ValueError(f"Unknown model type in .pts header: {model_type}")
     else:
-        return _load_single_model(path, unzip_file_path=unzip_file_fp, unzip=False)
+        raise ValueError(
+            f"Unsupported file extension. Expected '{FILE_EXTENSION}' or '.zip', got: {path}"
+        )

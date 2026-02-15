@@ -186,7 +186,10 @@ class IntervalEstimationMixin:
         if len(signed_residuals) == 0:
             return (0.0, 0.0)
 
-        residuals = np.array(signed_residuals)
+        residuals = np.array(signed_residuals, dtype=np.float64)
+        residuals = residuals[np.isfinite(residuals)]
+        if len(residuals) == 0:
+            return (0.0, 0.0)
         n_cal = len(residuals)
 
         alpha = 1.0 - coverage

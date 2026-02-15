@@ -316,6 +316,40 @@ configs = PipelineConfigs([
 pipeline = ModelPipeline(..., configs=configs)
 ```
 
+### Per-Model Pipeline Settings / 每模型管道设置
+
+Use `pipeline_configs` to give each model variant its own lags, scaler, or differencing settings.
+使用 `pipeline_configs` 为每个模型变体指定独立的滞后窗口、缩放器或差分设置。
+
+```python
+from sklearn.preprocessing import StandardScaler
+from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+
+configs = PipelineConfigs([
+    ('torch_boosting_forest', 'boost_short_std', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'lags': 6, 'scaler': StandardScaler()},
+    }),
+    ('torch_boosting_forest', 'boost_long_none', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'lags': 24, 'scaler': None},
+    }),
+])
+
+pipeline = ModelPipeline(
+    time_col=time_col, target_col=target_col, lags=12,
+    include_models=['torch_boosting_forest'],
+    configs=configs,
+)
+leaderboard = pipeline.fit(data)
+```
+
+Supported `pipeline_configs` keys: `lags`, `scaler`, `differential_n`, `feature_cols`.
+See [Pipeline Usage](docs/pipeline.md) for details.
+
+支持的 `pipeline_configs` 键：`lags`、`scaler`、`differential_n`、`feature_cols`。
+详见 [管道使用](docs/pipeline.md)。
+
 ### Double-underscore Syntax / 双下划线语法
 
 Pass model-specific parameters directly via double-underscore syntax.

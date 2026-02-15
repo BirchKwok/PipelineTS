@@ -324,5 +324,193 @@ class TestPipelineConfigs:
         assert 'boost_fast' in leaderboard['model'].tolist()
 
 
+# ─── PipelineConfigs with pipeline_configs ───────────────────────────────────
+
+class TestPipelineConfigsPipelineLevel:
+    """Tests for per-model lags, scaler, and feature engineering via pipeline_configs."""
+
+    def test_pipeline_configs_with_lags(self, small_data):
+        """Different models can use different lags via pipeline_configs."""
+        from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+        configs = PipelineConfigs([
+            ('torch_boosting_forest', 'boost_lag4', {
+                'init_configs': {'n_trees': 16},
+                'pipeline_configs': {'lags': 4},
+            }),
+            ('torch_boosting_forest', 'boost_lag8', {
+                'init_configs': {'n_trees': 16},
+                'pipeline_configs': {'lags': 8},
+            }),
+        ])
+        pipeline = ModelPipeline(
+            time_col='date', target_col='value', lags=LAGS,
+            include_models=['torch_boosting_forest'],
+            configs=configs, quantile=None, cv=2
+        )
+        leaderboard = pipeline.fit(small_data)
+        model_names = leaderboard['model'].tolist()
+        assert 'boost_lag4' in model_names
+        assert 'boost_lag8' in model_names
+        # Verify models were initialized with different lags
+        m4 = pipeline.get_model('boost_lag4')
+        m8 = pipeline.get_model('boost_lag8')
+        assert m4.all_configs['lags'] == 4
+        assert m8.all_configs['lags'] == 8
+
+    def test_pipeline_configs_with_scaler_none(self, small_data):
+        """A model can opt out of scaling via pipeline_configs scaler=None."""
+        from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+        configs = PipelineConfigs([
+            ('torch_boosting_forest', 'boost_noscale', {
+                'init_configs': {'n_trees': 16},
+                'pipeline_configs': {'scaler': None},
+            }),
+        ])
+        pipeline = ModelPipeline(
+            time_col='date', target_col='value', lags=LAGS,
+            include_models=['torch_boosting_forest'],
+            configs=configs, quantile=None, cv=2, scaler=True
+        )
+        leaderboard = pipeline.fit(small_data)
+        assert 'boost_noscale' in leaderboard['model'].tolist()
+        # Model should have scaler=None stored
+        assert 'boost_noscale' in pipeline._model_scalers
+        assert pipeline._model_scalers['boost_noscale'] is None
+        # Predict should work
+        pred = pipeline.predict(PREDICT_N, model_name='boost_noscale')
+        assert len(pred) == PREDICT_N
+
+    def test_pipeline_configs_with_custom_scaler(self, small_data):
+        """A model can use a custom scaler via pipeline_configs."""
+        from sklearn.preprocessing import StandardScaler
+        from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+        configs = PipelineConfigs([
+            ('torch_boosting_forest', 'boost_std', {
+                'init_configs': {'n_trees': 16},
+                'pipeline_configs': {'scaler': StandardScaler()},
+            }),
+        ])
+        pipeline = ModelPipeline(
+            time_col='date', target_col='value', lags=LAGS,
+            include_models=['torch_boosting_forest'],
+            configs=configs, quantile=None, cv=2, scaler=True
+        )
+        leaderboard = pipeline.fit(small_data)
+        assert 'boost_std' in leaderboard['model'].tolist()
+        # Check the stored scaler is a StandardScaler
+        assert 'boost_std' in pipeline._model_scalers
+        assert isinstance(pipeline._model_scalers['boost_std'], StandardScaler)
+        # Predict should work
+        pred = pipeline.predict(PREDICT_N, model_name='boost_std')
+        assert len(pred) == PREDICT_N
+
+    def test_pipeline_configs_mixed_scalers(self, small_data):
+        """Two models with different scalers should both work correctly."""
+        from sklearn.preprocessing import StandardScaler
+        from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+        configs = PipelineConfigs([
+            ('torch_boosting_forest', 'boost_std', {
+                'init_configs': {'n_trees': 16},
+                'pipeline_configs': {'scaler': StandardScaler()},
+            }),
+            ('torch_boosting_forest', 'boost_none', {
+                'init_configs': {'n_trees': 16},
+                'pipeline_configs': {'scaler': None},
+            }),
+        ])
+        pipeline = ModelPipeline(
+            time_col='date', target_col='value', lags=LAGS,
+            include_models=['torch_boosting_forest'],
+            configs=configs, quantile=None, cv=2, scaler=True
+        )
+        leaderboard = pipeline.fit(small_data)
+        assert len(leaderboard) == 2
+        # Both should predict
+        pred_std = pipeline.predict(PREDICT_N, model_name='boost_std')
+        pred_none = pipeline.predict(PREDICT_N, model_name='boost_none')
+        assert len(pred_std) == PREDICT_N
+        assert len(pred_none) == PREDICT_N
+        # Predictions should differ since different scaling
+        assert not np.allclose(pred_std['value'].values, pred_none['value'].values, atol=1e-6)
+
+    def test_pipeline_configs_with_differential_n(self, small_data):
+        """Per-model differential_n via pipeline_configs (only for models that accept it)."""
+        from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+        configs = PipelineConfigs([
+            ('multi_output_model', 'mo_diff0', {
+                'init_configs': {},
+                'pipeline_configs': {'differential_n': 0},
+            }),
+            ('multi_output_model', 'mo_diff1', {
+                'init_configs': {},
+                'pipeline_configs': {'differential_n': 1},
+            }),
+        ])
+        pipeline = ModelPipeline(
+            time_col='date', target_col='value', lags=LAGS,
+            include_models=['multi_output_model'],
+            configs=configs, quantile=None, cv=2
+        )
+        leaderboard = pipeline.fit(small_data)
+        assert 'mo_diff0' in leaderboard['model'].tolist()
+        assert 'mo_diff1' in leaderboard['model'].tolist()
+
+    def test_pipeline_configs_lags_and_scaler_combined(self, small_data):
+        """Combine per-model lags and scaler in one pipeline_configs."""
+        from sklearn.preprocessing import StandardScaler
+        from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+        configs = PipelineConfigs([
+            ('torch_boosting_forest', 'boost_custom', {
+                'init_configs': {'n_trees': 16},
+                'pipeline_configs': {'lags': 8, 'scaler': StandardScaler()},
+            }),
+        ])
+        pipeline = ModelPipeline(
+            time_col='date', target_col='value', lags=LAGS,
+            include_models=['torch_boosting_forest'],
+            configs=configs, quantile=None, cv=2
+        )
+        leaderboard = pipeline.fit(small_data)
+        assert 'boost_custom' in leaderboard['model'].tolist()
+        m = pipeline.get_model('boost_custom')
+        assert m.all_configs['lags'] == 8
+        assert isinstance(pipeline._model_scalers['boost_custom'], StandardScaler)
+
+    def test_pipeline_configs_key_accepted(self):
+        """PipelineConfigs should accept pipeline_configs as a valid key."""
+        from PipelineTS.pipeline import PipelineConfigs
+        configs = PipelineConfigs([
+            ('torch_boosting_forest', 'test_model', {
+                'init_configs': {'n_trees': 16},
+                'pipeline_configs': {'lags': 10, 'scaler': None},
+            }),
+        ])
+        result = configs.get_configs('test_model')
+        assert result is not None
+        assert 'pipeline_configs' in result
+        assert result['pipeline_configs']['lags'] == 10
+        assert result['pipeline_configs']['scaler'] is None
+
+    def test_backward_compat_no_pipeline_configs(self, small_data):
+        """Models without pipeline_configs should work as before (use global scaler/lags)."""
+        from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+        configs = PipelineConfigs([
+            ('torch_boosting_forest', 'boost_default', {
+                'init_configs': {'n_trees': 16},
+            }),
+        ])
+        pipeline = ModelPipeline(
+            time_col='date', target_col='value', lags=LAGS,
+            include_models=['torch_boosting_forest'],
+            configs=configs, quantile=None, cv=2
+        )
+        leaderboard = pipeline.fit(small_data)
+        assert 'boost_default' in leaderboard['model'].tolist()
+        # Should NOT be in _model_scalers (uses global scaler)
+        assert 'boost_default' not in pipeline._model_scalers
+        pred = pipeline.predict(PREDICT_N, model_name='boost_default')
+        assert len(pred) == PREDICT_N
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short', '-x'])

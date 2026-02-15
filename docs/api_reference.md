@@ -111,8 +111,8 @@ SmartRouter(
 
 ### `PipelineTS.pipeline.PipelineConfigs`
 
-Configuration class for creating model variants.
-用于创建模型变体的配置类。
+Configuration class for creating model variants with per-model settings.
+用于创建模型变体并支持每模型设置的配置类。
 
 ```python
 PipelineConfigs(configs: list[tuple])
@@ -121,6 +121,40 @@ PipelineConfigs(configs: list[tuple])
 Each tuple format / 每个元组的格式:
 - `(model_name, config_dict)` - Auto-named / 自动命名
 - `(model_name, custom_name, config_dict)` - Custom-named / 自定义命名
+
+**Config dict keys / 配置字典键:**
+
+| Key / 键 | Description / 描述 |
+|---|---|
+| `init_configs` | Model `__init__` parameters / 模型初始化参数 |
+| `fit_configs` | Parameters passed to `fit()` / 传递给 `fit()` 的参数 |
+| `predict_configs` | Parameters passed to `predict()` / 传递给 `predict()` 的参数 |
+| `pipeline_configs` | Pipeline-level per-model settings / 管道级别每模型设置 |
+
+**`pipeline_configs` supported keys / `pipeline_configs` 支持的键:**
+
+| Key / 键 | Type / 类型 | Description / 描述 |
+|---|---|---|
+| `lags` | int | Per-model input window size / 每模型滞后窗口大小 |
+| `scaler` | bool, None, or TransformerMixin | Per-model scaler (`True`=MinMaxScaler, `None`=disabled, or custom instance) / 每模型缩放器 |
+| `differential_n` | int | Per-model differencing order / 每模型差分阶数 |
+| `feature_cols` | list | Per-model feature columns / 每模型特征列 |
+
+```python
+from PipelineTS.pipeline import PipelineConfigs
+from sklearn.preprocessing import StandardScaler
+
+configs = PipelineConfigs([
+    ('torch_boosting_forest', 'boost_std', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'lags': 20, 'scaler': StandardScaler()},
+    }),
+    ('torch_boosting_forest', 'boost_noscale', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'scaler': None},
+    }),
+])
+```
 
 ---
 

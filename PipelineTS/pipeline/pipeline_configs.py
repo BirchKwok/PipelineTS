@@ -75,7 +75,7 @@ class PipelineConfigs:
     }, 'PipelineConfigs')
     def __init__(self, configs):
         # Initialize sub-configurations
-        self.sub_configs = {'init_configs': {}, 'fit_configs': {}, 'predict_configs': {}}
+        self.sub_configs = {'init_configs': {}, 'fit_configs': {}, 'predict_configs': {}, 'pipeline_configs': {}}
 
         # Remove duplicates and maintain order
         _to_process_configs = drop_duplicates_with_order(configs)

@@ -841,6 +841,138 @@ Falls back gracefully to simpler stacking or weighted_avg if multi-layer stackin
 
 ---
 
+## Per-Model Pipeline Configuration / 每模型管道配置
+
+`PipelineConfigs` now supports a `pipeline_configs` key that allows each model variant to use different pipeline-level settings. This enables fine-grained control over how individual models handle data preprocessing.
+
+`PipelineConfigs` 现在支持 `pipeline_configs` 键，允许每个模型变体使用不同的管道级别设置。这使得对各模型的数据预处理方式可以进行精细控制。
+
+### Per-Model Lags / 每模型滞后窗口
+
+Compare model performance with different input window sizes:
+对比不同输入窗口大小下的模型性能：
+
+```python
+from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+
+configs = PipelineConfigs([
+    ('torch_boosting_forest', 'boost_lag6', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'lags': 6},
+    }),
+    ('torch_boosting_forest', 'boost_lag24', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'lags': 24},
+    }),
+])
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models=['torch_boosting_forest'],
+    configs=configs,
+)
+leaderboard = pipeline.fit(data)
+
+# Verify per-model lags / 验证每模型滞后窗口
+m6 = pipeline.get_model('boost_lag6')
+m24 = pipeline.get_model('boost_lag24')
+print(m6.all_configs['lags'])   # 6
+print(m24.all_configs['lags'])  # 24
+```
+
+### Per-Model Scaler / 每模型缩放器
+
+Each model can use a different scaler independently of the global `scaler` setting. This is especially useful for comparing scaled vs unscaled models, or MinMaxScaler vs StandardScaler:
+
+每个模型可以独立于全局 `scaler` 设置使用不同的缩放器。这在比较缩放与不缩放模型、或 MinMaxScaler 与 StandardScaler 时特别有用：
+
+```python
+from sklearn.preprocessing import StandardScaler
+from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+
+configs = PipelineConfigs([
+    ('torch_boosting_forest', 'boost_minmax', {
+        'init_configs': {'n_trees': 64},
+        # No pipeline_configs: uses global scaler (MinMaxScaler)
+        # 不指定 pipeline_configs：使用全局缩放器（MinMaxScaler）
+    }),
+    ('torch_boosting_forest', 'boost_standard', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'scaler': StandardScaler()},
+    }),
+    ('torch_boosting_forest', 'boost_noscale', {
+        'init_configs': {'n_trees': 64},
+        'pipeline_configs': {'scaler': None},
+    }),
+])
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models=['torch_boosting_forest'],
+    configs=configs,
+    scaler=True,  # Global default: MinMaxScaler
+)
+leaderboard = pipeline.fit(data)
+
+# Each model's scaler is stored separately
+# 每个模型的缩放器独立存储
+print(pipeline._model_scalers.get('boost_standard'))  # StandardScaler
+print(pipeline._model_scalers.get('boost_noscale'))    # None
+
+# Predictions are correctly inverse-transformed per model
+# 每个模型的预测结果都会正确地逆变换
+pred = pipeline.predict(10, model_name='boost_standard')
+```
+
+### Combining Multiple Settings / 组合多种设置
+
+You can combine lags, scaler, and other settings in a single `pipeline_configs`:
+可以在一个 `pipeline_configs` 中组合滞后窗口、缩放器和其他设置：
+
+```python
+from sklearn.preprocessing import StandardScaler
+from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
+
+configs = PipelineConfigs([
+    ('torch_boosting_forest', 'boost_full_custom', {
+        'init_configs': {'n_trees': 128},
+        'pipeline_configs': {
+            'lags': 20,
+            'scaler': StandardScaler(),
+        },
+    }),
+    ('multi_output_model', 'mo_diff1', {
+        'init_configs': {},
+        'pipeline_configs': {
+            'differential_n': 1,  # Only for models that support it
+                                  # 仅适用于支持该参数的模型
+        },
+    }),
+])
+
+pipeline = ModelPipeline(
+    time_col='date', target_col='value', lags=12,
+    include_models=['torch_boosting_forest', 'multi_output_model'],
+    configs=configs,
+)
+leaderboard = pipeline.fit(data)
+```
+
+### Priority Rules / 优先级规则
+
+When multiple configuration sources exist, the priority order is:
+当存在多个配置来源时，优先级顺序为：
+
+1. `init_configs` (highest for model `__init__` params) / `init_configs`（对模型初始化参数最高优先）
+2. `pipeline_configs` (overrides global pipeline settings) / `pipeline_configs`（覆盖全局管道设置）
+3. Global `ModelPipeline` settings (e.g., `lags=12`, `scaler=True`) / 全局 `ModelPipeline` 设置
+4. Model defaults (lowest) / 模型默认值（最低优先）
+
+Models without `pipeline_configs` fall back to global settings, maintaining full backward compatibility.
+未指定 `pipeline_configs` 的模型回退到全局设置，保持完全向后兼容。
+
+---
+
 ## Saving and Loading with Scaler / 带缩放器的保存与加载
 
 When using manual scaling, you can save the scaler alongside the model.
