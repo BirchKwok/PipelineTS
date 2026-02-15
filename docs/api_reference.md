@@ -78,13 +78,24 @@ SmartRouter(
     id_col: str | None = None,
     known_covariates: list | None = None,
     past_covariates: list | None = None,
+    include_models: str | list | None = None,
+    search_strategy: str = 'auto',
     hpo_strategy: str = 'none',
     hpo_n_trials: int = 10,
+    hpo_timeout_per_model: float | None = None,
     time_limit: float | None = None,
     random_state: int = 0,
     verbose: bool = True,
 )
 ```
+
+**Key Parameters / 关键参数:**
+
+| Parameter / 参数 | Type / 类型 | Default / 默认 | Description / 描述 |
+|---|---|---|---|
+| `include_models` | str, list, None | None | Pin specific model(s); skips heuristic selection and screening / 指定模型；跳过启发式选择和筛选 |
+| `search_strategy` | str | 'auto' | `'basic'` (no screening/exploration), `'auto'`, or `'thorough'` / 搜索策略 |
+| `hpo_strategy` | str | 'none' | `'none'`, `'quick'` (≤5 trials), or `'full'` / HPO 策略 |
 
 **Methods / 方法:**
 
@@ -97,6 +108,7 @@ SmartRouter(
 | `plot(n=None, lang='zh')` | Plot forecast / 绘制预测图 |
 | `plot_leaderboard(lang='zh')` | Plot leaderboard / 绘制排行榜 |
 | `get_model(model_name=None)` | Get fitted model / 获取已训练模型 |
+| `list_all_available_models()` | Class method: list all valid model names / 类方法：列出所有有效模型名称 |
 
 **Attributes / 属性:**
 
@@ -106,6 +118,8 @@ SmartRouter(
 | `leader_board_` | Model rankings / 模型排名 |
 | `ensemble_` | EnsemblePredictor (if built) / 集成预测器 |
 | `pipeline_` | Underlying ModelPipeline / 底层 ModelPipeline |
+| `profile_` | DataProfile with data characteristics / 数据画像 |
+| `include_models` | User-pinned model list (or None) / 用户指定模型列表（或 None） |
 
 ---
 

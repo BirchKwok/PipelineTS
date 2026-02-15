@@ -450,6 +450,12 @@ class _DifferentiableTreeEnsemble(nn.Module):
         nn.init.uniform_(self.leaf_responses, -0.1, 0.1)
         # Linear skip connection: strong linear baseline, trees learn residual
         self.skip = nn.Linear(F, O)
+        # HyperLeaf: input-conditioned leaf modulation (zero-init = identity)
+        self.leaf_gate_w = nn.Parameter(torch.zeros(T, F, self.n_leaves))
+        # Attention-based tree aggregation (zero-init = uniform = mean)
+        self.tree_attn_proj = nn.Linear(F, T)
+        nn.init.zeros_(self.tree_attn_proj.weight)
+        nn.init.zeros_(self.tree_attn_proj.bias)
 
     def _init_cascade(self, F, O, T, D, n_layers):
         # Vanilla cascade + learnable residual shortcut.
@@ -463,6 +469,7 @@ class _DifferentiableTreeEnsemble(nn.Module):
         self.layer_th = nn.ParameterList()
         self.layer_lt = nn.ParameterList()
         self.layer_lr = nn.ParameterList()
+        self.layer_lgw = nn.ParameterList()
         cur_in = F
         for _ in range(n_layers):
             fl = nn.Parameter(torch.empty(T, D, cur_in))
@@ -473,6 +480,7 @@ class _DifferentiableTreeEnsemble(nn.Module):
             lr = nn.Parameter(torch.empty(T, self.n_leaves, O))
             nn.init.uniform_(lr, -0.1, 0.1)
             self.layer_lr.append(lr)
+            self.layer_lgw.append(nn.Parameter(torch.zeros(T, cur_in, self.n_leaves)))
             cur_in = F + T * O
         self.final_proj = nn.Linear(cur_in, O)
         # Residual scale: init=0 so model starts as vanilla, learns
@@ -482,7 +490,7 @@ class _DifferentiableTreeEnsemble(nn.Module):
 
     # -- core batched forward (zero loops over trees) -------------------------
 
-    def _batched_trees(self, x, fl, th, lt, lr):
+    def _batched_trees(self, x, fl, th, lt, lr, lgw=None):
         """Compute all trees in parallel.
 
         Parameters
@@ -492,14 +500,22 @@ class _DifferentiableTreeEnsemble(nn.Module):
         th : (T, D)    — thresholds
         lt : (T, D)    — log temperatures
         lr : (T, L, O) — leaf responses
+        lgw : (T, F, L) or None — HyperLeaf gate weights
 
         Returns
         -------
         (B, T, O) — per-tree outputs
         """
-        # Temperature-scaled feature selection (sharper = more tree-like)
+        # Gumbel-Softmax feature selection: stochastic hard selection
+        # during training improves gradient flow at depth and encourages
+        # exploration of different feature subsets per tree.
         feat_temp = self._feat_temp.clamp(min=0.05)
-        fw = _safe_softmax(fl / feat_temp, dim=-1)          # (T, D, F)
+        if self.training:
+            gumbel_noise = -torch.log(-torch.log(
+                torch.rand_like(fl) + 1e-20) + 1e-20)
+            fw = _safe_softmax((fl + gumbel_noise) / feat_temp, dim=-1)
+        else:
+            fw = _safe_softmax(fl / feat_temp, dim=-1)       # (T, D, F)
         # Selected features for every tree & depth level
         selected = torch.einsum('tdf,bf->btd', fw, x)       # (B, T, D)
         # Split decisions
@@ -511,6 +527,14 @@ class _DifferentiableTreeEnsemble(nn.Module):
         d = decisions.unsqueeze(3)                           # (B, T, D, 1)
         m = self._bit_masks.unsqueeze(0).unsqueeze(0)        # (1, 1, D, L)
         leaf_probs = (d * m + (1.0 - d) * (1.0 - m)).prod(dim=2)  # (B, T, L)
+        # HyperLeaf: input-conditioned leaf modulation.
+        # Each leaf's response is scaled by a learned function of the input,
+        # making deeper trees genuinely more expressive (each leaf adapts to
+        # the specific input rather than outputting a fixed value).
+        if lgw is not None:
+            gate = torch.tanh(torch.einsum('tfl,bf->btl', lgw, x))
+            mod_lr = lr.unsqueeze(0) * (1.0 + 0.5 * gate.unsqueeze(-1))
+            return torch.einsum('btl,btlo->bto', leaf_probs, mod_lr)
         # Weighted leaf responses
         return torch.einsum('btl,tlo->bto', leaf_probs, lr)  # (B, T, O)
 
@@ -525,14 +549,19 @@ class _DifferentiableTreeEnsemble(nn.Module):
         out = self._batched_trees(
             x, self.feature_logits, self.thresholds,
             self.log_temps, self.leaf_responses,
+            lgw=self.leaf_gate_w,
         )  # (B, T, O)
+        # Attention-based tree aggregation: different inputs weight
+        # different trees, enabling tree specialisation.  Each tree
+        # can become an "expert" for a subset of the input space,
+        # making additional trees genuinely useful.
+        attn_logits = self.tree_attn_proj(x)                  # (B, T)
         if self.training and self.dropout > 0:
-            mask = (torch.rand(1, self.n_trees, 1, device=x.device)
-                    > self.dropout).float()
-            out = out * mask
-            tree_out = out.sum(dim=1) / mask.sum().clamp(min=1.0) * self.n_trees
-        else:
-            tree_out = out.mean(dim=1)  # (B, O)
+            drop_mask = (torch.rand(1, self.n_trees, device=x.device)
+                         > self.dropout).float()
+            attn_logits = attn_logits + (1.0 - drop_mask) * (-1e9)
+        attn = torch.softmax(attn_logits, dim=-1)            # (B, T)
+        tree_out = (out * attn.unsqueeze(-1)).sum(dim=1)      # (B, O)
         return tree_out + self.skip(x)
 
     def _forward_cascade(self, x):
@@ -546,6 +575,7 @@ class _DifferentiableTreeEnsemble(nn.Module):
             tree_out = self._batched_trees(
                 current, self.layer_fl[i], self.layer_th[i],
                 self.layer_lt[i], self.layer_lr[i],
+                lgw=self.layer_lgw[i],
             )  # (B, T, O)
             layer_preds.append(tree_out.mean(dim=1))  # (B, O)
             layer_out = tree_out.reshape(B, -1)  # (B, T*O)
@@ -556,6 +586,35 @@ class _DifferentiableTreeEnsemble(nn.Module):
         # Residual path: early-layer gradient shortcut
         residual = torch.stack(layer_preds, dim=0).mean(dim=0)  # (B, O)
         return primary + self.residual_scale * residual + self.skip(x)
+
+    # -- tree diversity regularization ----------------------------------------
+
+    def compute_diversity_loss(self):
+        """Encourage different trees to select different features.
+
+        Returns a scalar loss that penalises high cosine similarity
+        between the average feature-selection profiles of different trees.
+        Optimising this alongside the main loss pushes each tree to
+        specialise on a different subset of input features, making
+        additional trees genuinely useful.
+        """
+        if self.ensemble_mode == 'cascade':
+            total = 0.0
+            for fl in self.layer_fl:
+                total = total + self._diversity_from_logits(fl)
+            return total / max(len(self.layer_fl), 1)
+        return self._diversity_from_logits(self.feature_logits)
+
+    @staticmethod
+    def _diversity_from_logits(fl):
+        feat_weights = _safe_softmax(fl, dim=-1)             # (T, D, F)
+        tree_profile = feat_weights.mean(dim=1)              # (T, F)
+        norm = tree_profile.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+        normed = tree_profile / norm
+        sim = normed @ normed.T                              # (T, T)
+        n_trees = sim.shape[0]
+        mask = 1.0 - torch.eye(n_trees, device=sim.device)
+        return (sim * mask).pow(2).sum() / max(n_trees * (n_trees - 1), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +697,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         random_state=None,
         verbose=False,
         auto_complexity=False,
+        diversity_weight=0.01,
     ):
         self.n_trees = n_trees
         self.tree_depth = tree_depth
@@ -656,6 +716,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         self.random_state = random_state
         self.verbose = verbose
         self.auto_complexity = auto_complexity
+        self.diversity_weight = diversity_weight
 
         self._model = None
         self._staged_models = None  # list of (model, shrinkage) for staged boosting
@@ -675,7 +736,8 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
         return nn.SmoothL1Loss()
 
     @staticmethod
-    def _compute_loss(model, X, y, use_mse, sample_weights=None):
+    def _compute_loss(model, X, y, use_mse, sample_weights=None,
+                      diversity_weight=0.0):
         """Compute per-sample loss then (weighted) mean."""
         pred = model(X)
         diff = pred - y
@@ -688,8 +750,14 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
             ).mean(dim=-1)
         if sample_weights is not None:
             w = sample_weights[:per_sample.shape[0]]
-            return (per_sample * w).sum() / w.sum()
-        return per_sample.mean()
+            loss = (per_sample * w).sum() / w.sum()
+        else:
+            loss = per_sample.mean()
+        # Tree diversity regularization: penalise trees that learn
+        # identical feature selections (makes more trees useful).
+        if diversity_weight > 0 and hasattr(model, 'compute_diversity_loss'):
+            loss = loss + diversity_weight * model.compute_diversity_loss()
+        return loss
 
     @staticmethod
     def _has_structural_break(y, tail_size=None,
@@ -798,7 +866,8 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
                     with torch.amp.autocast('cuda'):
                         loss = self._compute_loss(
                             model, X_t[idx], y_t[idx], use_mse,
-                            sample_weights=w_batch)
+                            sample_weights=w_batch,
+                            diversity_weight=self.diversity_weight)
                     optimizer.zero_grad(set_to_none=True)
                     scaler.scale(loss).backward()
                     scaler.unscale_(optimizer)
@@ -808,7 +877,8 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
                 else:
                     loss = self._compute_loss(
                         model, X_t[idx], y_t[idx], use_mse,
-                        sample_weights=w_batch)
+                        sample_weights=w_batch,
+                        diversity_weight=self.diversity_weight)
                     optimizer.zero_grad(set_to_none=True)
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
@@ -1332,6 +1402,7 @@ class _TorchTreeWrapper(BaseEstimator, RegressorMixin):
             'random_state': self.random_state,
             'verbose': self.verbose,
             'auto_complexity': self.auto_complexity,
+            'diversity_weight': self.diversity_weight,
         }
 
     def set_params(self, **params):

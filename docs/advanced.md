@@ -400,6 +400,102 @@ SmartRouter scores each model based on:
 | **Regime changes** / 机制变化 | Many changes favor tree models; penalizes smooth models / 多变化偏好树模型；惩罚平滑模型 |
 | **Noise level** / 噪声水平 | High noise favors regularized GBDT (TorchBoostingForest) / 高噪声偏好正则化 GBDT |
 
+### Pinning Models (`include_models`) / 指定模型（`include_models`）
+
+By default, SmartRouter uses heuristic scoring to select the best candidate models from all available models. With `include_models`, you can pin specific models and let SmartRouter optimize everything else (preprocessing, scaler, lags, feature engineering, hyperparameters, and ensemble) for those models.
+
+默认情况下，SmartRouter 使用启发式评分从所有可用模型中选择最佳候选模型。通过 `include_models`，你可以指定特定模型，让 SmartRouter 为这些模型优化其他所有环节（预处理、缩放器、滞后窗口、特征工程、超参数和集成）。
+
+#### Basic Usage / 基本用法
+
+```python
+from PipelineTS.pipeline import SmartRouter
+
+# Pin two models — SmartRouter handles everything else
+# 指定两个模型 — SmartRouter 处理其他所有环节
+router = SmartRouter(
+    time_col='date',
+    target_col='value',
+    include_models=['prophet', 'torch_boosting_forest'],
+)
+router.fit(data)
+result = router.predict(12)
+```
+
+#### Single Model with Full Optimization / 单模型全面优化
+
+```python
+# Single model: SmartRouter still optimizes lags, scaler, hyperparams
+# 单模型：SmartRouter 仍然优化滞后窗口、缩放器、超参数
+router = SmartRouter(
+    time_col='date',
+    target_col='value',
+    include_models='torch_boosting_forest',  # str also accepted / 字符串也可以
+    search_strategy='auto',                   # Lag exploration still works / 滞后探索仍然有效
+    hpo_strategy='quick',                     # HPO still works / HPO 仍然有效
+)
+router.fit(data)
+```
+
+#### Combining with Other Parameters / 与其他参数组合
+
+```python
+# include_models + HPO + ensemble
+# 指定模型 + HPO + 集成
+router = SmartRouter(
+    time_col='date',
+    target_col='value',
+    include_models=['prophet', 'torch_boosting_forest', 'tide'],
+    hpo_strategy='quick',             # Tune hyperparams for pinned models / 调优指定模型的超参数
+    ensemble_strategy='weighted_avg',  # Build ensemble from pinned models / 从指定模型构建集成
+    search_strategy='auto',            # Lag exploration enabled / 启用滞后探索
+)
+router.fit(data)
+```
+
+#### What Still Runs / 仍然运行的环节
+
+When `include_models` is set, SmartRouter **skips** heuristic model selection and screening, but **still performs**:
+
+当设置 `include_models` 时，SmartRouter **跳过**启发式模型选择和筛选，但**仍然执行**：
+
+| Step / 步骤 | Status / 状态 |
+|---|---|
+| Data profiling / 数据画像 | ✅ Runs / 运行 |
+| Preprocessing selection / 预处理选择 | ✅ Runs / 运行 |
+| Scaler selection / 缩放器选择 | ✅ Runs / 运行 |
+| Lag optimization / 滞后窗口优化 | ✅ Runs (if `search_strategy != 'basic'`) / 运行 |
+| Feature engineering routing / 特征工程路由 | ✅ Runs / 运行 |
+| Hyperparameter suggestion / 超参数建议 | ✅ Runs / 运行 |
+| HPO (Optuna) / 超参数优化 | ✅ Runs (if `hpo_strategy != 'none'`) / 运行 |
+| Quick screening / 快速筛选 | ❌ Skipped / 跳过 |
+| Heuristic model selection / 启发式模型选择 | ❌ Skipped / 跳过 |
+| Ensemble building / 集成构建 | ✅ Runs / 运行 |
+
+#### Listing Available Model Names / 列出可用模型名称
+
+```python
+# See all valid model names for include_models
+# 查看 include_models 可用的所有有效模型名称
+print(SmartRouter.list_all_available_models())
+```
+
+#### Validation / 验证
+
+SmartRouter validates model names at initialization — unknown names raise `ValueError`:
+
+SmartRouter 在初始化时验证模型名称 — 未知名称会抛出 `ValueError`：
+
+```python
+# This raises ValueError with a list of valid model names
+# 这会抛出 ValueError 并显示有效模型名称列表
+router = SmartRouter(
+    time_col='date', target_col='value',
+    include_models=['nonexistent_model'],
+)
+# ValueError: Unknown model(s): ['nonexistent_model']. Available: [...]
+```
+
 ### Customizing SmartRouter / 自定义 SmartRouter
 
 While SmartRouter makes automatic decisions, you can influence its behavior:

@@ -381,6 +381,7 @@ pipeline = ModelPipeline(
 | **Adaptive Feature Engineering** / 自适应特征工程 | Auto-enables adaptive MoE routing for NN models; Prophet lag features when autocorrelation is strong / 为 NN 模型自动启用自适应 MoE 路由；自相关强时启用 Prophet 滞后特征 |
 | **Adaptive Hyperparameters** / 自适应超参数 | Auto-adjusts GBDT (n_estimators, learning_rate, max_depth) and NN (routing_mode) based on data profile / 根据数据画像自动调整 GBDT 和 NN 超参数 |
 | **Weighted Ensemble** / 加权集成 | `ensemble_strategy='auto'` builds ensemble when top models are competitive; `'weighted_avg'` always builds / `ensemble_strategy='auto'` 在顶级模型具有竞争力时构建集成；`'weighted_avg'` 始终构建 |
+| **Model Pinning** / 模型指定 | `include_models` pins specific models; SmartRouter optimizes lags, scaler, hyperparams, and ensemble for them / `include_models` 指定特定模型；SmartRouter 为其优化滞后窗口、缩放器、超参数和集成 |
 
 ### Usage / 用法
 
@@ -413,6 +414,32 @@ result = router.predict(n=12, use_ensemble=False)
 print(router.strategy)        # Full strategy dict / 完整策略字典
 print(router.leader_board_)   # Model rankings / 模型排名
 print(router.ensemble_)       # Ensemble info (if built) / 集成信息（如果已构建）
+```
+
+### Pinning Models (`include_models`) / 指定模型
+
+Pin specific models and let SmartRouter optimize everything else for them:
+
+指定特定模型，让 SmartRouter 为其优化其他所有环节：
+
+```python
+# Pin specific models — SmartRouter handles preprocessing, lags, hyperparams, ensemble
+# 指定模型 — SmartRouter 处理预处理、滞后窗口、超参数、集成
+router = SmartRouter(
+    time_col='date',
+    target_col='value',
+    include_models=['prophet', 'torch_boosting_forest'],
+    hpo_strategy='quick',   # HPO still works for pinned models / HPO 仍然适用于指定模型
+)
+router.fit(data)
+
+# Single model with full optimization / 单模型全面优化
+router = SmartRouter(
+    time_col='date',
+    target_col='value',
+    include_models='torch_boosting_forest',  # str accepted / 字符串也可以
+)
+router.fit(data)
 ```
 
 ### Data Profile Fields / 数据画像字段

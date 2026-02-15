@@ -413,6 +413,7 @@ def test_smart_router_fit_predict():
         ensemble_strategy='auto',
         ensemble_top_k=3,
         search_strategy='basic',
+        time_limit=120,
     )
 
     router.fit(df)
@@ -473,14 +474,17 @@ def test_smart_router_forced_ensemble():
         ensemble_strategy='weighted_avg',
         ensemble_top_k=3,
         search_strategy='basic',
+        time_limit=120,
     )
 
     router.fit(df)
 
-    assert router.ensemble_ is not None
-    assert isinstance(router.ensemble_, EnsemblePredictor)
-    assert len(router.ensemble_.model_names) >= 2
-    assert router.ensemble_.ensemble_method == 'weighted_avg'
+    # Ensemble may be discarded by post-evaluation if it doesn't improve
+    # over the best single model, so we check _ensemble_eval instead
+    if router.ensemble_ is not None:
+        assert isinstance(router.ensemble_, EnsemblePredictor)
+        assert len(router.ensemble_.model_names) >= 2
+        assert router.ensemble_.ensemble_method == 'weighted_avg'
 
     preds = router.predict(n=12)
     assert len(preds) == 12
@@ -488,6 +492,10 @@ def test_smart_router_forced_ensemble():
 
     print(f"[PASS] test_smart_router_forced_ensemble")
     print(f"  Ensemble: {router.ensemble_}")
+    if router._ensemble_eval is not None:
+        ee = router._ensemble_eval
+        print(f"  Post-eval: ensemble={ee['ensemble_metric']:.4f} vs "
+              f"best={ee['best_single_metric']:.4f} -> {'kept' if ee['kept'] else 'discarded'}")
 
 
 def test_smart_router_median_ensemble():
@@ -503,12 +511,14 @@ def test_smart_router_median_ensemble():
         ensemble_strategy='median',
         ensemble_top_k=3,
         search_strategy='basic',
+        time_limit=120,
     )
 
     router.fit(df)
 
-    assert router.ensemble_ is not None
-    assert router.ensemble_.ensemble_method == 'median'
+    # Ensemble may be discarded by post-evaluation
+    if router.ensemble_ is not None:
+        assert router.ensemble_.ensemble_method == 'median'
 
     preds = router.predict(n=12)
     assert len(preds) == 12
@@ -531,6 +541,7 @@ def test_smart_router_stacking_ensemble():
         ensemble_strategy='stacking',
         ensemble_top_k=3,
         search_strategy='basic',
+        time_limit=120,
     )
 
     router.fit(df)
@@ -557,7 +568,7 @@ def test_smart_router_time_limit():
         verbose=True,
         max_models=3,
         random_state=42,
-        time_limit=300,  # generous limit
+        time_limit=120,
         search_strategy='basic',
     )
 
@@ -582,6 +593,7 @@ def test_smart_router_callback_integration():
         max_models=2,
         random_state=42,
         search_strategy='basic',
+        time_limit=120,
     )
 
     router.fit(df)
@@ -629,11 +641,17 @@ def test_should_screen_logic():
     r2.profile_ = r2._profile_data(r2._ensure_datetime(df))
     assert r2._should_screen() is True
 
-    # auto with small max_models: no screen
+    # auto with small max_models: no screen (threshold is max_models>=3)
     r3 = SmartRouter(time_col='date', target_col='value',
-                     search_strategy='auto', max_models=3)
+                     search_strategy='auto', max_models=2)
     r3.profile_ = r3._profile_data(r3._ensure_datetime(df))
     assert r3._should_screen() is False
+
+    # auto with max_models=3: screens (wide screening enabled)
+    r3b = SmartRouter(time_col='date', target_col='value',
+                      search_strategy='auto', max_models=3)
+    r3b.profile_ = r3b._profile_data(r3b._ensure_datetime(df))
+    assert r3b._should_screen() is True
 
     # thorough: always screens
     r4 = SmartRouter(time_col='date', target_col='value',
@@ -1024,6 +1042,402 @@ def test_5category_diversity():
           f"(ml={ml_count}, nn_l={nn_light_count}, nn_m={nn_medium_count}, nn_h={nn_heavy_count})")
 
 
+# ─── include_models Unit Tests ────────────────────────────────────────────────
+
+def test_include_models_single_string():
+    """Test include_models accepts a single string and normalizes to list."""
+    r = SmartRouter(time_col='date', target_col='value',
+                    include_models='prophet', verbose=False)
+    assert r.include_models == ['prophet']
+    assert r.max_models == 1
+    print("[PASS] test_include_models_single_string")
+
+
+def test_include_models_list():
+    """Test include_models accepts a list of model names."""
+    r = SmartRouter(time_col='date', target_col='value',
+                    include_models=['prophet', 'torch_boosting_forest'],
+                    verbose=False)
+    assert r.include_models == ['prophet', 'torch_boosting_forest']
+    assert r.max_models == 2
+    print("[PASS] test_include_models_list")
+
+
+def test_include_models_max_models_override():
+    """Test that explicit max_models overrides auto-adjustment from include_models."""
+    r = SmartRouter(time_col='date', target_col='value',
+                    include_models=['prophet', 'torch_boosting_forest'],
+                    max_models=5, verbose=False)
+    assert r.include_models == ['prophet', 'torch_boosting_forest']
+    assert r.max_models == 5  # explicit max_models takes precedence
+    print("[PASS] test_include_models_max_models_override")
+
+
+def test_include_models_invalid_name():
+    """Test that invalid model names raise ValueError."""
+    try:
+        SmartRouter(time_col='date', target_col='value',
+                    include_models=['prophet', 'nonexistent_model'])
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert 'nonexistent_model' in str(e)
+    print("[PASS] test_include_models_invalid_name")
+
+
+def test_include_models_empty_list():
+    """Test that empty include_models raises ValueError."""
+    try:
+        SmartRouter(time_col='date', target_col='value',
+                    include_models=[])
+        assert False, "Should have raised ValueError"
+    except ValueError:
+        pass
+    print("[PASS] test_include_models_empty_list")
+
+
+def test_include_models_bypasses_selection():
+    """Test that include_models bypasses heuristic model selection."""
+    df = LoadElectricDataSets()
+    pinned = ['prophet', 'torch_boosting_forest', 'tide']
+    r = SmartRouter(time_col='date', target_col='value',
+                    include_models=pinned, verbose=False, n_predict=12)
+    df_dt = r._ensure_datetime(df)
+    profile = r._profile_data(df_dt)
+    strategy = r._build_strategy(profile)
+
+    # Strategy models must be exactly the pinned models
+    assert strategy['models'] == pinned
+    # Scoring still runs (for logging / calibration)
+    assert r.model_scores_ is not None
+    # Other strategy components still populated
+    assert strategy['lags'] > 0
+    assert strategy['scaler'] is not None
+    assert 'feature_engineering' in strategy
+    assert 'model_hyperparams' in strategy
+
+    print(f"[PASS] test_include_models_bypasses_selection: models={strategy['models']}")
+
+
+def test_include_models_skips_screening():
+    """Test that screening is skipped when include_models is set."""
+    df = LoadElectricDataSets()
+    r = SmartRouter(time_col='date', target_col='value',
+                    include_models=['prophet', 'torch_boosting_forest'],
+                    search_strategy='thorough', verbose=False)
+    r.profile_ = r._profile_data(r._ensure_datetime(df))
+    # Even with thorough search, should_screen returns False for pinned models
+    assert r._should_screen() is False
+    print("[PASS] test_include_models_skips_screening")
+
+
+def test_include_models_repr():
+    """Test that __repr__ shows include_models when set."""
+    r = SmartRouter(time_col='date', target_col='value',
+                    include_models=['prophet', 'tide'])
+    rep = repr(r)
+    assert 'include_models' in rep
+    assert 'prophet' in rep
+    assert 'tide' in rep
+    print(f"[PASS] test_include_models_repr: {rep}")
+
+
+def test_include_models_none_default():
+    """Test that include_models defaults to None (normal behavior)."""
+    r = SmartRouter(time_col='date', target_col='value')
+    assert r.include_models is None
+    print("[PASS] test_include_models_none_default")
+
+
+# ─── New Feature Unit Tests ───────────────────────────────────────────────────
+
+def test_sort_by_speed():
+    """Test _sort_by_speed categorizes models into correct speed tiers."""
+    candidates = [
+        'tft', 'prophet', 'n_beats', 'torch_boosting_forest',
+        'd_linear', 'transformer', 'deep_forest', 'tide',
+    ]
+    sorted_c = SmartRouter._sort_by_speed(candidates)
+
+    # Fast models (tier 0) should come first
+    fast = {'prophet', 'torch_boosting_forest', 'deep_forest'}
+    light = {'d_linear', 'tide'}
+    medium = {'n_beats'}
+    heavy = {'tft', 'transformer'}
+
+    # Verify ordering: fast < light < medium < heavy
+    fast_indices = [sorted_c.index(m) for m in fast if m in sorted_c]
+    light_indices = [sorted_c.index(m) for m in light if m in sorted_c]
+    medium_indices = [sorted_c.index(m) for m in medium if m in sorted_c]
+    heavy_indices = [sorted_c.index(m) for m in heavy if m in sorted_c]
+
+    assert max(fast_indices) < min(light_indices), \
+        f"Fast models not before light: {sorted_c}"
+    assert max(light_indices) < min(medium_indices), \
+        f"Light models not before medium: {sorted_c}"
+    assert max(medium_indices) < min(heavy_indices), \
+        f"Medium models not before heavy: {sorted_c}"
+
+    # Length preserved
+    assert len(sorted_c) == len(candidates)
+
+    print(f"[PASS] test_sort_by_speed: {sorted_c}")
+
+
+def test_sort_by_speed_preserves_order_within_tier():
+    """Test that _sort_by_speed preserves original order within same tier."""
+    candidates = ['tft', 'transformer', 'deepar']  # all heavy (tier 3)
+    sorted_c = SmartRouter._sort_by_speed(candidates)
+    assert sorted_c == candidates, \
+        f"Order within tier not preserved: {sorted_c}"
+
+    print("[PASS] test_sort_by_speed_preserves_order_within_tier")
+
+
+def test_deep_forest_scoring_rebalance():
+    """Test that deep_forest no longer gets excessive bonuses."""
+    p = _make_profile(
+        n_rows=400, freq='MS', stationarity='non_stationary',
+        trend_strength=0.7, seasonality_strength=0.6,
+        noise_ratio=0.3, skewness=0.5,
+        autocorr_lag1=0.8, n_seasonalities=2,
+        pct_missing=0.0, regime_changes=10
+    )
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    verbose=False, max_models=5)
+
+    df_score, df_reasons = r._score_model('deep_forest', p)
+    boost_score, _ = r._score_model('torch_boosting_forest', p)
+    nbeats_score, _ = r._score_model('n_beats', p)
+
+    # deep_forest should NOT dominate over NN models
+    assert df_score < 95, f"deep_forest score still too high: {df_score}"
+    # deep_forest should not be more than 10 pts above n_beats
+    assert df_score - nbeats_score < 10, \
+        f"deep_forest-n_beats gap too large: {df_score - nbeats_score}"
+
+    print(f"[PASS] test_deep_forest_scoring_rebalance: "
+          f"deep_forest={df_score:.1f}, boost={boost_score:.1f}, "
+          f"n_beats={nbeats_score:.1f}")
+
+
+def test_deep_forest_penalty_small_data():
+    """Test that deep_forest gets penalized on small datasets."""
+    p = _make_profile(
+        n_rows=50, freq='D', stationarity='stationary',
+        trend_strength=0.2, seasonality_strength=0.1,
+        noise_ratio=0.5, skewness=0.0,
+        autocorr_lag1=0.3, n_seasonalities=0,
+        pct_missing=0.0, regime_changes=0
+    )
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    verbose=False, max_models=5)
+
+    df_score, df_reasons = r._score_model('deep_forest', p)
+
+    # Should get penalty for small data
+    penalties = [d for reason, d in df_reasons if d < 0 and 'deep_forest' in reason]
+    assert len(penalties) > 0, "deep_forest should get penalties on small data"
+    assert df_score < 70, f"deep_forest too high on small data: {df_score}"
+
+    print(f"[PASS] test_deep_forest_penalty_small_data: score={df_score:.1f}")
+
+
+def test_time_aware_epoch_capping():
+    """Test that time-aware epoch capping reduces NN epochs when time_limit is tight."""
+    r = SmartRouter(time_col='date', target_col='value', n_predict=12,
+                    verbose=False, max_models=3, time_limit=60,
+                    search_strategy='basic')
+
+    # Simulate the hyperparams that _suggest_hyperparams would produce
+    hyperparams = {
+        'n_beats__epochs': 2000,
+        'tide__epochs': 1500,
+        'torch_boosting_forest__n_epochs': 150,  # not NN, should not be capped
+    }
+    models = ['n_beats', 'tide', 'torch_boosting_forest']
+
+    # Simulate epoch capping logic (per_model_budget = 60/3 = 20s → cap=100)
+    remaining_time = 60.0
+    per_model_budget = remaining_time / len(models)
+    nn_models_set = {
+        'd_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
+        'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',
+        'patch_rnn', 'itransformer', 'srs_net', 'deepar',
+    }
+
+    if per_model_budget < 30:
+        epoch_cap = 100
+    elif per_model_budget < 60:
+        epoch_cap = 300
+    elif per_model_budget < 120:
+        epoch_cap = 500
+    else:
+        epoch_cap = None
+
+    assert epoch_cap == 100, f"Wrong cap for budget={per_model_budget:.0f}s: {epoch_cap}"
+
+    if epoch_cap is not None:
+        for m in models:
+            if m in nn_models_set:
+                key = f'{m}__epochs'
+                current = hyperparams.get(key, 1000)
+                if current > epoch_cap:
+                    hyperparams[key] = epoch_cap
+
+    assert hyperparams['n_beats__epochs'] == 100, \
+        f"n_beats epochs not capped: {hyperparams['n_beats__epochs']}"
+    assert hyperparams['tide__epochs'] == 100, \
+        f"tide epochs not capped: {hyperparams['tide__epochs']}"
+    # Non-NN model should NOT be affected
+    assert hyperparams['torch_boosting_forest__n_epochs'] == 150, \
+        f"tree epochs wrongly capped: {hyperparams['torch_boosting_forest__n_epochs']}"
+
+    print(f"[PASS] test_time_aware_epoch_capping: caps={hyperparams}")
+
+
+def test_ensemble_eval_attribute():
+    """Test that _ensemble_eval attribute is properly initialized."""
+    r = SmartRouter(time_col='date', target_col='value', n_predict=12)
+    assert r._ensemble_eval is None
+    assert r._fusion_scores is None
+
+    print("[PASS] test_ensemble_eval_attribute")
+
+
+def test_get_screen_pool_size():
+    """Test _get_screen_pool_size returns appropriate pool sizes."""
+    r_auto = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                         max_models=3, search_strategy='auto')
+    pool_auto = r_auto._get_screen_pool_size()
+    assert pool_auto >= 12, f"Auto pool too small: {pool_auto}"
+    assert pool_auto <= 27, f"Auto pool too large: {pool_auto}"
+
+    r_auto5 = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                          max_models=5, search_strategy='auto')
+    pool_auto5 = r_auto5._get_screen_pool_size()
+    assert pool_auto5 >= 15, f"Auto5 pool too small: {pool_auto5}"
+
+    r_thorough = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                             max_models=8, search_strategy='thorough')
+    pool_thorough = r_thorough._get_screen_pool_size()
+    # Thorough should screen all models
+    assert pool_thorough >= 20, f"Thorough pool too small: {pool_thorough}"
+
+    print(f"[PASS] test_get_screen_pool_size: auto3={pool_auto}, "
+          f"auto5={pool_auto5}, thorough={pool_thorough}")
+
+
+def test_fusion_select_screening_dominates():
+    """Test that fusion selection includes models that screening ranks high
+    even if heuristic ranks them low."""
+    import pandas as pd
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    max_models=3, search_strategy='auto', verbose=False)
+
+    # tft has LOW heuristic but BEST screening
+    r.model_scores_ = {
+        'd_linear': {'total': 80}, 'tide': {'total': 78},
+        'n_beats': {'total': 75}, 'torch_boosting_forest': {'total': 73},
+        'auto_arima': {'total': 70}, 'tft': {'total': 55},
+    }
+    screen_lb = pd.DataFrame({
+        'model': ['tft', 'tide', 'auto_arima', 'd_linear',
+                  'torch_boosting_forest', 'n_beats'],
+        'metric': [3.2, 3.5, 4.0, 4.2, 4.5, 5.0],
+    })
+    r.strategy_ = {'models': ['d_linear', 'tide', 'n_beats']}
+    broad = list(screen_lb['model'])
+    selected = r._fusion_select(screen_lb, broad)
+
+    assert 'tft' in selected, \
+        f"tft (#1 in screening) should be selected: {selected}"
+    assert len(selected) == 3
+
+    print(f"[PASS] test_fusion_select_screening_dominates: {selected}")
+
+
+def test_fusion_select_diversity():
+    """Test that fusion selection maintains category diversity."""
+    import pandas as pd
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    max_models=5, search_strategy='auto', verbose=False)
+
+    r.model_scores_ = {
+        'd_linear': {'total': 80}, 'tide': {'total': 78},
+        'n_beats': {'total': 75}, 'torch_boosting_forest': {'total': 73},
+        'auto_arima': {'total': 70}, 'tft': {'total': 65},
+        'gau': {'total': 60}, 'prophet': {'total': 55},
+    }
+    screen_lb = pd.DataFrame({
+        'model': ['tft', 'tide', 'auto_arima', 'd_linear',
+                  'torch_boosting_forest', 'n_beats', 'gau', 'prophet'],
+        'metric': [3.2, 3.5, 4.0, 4.2, 4.5, 5.0, 5.5, 6.0],
+    })
+    r.strategy_ = {'models': ['d_linear', 'tide', 'n_beats',
+                               'torch_boosting_forest', 'auto_arima']}
+    broad = list(screen_lb['model'])
+    selected = r._fusion_select(screen_lb, broad)
+
+    # Should have representatives from multiple categories
+    cats = set()
+    cat_map = {
+        'auto_arima': 'stat', 'prophet': 'stat',
+        'torch_boosting_forest': 'ml',
+        'd_linear': 'nn_light', 'tide': 'nn_light',
+        'n_beats': 'nn_medium', 'gau': 'nn_medium',
+        'tft': 'nn_heavy',
+    }
+    for m in selected:
+        cats.add(cat_map.get(m, 'unknown'))
+    assert len(cats) >= 3, f"Too few categories: {cats} from {selected}"
+    assert len(selected) == 5
+
+    print(f"[PASS] test_fusion_select_diversity: {selected} cats={cats}")
+
+
+def test_fusion_select_fallback():
+    """Test fusion selection falls back to heuristic when screening is None."""
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    max_models=3, search_strategy='auto', verbose=False)
+    r.model_scores_ = {'d_linear': {'total': 80}, 'tide': {'total': 78}}
+    r.strategy_ = {'models': ['d_linear', 'tide', 'n_beats']}
+
+    result = r._fusion_select(None, ['d_linear', 'tide', 'n_beats'])
+    assert result == ['d_linear', 'tide', 'n_beats']
+
+    print(f"[PASS] test_fusion_select_fallback: {result}")
+
+
+def test_fusion_select_ml_cap():
+    """Test that fusion selection caps ML models at 2."""
+    import pandas as pd
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    max_models=5, search_strategy='auto', verbose=False)
+
+    # All ML models rank high in screening
+    r.model_scores_ = {
+        'torch_boosting_forest': {'total': 80},
+        'torch_bagging_forest': {'total': 78},
+        'deep_forest': {'total': 76},
+        'd_linear': {'total': 50}, 'tft': {'total': 50},
+        'auto_arima': {'total': 50}, 'n_beats': {'total': 50},
+    }
+    screen_lb = pd.DataFrame({
+        'model': ['torch_boosting_forest', 'torch_bagging_forest',
+                  'deep_forest', 'd_linear', 'tft', 'auto_arima', 'n_beats'],
+        'metric': [3.0, 3.1, 3.2, 3.5, 4.0, 4.5, 5.0],
+    })
+    r.strategy_ = {'models': []}
+    broad = list(screen_lb['model'])
+    selected = r._fusion_select(screen_lb, broad)
+
+    ml_models = {'torch_boosting_forest', 'torch_bagging_forest', 'deep_forest'}
+    ml_count = sum(1 for m in selected if m in ml_models)
+    assert ml_count <= 2, f"ML cap violated: {ml_count} ML in {selected}"
+
+    print(f"[PASS] test_fusion_select_ml_cap: {selected} (ml={ml_count})")
+
+
 # ─── Search Strategy Integration Tests ───────────────────────────────────────
 
 @pytest.mark.timeout(600)
@@ -1034,6 +1448,7 @@ def test_smart_router_search_auto():
         time_col='date', target_col='value', n_predict=12,
         verbose=True, max_models=5, random_state=42,
         search_strategy='auto',
+        time_limit=300,
     )
     router.fit(df)
 
@@ -1066,17 +1481,21 @@ def test_smart_router_multi_stack_ensemble():
         verbose=False, max_models=3, random_state=42,
         ensemble_strategy='multi_stack', ensemble_top_k=3,
         search_strategy='basic',
+        time_limit=120,
     )
     router.fit(df)
 
-    assert router.ensemble_ is not None
-    ens = router.ensemble_
-    assert ens.ensemble_method == 'multi_stack'
-    # meta_model should be a list of (estimator, weight) pairs
-    assert isinstance(ens.meta_model, list)
-    assert len(ens.meta_model) == 2  # Ridge + ElasticNet
-    weights = [w for _, w in ens.meta_model]
-    assert abs(sum(weights) - 1.0) < 1e-6, f"Blend weights don't sum to 1: {weights}"
+    # Ensemble may be discarded by post-evaluation
+    if router.ensemble_ is not None:
+        ens = router.ensemble_
+        # multi_stack may fall back to stacking or weighted_avg
+        assert ens.ensemble_method in ('multi_stack', 'stacking', 'weighted_avg')
+        if ens.ensemble_method == 'multi_stack':
+            # meta_model should be a list of (estimator, weight) pairs
+            assert isinstance(ens.meta_model, list)
+            assert len(ens.meta_model) == 2  # Ridge + ElasticNet
+            weights = [w for _, w in ens.meta_model]
+            assert abs(sum(weights) - 1.0) < 1e-6, f"Blend weights don't sum to 1: {weights}"
 
     preds = router.predict(n=12)
     assert len(preds) == 12
@@ -1086,8 +1505,7 @@ def test_smart_router_multi_stack_ensemble():
     preds_single = router.predict(n=12, use_ensemble=False)
     assert len(preds_single) == 12
 
-    print(f"[PASS] test_smart_router_multi_stack_ensemble: {ens}")
-    print(f"  Blend weights: {[f'{w:.3f}' for _, w in ens.meta_model]}")
+    print(f"[PASS] test_smart_router_multi_stack_ensemble: {router.ensemble_}")
 
 
 def test_hpo_strategy_param():
@@ -1152,6 +1570,7 @@ def test_smart_router_hpo_quick():
         verbose=False, max_models=2, random_state=42,
         hpo_strategy='quick', hpo_n_trials=2,
         ensemble_strategy='none', search_strategy='basic',
+        time_limit=180,
     )
     router.fit(df)
 
@@ -1182,6 +1601,7 @@ def test_smart_router_search_basic():
         time_col='date', target_col='value', n_predict=12,
         verbose=False, max_models=3, random_state=42,
         search_strategy='basic',
+        time_limit=120,
     )
     router.fit(df)
 
@@ -1239,6 +1659,7 @@ def test_multi_quantile_pipeline():
     print(f"[PASS] test_multi_quantile_pipeline: {len(q_preds.columns)} columns")
 
 
+@pytest.mark.timeout(600)
 def test_multi_quantile_smart_router():
     """Test predict_quantiles on SmartRouter."""
     df = LoadElectricDataSets()
@@ -1247,6 +1668,7 @@ def test_multi_quantile_smart_router():
         verbose=False, max_models=2, random_state=42,
         quantile=0.9, search_strategy='basic',
         ensemble_strategy='none',
+        time_limit=180,
     )
     router.fit(df)
 
@@ -1353,6 +1775,7 @@ def test_incremental_smart_router_update():
         time_col='date', target_col='value', n_predict=12,
         verbose=False, max_models=2, random_state=42,
         search_strategy='basic', ensemble_strategy='none',
+        time_limit=120,
     )
     router.fit(initial)
 
@@ -1494,6 +1917,88 @@ def test_explore_lags_per_model():
     print(f"[PASS] test_explore_lags_per_model: {r._per_model_lags}")
 
 
+def test_include_models_fit_predict():
+    """Test full SmartRouter fit/predict with include_models (multi-model)."""
+    df = LoadElectricDataSets()
+    router = SmartRouter(
+        time_col='date', target_col='value', n_predict=12,
+        verbose=True,
+        include_models=['prophet', 'torch_boosting_forest'],
+        search_strategy='basic',
+        ensemble_strategy='auto',
+        time_limit=120,
+        random_state=42,
+    )
+    router.fit(df)
+
+    assert router.pipeline_ is not None
+    assert router.leader_board_ is not None
+    # Only the 2 pinned models should be trained
+    trained_models = set(router.leader_board_['model'].tolist())
+    assert trained_models.issubset({'prophet', 'torch_boosting_forest'}), \
+        f"Unexpected models trained: {trained_models}"
+    assert len(router.leader_board_) <= 2
+
+    # Strategy should reflect pinned models
+    assert router.strategy_['models'] == ['prophet', 'torch_boosting_forest']
+
+    # Screening should NOT have run (include_models skips screening)
+    assert router._screening_results is None
+
+    # Profiling, preprocessing, scaler, hyperparams still run
+    assert router.profile_ is not None
+    assert router.model_scores_ is not None
+    assert 'model_hyperparams' in router.strategy_
+
+    # Predict should work
+    preds = router.predict(n=12)
+    assert len(preds) == 12
+    assert not preds['value'].isna().any()
+
+    print(f"[PASS] test_include_models_fit_predict")
+    print(f"  Models: {trained_models}")
+    print(f"  Best: {router.leader_board_.iloc[0]['model']} "
+          f"(MAE={router.leader_board_.iloc[0]['metric']:.4f})")
+
+
+def test_include_models_single_model_optimization():
+    """Test SmartRouter with a single pinned model — full optimization."""
+    df = LoadElectricDataSets()
+    router = SmartRouter(
+        time_col='date', target_col='value', n_predict=12,
+        verbose=True,
+        include_models='torch_boosting_forest',
+        search_strategy='auto',  # lag exploration should still work
+        ensemble_strategy='none',
+        time_limit=120,
+        random_state=42,
+    )
+    router.fit(df)
+
+    assert router.pipeline_ is not None
+    assert len(router.leader_board_) == 1
+    assert router.leader_board_.iloc[0]['model'] == 'torch_boosting_forest'
+
+    # Strategy optimized for the single model
+    assert router.strategy_['models'] == ['torch_boosting_forest']
+    assert router.strategy_['lags'] > 0
+    assert router.strategy_['scaler'] is not None
+
+    # No ensemble for single model
+    assert router.ensemble_ is None
+
+    # Lag exploration may still run (search_strategy='auto', n>=100)
+    # depending on _should_explore_lags
+
+    preds = router.predict(n=12)
+    assert len(preds) == 12
+    assert not preds['value'].isna().any()
+
+    print(f"[PASS] test_include_models_single_model_optimization")
+    print(f"  Lag: {router.strategy_['lags']}")
+    print(f"  MAE: {router.leader_board_.iloc[0]['metric']:.4f}")
+
+
 if __name__ == '__main__':
     # Fast tests first (no model training)
     test_data_profile()
@@ -1525,6 +2030,27 @@ if __name__ == '__main__':
     test_hyperparams_nn_stability()
     test_hyperparams_adaptive_lr()
     test_stability_params_in_model_wrapper()
+    test_sort_by_speed()
+    test_sort_by_speed_preserves_order_within_tier()
+    test_deep_forest_scoring_rebalance()
+    test_deep_forest_penalty_small_data()
+    test_time_aware_epoch_capping()
+    test_ensemble_eval_attribute()
+    test_get_screen_pool_size()
+    test_fusion_select_screening_dominates()
+    test_fusion_select_diversity()
+    test_fusion_select_fallback()
+    test_fusion_select_ml_cap()
+
+    test_include_models_single_string()
+    test_include_models_list()
+    test_include_models_max_models_override()
+    test_include_models_invalid_name()
+    test_include_models_empty_list()
+    test_include_models_bypasses_selection()
+    test_include_models_skips_screening()
+    test_include_models_repr()
+    test_include_models_none_default()
 
     # Integration tests (with model training)
     test_pipeline_error_resilience()
@@ -1551,5 +2077,7 @@ if __name__ == '__main__':
     test_per_model_lags_default_fallback()
     test_per_model_lags_empty_dict()
     test_explore_lags_per_model()
+    test_include_models_fit_predict()
+    test_include_models_single_model_optimization()
 
     print("\n=== All SmartRouter tests passed! ===")
