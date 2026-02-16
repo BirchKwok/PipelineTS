@@ -45,8 +45,8 @@ Built on top of spinesTS, it provides a unified interface for 26 time series mod
 
 ## Features / 特性
 
-- **28 built-in models**: 15 neural network, 8 machine learning, 2 statistical, and 3 foundation (Chronos-2) models.
-- **28 个内置模型**：15 个神经网络、8 个机器学习、2 个统计模型和 3 个基础（Chronos-2）模型。
+- **29 built-in models**: 15 neural network, 8 machine learning, 2 statistical, and 4 foundation (Chronos-2) models.
+- **29 个内置模型**：15 个神经网络、8 个机器学习、2 个统计模型和 4 个基础（Chronos-2）模型。
 
 - **Automatic model selection**: `ModelPipeline` trains and compares all models, automatically selecting the best one.
 - **自动模型选择**：`ModelPipeline` 训练并比较所有模型，自动选出最佳模型。
@@ -248,10 +248,13 @@ plot_series(data, time_col=time_col, target_col=target_col)
 | SRSNetModel | `srs_net` | Selective Representation Space Network (multivariate) / 选择性表征空间网络（多变量） |
 | DeepARModel | `deepar` | Probabilistic forecasting with RWKV encoder + Gaussian head / 基于 RWKV 编码器 + 高斯输出头的概率预测 |
 
-### Machine Learning Models / 机器学习模型 (4)
+### Machine Learning Models / 机器学习模型 (8)
 
 | Model / 模型 | Key / 键名 | Description / 描述 |
 |---|---|---|
+| TorchBoostingForestModel | `torch_boosting_forest` | GPU-accelerated gradient boosting forest (MART/DART) / GPU 加速梯度提升森林 |
+| TorchBaggingForestModel | `torch_bagging_forest` | GPU-accelerated bagging forest with dropout / GPU 加速装袋森林 |
+| DeepForestModel | `deep_forest` | Cascade (gcForest) multi-layer ensemble / 级联（gcForest）多层集成 |
 | WideGBRTModel | `wide_gbrt` | Wide-table GBRT with rich features / 宽表 GBRT + 丰富特征 |
 | MultiOutputRegressorModel | `multi_output_model` | Multi-output regressor / 多输出回归 |
 | MultiStepRegressorModel | `multi_step_model` | Multi-step regressor / 多步回归 |
@@ -264,7 +267,7 @@ plot_series(data, time_col=time_col, target_col=target_col)
 | ProphetModel | `prophet` | Custom Prophet-like model with ridge regression / 自定义类 Prophet 岭回归模型 |
 | AutoARIMAModel | `auto_arima` | Auto ARIMA parameter search / 自动 ARIMA 参数搜索 |
 
-### Foundation Models / 基础模型 (3, optional / 可选)
+### Foundation Models / 基础模型 (4, optional / 可选)
 
 > Requires: `pip install chronos-forecasting`
 
@@ -273,6 +276,7 @@ plot_series(data, time_col=time_col, target_col=target_col)
 | Chronos2Model | `chronos_2` | Amazon Chronos-2 (120M params, covariate support) / Amazon Chronos-2（120M 参数，支持协变量） |
 | Chronos2SynthModel | `chronos_2_synth` | Chronos-2-Synth trained on synthetic data (120M) / Chronos-2-Synth 合成数据训练（120M） |
 | Chronos2SmallModel | `chronos_2_small` | Chronos-2-Small lightweight variant (28M) / Chronos-2-Small 轻量版（28M） |
+| ChronosBoltModel | `chronos_bolt_small` | Amazon Chronos-Bolt Small (tiny, zero-shot) / Amazon Chronos-Bolt Small（微型，零样本） |
 
 All Chronos-2 models are **zero-shot** — no training needed, they use pretrained weights from large-scale time series corpora.
 所有 Chronos-2 模型都是**零样本**的 —— 无需训练，使用大规模时序语料库的预训练权重。
@@ -1095,15 +1099,75 @@ result = router.predict(12)
 
 ## Save and Load / 保存与加载
 
+PipelineTS uses a custom binary format (.pts) with built-in integrity verification for saving and loading models, pipelines, and SmartRouters.
+
+PipelineTS 使用自定义二进制格式（.pts）保存和加载模型、管道和智能路由器，具有内置完整性验证。
+
+### Basic Usage / 基本用法
+
 ```python
 from PipelineTS.io import save_model, load_model
 
-# Save a model or pipeline / 保存模型或管道
-save_model('model.zip', model)
+# Save a model, pipeline, or SmartRouter (default .pts format)
+# 保存模型、管道或智能路由器（默认 .pts 格式）
+save_model('model.pts', model)
+save_model('pipeline.pts', pipeline)
+save_model('router.pts', router)
 
-# Load a model or pipeline / 加载模型或管道
-model = load_model('model.zip')
+# Load back / 重新加载
+model = load_model('model.pts')
+pipeline = load_model('pipeline.pts')
+router = load_model('router.pts')
 ```
+
+### Advanced Features / 高级功能
+
+```python
+# Save with metadata and custom scaler
+# 保存时包含元数据和自定义缩放器
+from sklearn.preprocessing import StandardScaler
+
+scaler = StandardScaler()
+metadata = {'version': '1.0', 'description': 'Electric production forecast'}
+
+save_model('model.pts', model, scaler=scaler, metadata=metadata)
+
+# Load with checksum verification (default enabled)
+# 加载时校验和验证（默认启用）
+model = load_model('model.pts', verify_checksum=True)
+
+# Get file information without loading
+# 获取文件信息而不加载
+from PipelineTS.io import get_file_info
+
+info = get_file_info('model.pts')
+print(f"Model type: {info['model_type']}")
+print(f"Format version: {info['version']}")
+print(f"Metadata: {info['metadata']}")
+
+# Verify file integrity
+# 验证文件完整性
+from PipelineTS.io import verify_file
+
+is_valid = verify_file('model.pts')
+print(f"File integrity: {is_valid}")
+```
+
+### Security Features / 安全特性
+
+The .pts format includes multiple security layers:
+
+.pts 格式包含多层安全保护：
+
+- **SHA-256 checksums**: Global checksum over entire payload + per-section checksums
+- **SHA-256 校验和**：整个载荷的全局校验和 + 每段校验和
+- **Magic number validation**: Quick file type identification
+- **魔数验证**：快速文件类型识别
+- **Format versioning**: Forward/backward compatibility support
+- **格式版本控制**：前向/后向兼容性支持
+- **Atomic writes**: Temp file + os.replace for crash-safe writes
+- **原子写入**：临时文件 + os.replace 确保崩溃安全写入
+
 
 ---
 
