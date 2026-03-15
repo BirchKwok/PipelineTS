@@ -737,6 +737,75 @@ def test_select_models_n_candidates():
           f"default={len(default)}, broad={len(broad)}")
 
 
+def test_inject_exploration_new_category():
+    """Injection adds models from categories absent in the heuristic pool."""
+    from PipelineTS.pipeline.pipeline_models import get_all_available_models
+
+    df = LoadElectricDataSets()
+    r = SmartRouter(
+        time_col='date', target_col='value',
+        n_predict=12, verbose=False, max_models=5,
+        search_strategy='auto', random_state=42,
+    )
+    p = r._profile_data(r._ensure_datetime(df))
+    r._build_strategy(p)
+
+    # Build a fake pool that is missing an entire category (nn_heavy)
+    nn_heavy = {'transformer', 'tft', 'itransformer', 'srs_net', 'deepar'}
+    all_models = list(get_all_available_models().keys())
+    # Take a pool of 12 models that deliberately excludes all nn_heavy models
+    fake_pool = [m for m in all_models if m not in nn_heavy][:12]
+    assert not any(m in nn_heavy for m in fake_pool), \
+        "Test setup error: nn_heavy should be absent from fake_pool"
+
+    new_pool = r._inject_exploration_candidates(fake_pool, p)
+
+    # Pool size must stay the same
+    assert len(new_pool) == len(fake_pool), \
+        f"Pool size changed: {len(fake_pool)} -> {len(new_pool)}"
+
+    # At least one nn_heavy model should have been injected
+    injected_heavy = [m for m in new_pool if m in nn_heavy]
+    assert len(injected_heavy) >= 1, \
+        f"No nn_heavy model injected into pool: {new_pool}"
+
+    print(f"[PASS] test_inject_exploration_new_category: "
+          f"injected={injected_heavy}, pool={new_pool}")
+
+
+def test_inject_exploration_respects_strategy():
+    """Injection is a no-op for 'basic' and 'thorough' strategies."""
+    from PipelineTS.pipeline.pipeline_models import get_all_available_models
+
+    df = LoadElectricDataSets()
+    all_models = list(get_all_available_models().keys())
+    fake_pool = all_models[:12]
+
+    # 'basic' — no screening at all, injection must not alter the pool
+    r_basic = SmartRouter(
+        time_col='date', target_col='value', n_predict=12,
+        verbose=False, search_strategy='basic', random_state=0,
+    )
+    p = r_basic._profile_data(r_basic._ensure_datetime(df))
+    r_basic._build_strategy(p)
+    result_basic = r_basic._inject_exploration_candidates(fake_pool, p)
+    assert result_basic == fake_pool, \
+        f"'basic' should return pool unchanged: {result_basic}"
+
+    # 'thorough' — already screens all models, injection must not alter the pool
+    r_thorough = SmartRouter(
+        time_col='date', target_col='value', n_predict=12,
+        verbose=False, search_strategy='thorough', random_state=0,
+    )
+    p2 = r_thorough._profile_data(r_thorough._ensure_datetime(df))
+    r_thorough._build_strategy(p2)
+    result_thorough = r_thorough._inject_exploration_candidates(fake_pool, p2)
+    assert result_thorough == fake_pool, \
+        f"'thorough' should return pool unchanged: {result_thorough}"
+
+    print("[PASS] test_inject_exploration_respects_strategy")
+
+
 def _make_profile(**kwargs):
     """Helper to create a DataProfile with custom attributes."""
     p = DataProfile()

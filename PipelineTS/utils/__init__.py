@@ -10,10 +10,11 @@ def update_dict_without_conflict(dict_a, dict_b):
 
 
 def check_time_col_is_timestamp(data, time_col):
+    import pandas as pd
     from spinesUtils.asserts import raise_if_not
 
-    raise_if_not(TypeError, data[time_col].dtype == 'datetime64[ns]',
-                 'The time column must be of type datetime64[ns], '
+    raise_if_not(TypeError, pd.api.types.is_datetime64_any_dtype(data[time_col]),
+                 'The time column must be of datetime type, '
                  'consider use pandas.to_datetime to convert it.')
 
 

@@ -610,6 +610,12 @@ class SmartRouter:
             broad_candidates = self._select_models(
                 self.profile_, n_candidates=pool_size
             )
+            # ε-greedy injection: replace bottom heuristic picks with
+            # unexplored models (categories absent from the pool first,
+            # then random) to break the self-reinforcing heuristic loop.
+            broad_candidates = self._inject_exploration_candidates(
+                broad_candidates, self.profile_
+            )
             screen_lb = self._quick_screen(
                 processed_train, processed_valid,
                 broad_candidates, self.strategy_
@@ -1872,6 +1878,110 @@ class SmartRouter:
             # Auto: screen a wide pool but not everything
             return min(total_models, max(self.max_models * 3, 12))
 
+    def _inject_exploration_candidates(self, candidates, p):
+        """Inject ε-greedy exploration candidates into the screening pool.
+
+        Replaces the lowest heuristic-ranked models in the pool with models
+        that heuristics would never have selected, prioritising categories
+        not yet represented in the pool.  This breaks the circular dependency
+        where the screening pool is entirely decided by the same heuristics
+        we are trying to validate.
+
+        Only active for ``search_strategy='auto'``.  For ``'thorough'`` the
+        pool already covers all models; for ``'basic'`` screening is skipped.
+
+        The injection fraction ε=0.2 means roughly 2-3 slots out of a
+        typical pool of 12-15 are replaced with exploration candidates.
+
+        Parameters
+        ----------
+        candidates : list of str
+            Current screening pool (heuristic-selected).
+        p : DataProfile
+            Data profile (used only for logging context).
+
+        Returns
+        -------
+        list of str
+            Updated pool with exploration candidates injected.
+        """
+        if self.search_strategy != 'auto':
+            return candidates
+
+        all_models = list(get_all_available_models().keys())
+        excluded = [m for m in all_models if m not in set(candidates)]
+        if not excluded:
+            return candidates  # pool already covers every registered model
+
+        n_inject = max(1, round(len(candidates) * 0.2))
+        n_inject = min(n_inject, len(excluded))
+
+        # Category mapping (mirrors _select_models / _fusion_select)
+        _categories = {
+            'statistic': {'auto_arima', 'prophet'},
+            'ml': {'torch_boosting_forest', 'torch_bagging_forest',
+                   'deep_forest', 'wide_gbrt', 'multi_output_model',
+                   'multi_step_model', 'regressor_chain'},
+            'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
+            'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
+                          'time2vec', 'gau'},
+            'nn_heavy': {'transformer', 'tft', 'itransformer', 'srs_net',
+                         'deepar', 'chronos_2', 'chronos_2_synth',
+                         'chronos_2_small'},
+        }
+        model_cat = {}
+        for cat_name, cat_models in _categories.items():
+            for m in cat_models:
+                model_cat[m] = cat_name
+
+        covered_cats = {model_cat.get(m, 'unknown') for m in candidates}
+
+        # Phase 1: inject models from categories entirely absent in the pool
+        # (highest-value blind-spot correction)
+        new_cat_excluded = [
+            m for m in excluded
+            if model_cat.get(m, 'unknown') not in covered_cats
+        ]
+        same_cat_excluded = [
+            m for m in excluded
+            if model_cat.get(m, 'unknown') in covered_cats
+        ]
+
+        rng = np.random.RandomState(
+            self.random_state if self.random_state is not None else 0
+        )
+
+        injections = []
+        for m in new_cat_excluded:
+            if len(injections) >= n_inject:
+                break
+            injections.append(m)
+            covered_cats.add(model_cat.get(m, 'unknown'))
+
+        # Phase 2: fill remaining injection slots with random excluded models
+        if len(injections) < n_inject:
+            remaining = [m for m in excluded if m not in injections]
+            rng.shuffle(remaining)
+            injections.extend(remaining[: n_inject - len(injections)])
+
+        # Drop bottom n_inject heuristic-ranked models from the current pool
+        scores = self.model_scores_ or {}
+        candidates_by_score = sorted(
+            candidates,
+            key=lambda m: scores.get(m, {}).get('total', 0.0),
+            reverse=True,
+        )
+        survivors = candidates_by_score[: len(candidates) - len(injections)]
+        new_pool = survivors + injections
+
+        if self.verbose:
+            self.logger.info(
+                f"  Exploration: injected {len(injections)} candidate(s) "
+                f"({', '.join(injections)}) replacing lowest-scored heuristic picks"
+            )
+
+        return new_pool
+
     def _should_explore_lags(self):
         """Determine if multi-lag exploration is beneficial."""
         if self.search_strategy == 'basic':
@@ -3132,7 +3242,7 @@ class SmartRouter:
         if data is None:
             return None
         df = data.copy()
-        if df[self.time_col].dtype != 'datetime64[ns]':
+        if not pd.api.types.is_datetime64_any_dtype(df[self.time_col]):
             df[self.time_col] = pd.to_datetime(df[self.time_col])
         return df
 

@@ -68,10 +68,10 @@ def plot_data_period(data1, data2, time_col, target_col, labels=None, date_fmt='
     raise_if_not(ValueError, time_col in data2.columns, f"The column '{time_col}' is not found in data2.")
     raise_if_not(ValueError, target_col in data1.columns, f"The column '{target_col}' is not found in data1.")
     raise_if_not(ValueError, target_col in data2.columns, f"The column '{target_col}' is not found in data2.")
-    raise_if_not(ValueError, data1[time_col].dtype == 'datetime64[ns]',
-                 f"The column '{time_col}' in data1 must be of type datetime64[ns].")
-    raise_if_not(ValueError, data2[time_col].dtype == 'datetime64[ns]',
-                 f"The column '{time_col}' in data2 must be of type datetime64[ns].")
+    raise_if_not(ValueError, pd.api.types.is_datetime64_any_dtype(data1[time_col]),
+                 f"The column '{time_col}' in data1 must be of datetime type.")
+    raise_if_not(ValueError, pd.api.types.is_datetime64_any_dtype(data2[time_col]),
+                 f"The column '{time_col}' in data2 must be of datetime type.")
     raise_if_not(ValueError, data1[time_col].iloc[0] <= data2[time_col].iloc[0],
                  'The starting time of data1 must be before data2, or equal to the starting time of data2.')
 
