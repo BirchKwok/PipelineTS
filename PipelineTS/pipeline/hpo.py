@@ -44,41 +44,47 @@ PROPHET_SEARCH_SPACE = {
     'changepoint_prior_scale': ('loguniform', 0.001, 0.5),
 }
 
-DEEP_FOREST_SEARCH_SPACE = {
-    'n_trees': ('int', 16, 64),
-    'tree_depth': ('int', 3, 6),
-    'n_layers': ('int', 2, 5),
-    'learning_rate': ('loguniform', 1e-3, 0.02),
-    'n_epochs': ('int', 200, 800),
+CATBOOST_SEARCH_SPACE = {
+    'iterations': ('int', 200, 1000),
+    'depth': ('int', 4, 8),
+    'learning_rate': ('loguniform', 0.01, 0.3),
+    'l2_leaf_reg': ('loguniform', 1.0, 10.0),
 }
 
-TORCH_TREE_SEARCH_SPACE = {
-    'n_trees': ('int', 32, 192),
-    'tree_depth': ('int', 3, 7),
-    'learning_rate': ('loguniform', 1e-3, 0.05),
-    'n_epochs': ('int', 200, 800),
+XGBOOST_SEARCH_SPACE = {
+    'n_estimators': ('int', 200, 1000),
+    'max_depth': ('int', 4, 8),
+    'learning_rate': ('loguniform', 0.01, 0.3),
+    'subsample': ('float', 0.6, 1.0),
+    'colsample_bytree': ('float', 0.6, 1.0),
 }
 
-TORCH_CASCADE_SEARCH_SPACE = {
-    'n_trees': ('int', 16, 64),
-    'tree_depth': ('int', 3, 6),
+SKLEARN_FOREST_SEARCH_SPACE = {
+    'n_estimators': ('int', 200, 1000),
+    'max_depth': ('int', 4, 20),
+    'min_samples_leaf': ('int', 1, 10),
+}
+
+GC_FOREST_SEARCH_SPACE = {
     'n_layers': ('int', 2, 5),
-    'learning_rate': ('loguniform', 1e-3, 0.02),
-    'n_epochs': ('int', 200, 800),
+    'n_estimators_per_layer': ('int', 50, 200),
+    'max_depth': ('int', 4, 20),
 }
 
 ARIMA_SEARCH_SPACE = {}  # AutoARIMA does its own grid search
 
 # Model name -> search space mapping
 MODEL_SEARCH_SPACES = {
-    # GPU-accelerated differentiable tree models
-    'torch_boosting_forest': TORCH_TREE_SEARCH_SPACE,
-    'torch_bagging_forest': TORCH_TREE_SEARCH_SPACE,
-    'wide_gbrt': TORCH_TREE_SEARCH_SPACE,
-    'multi_output_model': TORCH_TREE_SEARCH_SPACE,
-    'multi_step_model': TORCH_TREE_SEARCH_SPACE,
-    'regressor_chain': TORCH_TREE_SEARCH_SPACE,
-    'deep_forest': DEEP_FOREST_SEARCH_SPACE,
+    # Native tree models
+    'catboost': CATBOOST_SEARCH_SPACE,
+    'xgboost': XGBOOST_SEARCH_SPACE,
+    'random_forest': SKLEARN_FOREST_SEARCH_SPACE,
+    'extra_forest': SKLEARN_FOREST_SEARCH_SPACE,
+    'gc_forest': GC_FOREST_SEARCH_SPACE,
+    'wide_gbrt': SKLEARN_FOREST_SEARCH_SPACE,
+    'multi_output_model': SKLEARN_FOREST_SEARCH_SPACE,
+    'multi_step_model': SKLEARN_FOREST_SEARCH_SPACE,
+    'regressor_chain': SKLEARN_FOREST_SEARCH_SPACE,
     # NN light
     'd_linear': NN_LIGHT_SEARCH_SPACE,
     'n_linear': NN_LIGHT_SEARCH_SPACE,

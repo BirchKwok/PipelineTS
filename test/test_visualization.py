@@ -151,7 +151,7 @@ def test_plot_forecast_history_tail():
 def test_plot_leaderboard():
     from PipelineTS.plot.ts_plot import plot_leaderboard
     lb = pd.DataFrame({
-        'model': ['torch_boosting_forest', 'torch_bagging_forest', 'prophet', 'tide', 'tft'],
+        'model': ['catboost', 'random_forest', 'prophet', 'tide', 'tft'],
         'metric': [2.1, 2.5, 3.2, 4.1, 5.0],
     })
     fig = plot_leaderboard(lb, title='模型排行榜', show=False)
@@ -163,7 +163,7 @@ def test_plot_leaderboard():
 def test_plot_leaderboard_detail():
     from PipelineTS.plot.ts_plot import plot_leaderboard_detail
     lb = pd.DataFrame({
-        'model': ['torch_boosting_forest', 'torch_bagging_forest', 'prophet'],
+        'model': ['catboost', 'random_forest', 'prophet'],
         'metric': [2.1, 2.5, 3.2],
         'train_cost(s)': [5.2, 8.1, 0.01],
         'eval_cost(s)': [0.3, 0.4, 0.1],

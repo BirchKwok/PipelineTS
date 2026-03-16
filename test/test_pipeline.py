@@ -56,7 +56,7 @@ class TestListAllAvailableModels:
     def test_contains_known_models(self):
         from PipelineTS.pipeline import ModelPipeline
         models = ModelPipeline.list_all_available_models()
-        for expected in ['torch_boosting_forest', 'torch_bagging_forest', 'd_linear', 'n_linear']:
+        for expected in ['catboost', 'random_forest', 'd_linear', 'n_linear']:
             assert expected in models, f"Expected '{expected}' in available models"
 
     def test_sorted(self):
@@ -72,7 +72,7 @@ class TestPipelineFitPredict:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+            include_models=['catboost', 'random_forest'],
             quantile=None, cv=2
         )
         leaderboard = pipeline.fit(small_data)
@@ -91,7 +91,7 @@ class TestPipelineFitPredict:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=0.9, cv=2
         )
         leaderboard = pipeline.fit(small_data)
@@ -105,7 +105,7 @@ class TestPipelineFitPredict:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=None, cv=2
         )
         leaderboard = pipeline.fit(small_data, valid_data=valid_data)
@@ -124,7 +124,7 @@ class TestPipelineFitPredict:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models='torch_boosting_forest', quantile=None, cv=2
+            include_models='catboost', quantile=None, cv=2
         )
         leaderboard = pipeline.fit(small_data)
         assert len(leaderboard) == 1
@@ -137,7 +137,7 @@ class TestPipelineGetModel:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+            include_models=['catboost', 'random_forest'],
             quantile=None, cv=2
         )
         pipeline.fit(small_data)
@@ -148,7 +148,7 @@ class TestPipelineGetModel:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=None, cv=2
         )
         pipeline.fit(small_data)
@@ -160,7 +160,7 @@ class TestPipelineGetModel:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=None, cv=2
         )
         pipeline.fit(small_data)
@@ -171,7 +171,7 @@ class TestPipelineGetModel:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=None, cv=2
         )
         pipeline.fit(small_data)
@@ -188,7 +188,7 @@ class TestPipelineScaler:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=None, cv=2, scaler=None
         )
         leaderboard = pipeline.fit(small_data)
@@ -199,7 +199,7 @@ class TestPipelineScaler:
         from sklearn.preprocessing import StandardScaler
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=None, cv=2, scaler=StandardScaler()
         )
         leaderboard = pipeline.fit(small_data)
@@ -213,9 +213,9 @@ class TestPipelineModelKwargs:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=None, cv=2,
-            torch_boosting_forest__n_trees=16
+            catboost__iterations=16
         )
         leaderboard = pipeline.fit(small_data)
         assert len(leaderboard) > 0
@@ -226,9 +226,9 @@ class TestPipelineModelKwargs:
 class TestPipelineExcludeModels:
     def test_exclude_models(self, small_data):
         from PipelineTS.pipeline import ModelPipeline
-        # Use ML-only models list and exclude torch_boosting_forest from it
-        ml_models = ['torch_boosting_forest', 'torch_bagging_forest', 'deep_forest']
-        excluded = ['torch_boosting_forest']
+        # Use ML-only models list and exclude catboost from it
+        ml_models = ['catboost', 'random_forest', 'gc_forest']
+        excluded = ['catboost']
         remaining = [m for m in ml_models if m not in excluded]
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
@@ -236,7 +236,7 @@ class TestPipelineExcludeModels:
             quantile=None, cv=2
         )
         leaderboard = pipeline.fit(small_data)
-        assert 'torch_boosting_forest' not in [m.split('_0')[0] for m in leaderboard['model'].tolist()]
+        assert 'catboost' not in [m.split('_0')[0] for m in leaderboard['model'].tolist()]
 
 
 # ─── Pipeline error handling ─────────────────────────────────────────────────
@@ -247,14 +247,14 @@ class TestPipelineErrors:
         with pytest.raises(ValueError):
             ModelPipeline(
                 time_col='date', target_col='value', lags=LAGS,
-                include_models=['torch_boosting_forest'], exclude_models=['torch_bagging_forest']
+                include_models=['catboost'], exclude_models=['random_forest']
             )
 
     def test_data_too_short_raises(self, small_data):
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=200,
-            include_models=['torch_boosting_forest'], quantile=None, cv=2
+            include_models=['catboost'], quantile=None, cv=2
         )
         with pytest.raises(ValueError):
             pipeline.fit(small_data)
@@ -266,7 +266,7 @@ class TestPipelineConfigs:
     def test_create_configs(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
+            ('catboost', {'init_configs': {'iterations': 32}, 'fit_configs': {}}),
         ])
         assert configs is not None
         assert len(configs.configs) == 1
@@ -274,18 +274,18 @@ class TestPipelineConfigs:
     def test_get_configs(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
+            ('catboost', {'init_configs': {'iterations': 32}, 'fit_configs': {}}),
         ])
         model_name = configs.configs[0][1]
         result = configs.get_configs(model_name)
         assert result is not None
         assert 'init_configs' in result
-        assert result['init_configs']['n_trees'] == 32
+        assert result['init_configs']['iterations'] == 32
 
     def test_get_configs_not_found(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
+            ('catboost', {'init_configs': {'iterations': 32}, 'fit_configs': {}}),
         ])
         result = configs.get_configs('non_existent_model')
         assert result is None
@@ -293,7 +293,7 @@ class TestPipelineConfigs:
     def test_rename_model(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'my_boosting', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
+            ('catboost', 'my_boosting', {'init_configs': {'iterations': 32}, 'fit_configs': {}}),
         ])
         result = configs.get_configs('my_boosting')
         assert result is not None
@@ -301,23 +301,23 @@ class TestPipelineConfigs:
     def test_multiple_configs(self):
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_v1', {'init_configs': {'n_trees': 16}, 'fit_configs': {}}),
-            ('torch_boosting_forest', 'boost_v2', {'init_configs': {'n_trees': 32}, 'fit_configs': {}}),
+            ('catboost', 'boost_v1', {'init_configs': {'iterations': 16}, 'fit_configs': {}}),
+            ('catboost', 'boost_v2', {'init_configs': {'iterations': 32}, 'fit_configs': {}}),
         ])
         assert len(configs.configs) == 2
         r1 = configs.get_configs('boost_v1')
         r2 = configs.get_configs('boost_v2')
-        assert r1['init_configs']['n_trees'] == 16
-        assert r2['init_configs']['n_trees'] == 32
+        assert r1['init_configs']['iterations'] == 16
+        assert r2['init_configs']['iterations'] == 32
 
     def test_pipeline_with_configs(self, small_data):
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_fast', {'init_configs': {'n_trees': 16}, 'fit_configs': {}}),
+            ('catboost', 'boost_fast', {'init_configs': {'iterations': 16}, 'fit_configs': {}}),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, quantile=None, cv=2
         )
         leaderboard = pipeline.fit(small_data)
@@ -333,18 +333,18 @@ class TestPipelineConfigsPipelineLevel:
         """Different models can use different lags via pipeline_configs."""
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_lag4', {
-                'init_configs': {'n_trees': 16},
+            ('catboost', 'boost_lag4', {
+                'init_configs': {'iterations': 16},
                 'pipeline_configs': {'lags': 4},
             }),
-            ('torch_boosting_forest', 'boost_lag8', {
-                'init_configs': {'n_trees': 16},
+            ('catboost', 'boost_lag8', {
+                'init_configs': {'iterations': 16},
                 'pipeline_configs': {'lags': 8},
             }),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, quantile=None, cv=2
         )
         leaderboard = pipeline.fit(small_data)
@@ -361,14 +361,14 @@ class TestPipelineConfigsPipelineLevel:
         """A model can opt out of scaling via pipeline_configs scaler=None."""
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_noscale', {
-                'init_configs': {'n_trees': 16},
+            ('catboost', 'boost_noscale', {
+                'init_configs': {'iterations': 16},
                 'pipeline_configs': {'scaler': None},
             }),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, quantile=None, cv=2, scaler=True
         )
         leaderboard = pipeline.fit(small_data)
@@ -385,14 +385,14 @@ class TestPipelineConfigsPipelineLevel:
         from sklearn.preprocessing import StandardScaler
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_std', {
-                'init_configs': {'n_trees': 16},
+            ('catboost', 'boost_std', {
+                'init_configs': {'iterations': 16},
                 'pipeline_configs': {'scaler': StandardScaler()},
             }),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, quantile=None, cv=2, scaler=True
         )
         leaderboard = pipeline.fit(small_data)
@@ -409,18 +409,18 @@ class TestPipelineConfigsPipelineLevel:
         from sklearn.preprocessing import StandardScaler
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_std', {
-                'init_configs': {'n_trees': 16},
+            ('catboost', 'boost_std', {
+                'init_configs': {'iterations': 16},
                 'pipeline_configs': {'scaler': StandardScaler()},
             }),
-            ('torch_boosting_forest', 'boost_none', {
-                'init_configs': {'n_trees': 16},
+            ('catboost', 'boost_none', {
+                'init_configs': {'iterations': 16},
                 'pipeline_configs': {'scaler': None},
             }),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, quantile=None, cv=2, scaler=True
         )
         leaderboard = pipeline.fit(small_data)
@@ -460,14 +460,14 @@ class TestPipelineConfigsPipelineLevel:
         from sklearn.preprocessing import StandardScaler
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_custom', {
-                'init_configs': {'n_trees': 16},
+            ('catboost', 'boost_custom', {
+                'init_configs': {'iterations': 16},
                 'pipeline_configs': {'lags': 8, 'scaler': StandardScaler()},
             }),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, quantile=None, cv=2
         )
         leaderboard = pipeline.fit(small_data)
@@ -480,8 +480,8 @@ class TestPipelineConfigsPipelineLevel:
         """PipelineConfigs should accept pipeline_configs as a valid key."""
         from PipelineTS.pipeline import PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'test_model', {
-                'init_configs': {'n_trees': 16},
+            ('catboost', 'test_model', {
+                'init_configs': {'iterations': 16},
                 'pipeline_configs': {'lags': 10, 'scaler': None},
             }),
         ])
@@ -495,13 +495,13 @@ class TestPipelineConfigsPipelineLevel:
         """Models without pipeline_configs should work as before (use global scaler/lags)."""
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_default', {
-                'init_configs': {'n_trees': 16},
+            ('catboost', 'boost_default', {
+                'init_configs': {'iterations': 16},
             }),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, quantile=None, cv=2
         )
         leaderboard = pipeline.fit(small_data)

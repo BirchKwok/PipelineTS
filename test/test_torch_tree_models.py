@@ -70,7 +70,7 @@ FAST_KWARGS = dict(
 
 class TestTorchBoostingForestModel:
     def test_fit_predict_with_quantile(self, small_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
+        from PipelineTS.ml_model.torch_tree_models import TorchBoostingForestModel
         model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=0.9, **FAST_KWARGS,
@@ -80,7 +80,7 @@ class TestTorchBoostingForestModel:
         _check_prediction(result)
 
     def test_fit_predict_no_quantile(self, small_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
+        from PipelineTS.ml_model.torch_tree_models import TorchBoostingForestModel
         model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, **FAST_KWARGS,
@@ -92,7 +92,7 @@ class TestTorchBoostingForestModel:
 
 class TestTorchBaggingForestModel:
     def test_fit_predict(self, small_data):
-        from PipelineTS.ml_model import TorchBaggingForestModel
+        from PipelineTS.ml_model.torch_tree_models import TorchBaggingForestModel
         model = TorchBaggingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, **FAST_KWARGS, dropout=0.2,
@@ -102,7 +102,7 @@ class TestTorchBaggingForestModel:
         _check_prediction(result, check_interval=False)
 
     def test_fit_predict_with_quantile(self, small_data):
-        from PipelineTS.ml_model import TorchBaggingForestModel
+        from PipelineTS.ml_model.torch_tree_models import TorchBaggingForestModel
         model = TorchBaggingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=0.9, **FAST_KWARGS, dropout=0.15,
@@ -114,7 +114,7 @@ class TestTorchBaggingForestModel:
 
 class TestTorchTreeMultiSeries:
     def test_multi_series(self, panel_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
+        from PipelineTS.ml_model.torch_tree_models import TorchBoostingForestModel
         model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, **FAST_KWARGS,
@@ -128,7 +128,7 @@ class TestTorchTreeMultiSeries:
 
 class TestTorchTreeVariableHorizons:
     def test_variable_horizons(self, small_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
+        from PipelineTS.ml_model.torch_tree_models import TorchBoostingForestModel
         model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, **FAST_KWARGS,
@@ -141,15 +141,12 @@ class TestTorchTreeVariableHorizons:
 
 
 class TestTorchTreePipeline:
-    def test_pipeline_torch_boosting_forest(self, small_data):
+    def test_pipeline_catboost(self, small_data):
         from PipelineTS.pipeline import ModelPipeline
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
-            torch_boosting_forest__n_trees=8,
-            torch_boosting_forest__tree_depth=3,
-            torch_boosting_forest__n_epochs=50,
-            torch_boosting_forest__accelerator='cpu',
+            include_models=['catboost'],
+            catboost__iterations=16,
             quantile=None,
         )
         pipe.fit(small_data)
@@ -157,28 +154,42 @@ class TestTorchTreePipeline:
         assert isinstance(result, pd.DataFrame)
         assert 'value' in result.columns
 
-class TestTorchTreeRegistry:
-    def test_all_models_in_registry(self):
+class TestNativeTreeRegistry:
+    def test_all_native_models_in_registry(self):
         from PipelineTS.pipeline.pipeline_models import get_all_available_models
         models = get_all_available_models()
-        for name in ['torch_boosting_forest', 'torch_bagging_forest']:
+        for name in ['catboost', 'random_forest', 'xgboost', 'extra_forest', 'gc_forest']:
             assert name in models, f"Missing from registry: {name}"
 
     def test_model_classes(self):
         from PipelineTS.pipeline.pipeline_models import get_all_available_models
-        from PipelineTS.ml_model.torch_tree_models import (
-            TorchBoostingForestModel, TorchBaggingForestModel,
+        from PipelineTS.ml_model.native_tree_models import (
+            CatBoostModel, RandomForestModel, XGBoostModel,
+            ExtraForestModel, gcForestModel,
         )
         models = get_all_available_models()
-        assert models['torch_boosting_forest'] is TorchBoostingForestModel
-        assert models['torch_bagging_forest'] is TorchBaggingForestModel
+        assert models['catboost'] is CatBoostModel
+        assert models['random_forest'] is RandomForestModel
+        assert models['xgboost'] is XGBoostModel
+        assert models['extra_forest'] is ExtraForestModel
+        assert models['gc_forest'] is gcForestModel
 
-    def test_old_names_removed(self):
+    def test_old_torch_names_removed(self):
         from PipelineTS.pipeline.pipeline_models import get_all_available_models
         models = get_all_available_models()
-        for old in ['lightgbm', 'catboost', 'xgboost',
-                     'random_forest']:
+        for old in ['torch_boosting_forest', 'torch_bagging_forest',
+                     'deep_forest']:
             assert old not in models, f"Old name still in registry: {old}"
+
+    def test_backward_compat_aliases(self):
+        from PipelineTS.ml_model import (
+            TorchBoostingForestModel, CatBoostModel,
+            TorchBaggingForestModel, RandomForestModel,
+            DeepForestModel, gcForestModel,
+        )
+        assert TorchBoostingForestModel is CatBoostModel
+        assert TorchBaggingForestModel is RandomForestModel
+        assert DeepForestModel is gcForestModel
 
 
 class TestDifferentiableTreeCore:
@@ -355,7 +366,7 @@ class TestAutoComplexityIntegration:
         assert 'n_trees' in wrapper.complexity_info
 
     def test_boosting_model_auto_complexity(self, small_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
+        from PipelineTS.ml_model.torch_tree_models import TorchBoostingForestModel
         model = TorchBoostingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_epochs=50, accelerator='cpu',
@@ -368,7 +379,7 @@ class TestAutoComplexityIntegration:
         assert model.model.complexity_info is not None
 
     def test_bagging_model_auto_complexity(self, small_data):
-        from PipelineTS.ml_model import TorchBaggingForestModel
+        from PipelineTS.ml_model.torch_tree_models import TorchBaggingForestModel
         model = TorchBaggingForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_epochs=50, accelerator='cpu',
@@ -379,7 +390,7 @@ class TestAutoComplexityIntegration:
         _check_prediction(result, check_interval=False)
 
     def test_deep_forest_auto_complexity(self, small_data):
-        from PipelineTS.ml_model import DeepForestModel
+        from PipelineTS.ml_model.deep_forest import DeepForestModel
         model = DeepForestModel(
             time_col='date', target_col='value', lags=LAGS,
             quantile=None, n_epochs=50, accelerator='cpu',

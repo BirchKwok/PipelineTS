@@ -1,5 +1,5 @@
 """
-Test suite for DeepForestModel (GPU-accelerated gcForest cascade).
+Test suite for gcForestModel (native gcForest cascade).
 
 Tests:
 1. Standalone model: fit/predict with and without quantile
@@ -10,7 +10,7 @@ Tests:
 6. Model registry
 7. Custom hyperparameters
 8. Variable forecast horizons
-9. Backward compatibility (TorchDeepForestModel alias)
+9. Backward compatibility (DeepForestModel alias)
 """
 
 import sys
@@ -59,50 +59,46 @@ def _check_prediction(result, target_col='value', time_col='date',
     assert not result[target_col].isna().any(), "Predictions contain NaN"
 
 
-class TestDeepForestModel:
+class TestGCForestModel:
     def test_fit_predict_with_quantile(self, small_data):
-        from PipelineTS.ml_model import DeepForestModel
-        model = DeepForestModel(
+        from PipelineTS.ml_model import gcForestModel
+        model = gcForestModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_trees=8, tree_depth=3, n_layers=2,
-            n_epochs=50, early_stop_patience=10, accelerator='cpu',
-            random_state=42,
+            quantile=0.9, n_layers=2, n_estimators_per_layer=50,
+            max_depth=5, random_state=42,
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
         _check_prediction(result)
 
     def test_fit_predict_no_quantile(self, small_data):
-        from PipelineTS.ml_model import DeepForestModel
-        model = DeepForestModel(
+        from PipelineTS.ml_model import gcForestModel
+        model = gcForestModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_trees=8, tree_depth=3, n_layers=2,
-            n_epochs=50, early_stop_patience=10, accelerator='cpu',
-            random_state=42,
+            quantile=None, n_layers=2, n_estimators_per_layer=50,
+            max_depth=5, random_state=42,
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
         _check_prediction(result, check_interval=False)
 
     def test_predict_with_data(self, small_data):
-        from PipelineTS.ml_model import DeepForestModel
-        model = DeepForestModel(
+        from PipelineTS.ml_model import gcForestModel
+        model = gcForestModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_trees=8, tree_depth=3, n_layers=2,
-            n_epochs=50, early_stop_patience=10, accelerator='cpu',
-            random_state=42,
+            quantile=None, n_layers=2, n_estimators_per_layer=50,
+            max_depth=5, random_state=42,
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N, data=small_data)
         _check_prediction(result, check_interval=False)
 
     def test_multi_series(self, panel_data):
-        from PipelineTS.ml_model import DeepForestModel
-        model = DeepForestModel(
+        from PipelineTS.ml_model import gcForestModel
+        model = gcForestModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_trees=8, tree_depth=3, n_layers=2,
-            n_epochs=50, early_stop_patience=10, accelerator='cpu',
-            random_state=42,
+            quantile=None, n_layers=2, n_estimators_per_layer=50,
+            max_depth=5, random_state=42,
         )
         model.all_configs['id_col'] = 'series_id'
         model.fit(panel_data)
@@ -111,12 +107,11 @@ class TestDeepForestModel:
         assert len(result) == PREDICT_N * 2  # 2 series
 
     def test_variable_horizons(self, small_data):
-        from PipelineTS.ml_model import DeepForestModel
-        model = DeepForestModel(
+        from PipelineTS.ml_model import gcForestModel
+        model = gcForestModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_trees=8, tree_depth=3, n_layers=2,
-            n_epochs=50, early_stop_patience=10, accelerator='cpu',
-            random_state=42,
+            quantile=None, n_layers=2, n_estimators_per_layer=50,
+            max_depth=5, random_state=42,
         )
         model.fit(small_data)
         for h in [1, 5, 10]:
@@ -125,28 +120,26 @@ class TestDeepForestModel:
             assert not result['value'].isna().any()
 
     def test_custom_hyperparams(self, small_data):
-        from PipelineTS.ml_model import DeepForestModel
-        model = DeepForestModel(
+        from PipelineTS.ml_model import gcForestModel
+        model = gcForestModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_trees=16, tree_depth=4, n_layers=3,
-            learning_rate=0.05, n_epochs=80, dropout=0.15,
-            accelerator='cpu', random_state=42,
+            quantile=None, n_layers=3, n_estimators_per_layer=80,
+            max_depth=6, min_samples_leaf=2,
+            random_state=42,
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
         _check_prediction(result, check_interval=False)
 
 
-class TestDeepForestPipeline:
+class TestGCForestPipeline:
     def test_pipeline_integration(self, small_data):
         from PipelineTS.pipeline import ModelPipeline
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['deep_forest'],
-            deep_forest__n_trees=8,
-            deep_forest__n_layers=2,
-            deep_forest__n_epochs=50,
-            deep_forest__accelerator='cpu',
+            include_models=['gc_forest'],
+            gc_forest__n_layers=2,
+            gc_forest__n_estimators_per_layer=50,
             quantile=None,
         )
         pipe.fit(small_data)
@@ -158,11 +151,9 @@ class TestDeepForestPipeline:
         from PipelineTS.pipeline import ModelPipeline
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['deep_forest'],
-            deep_forest__n_trees=8,
-            deep_forest__n_layers=2,
-            deep_forest__n_epochs=50,
-            deep_forest__accelerator='cpu',
+            include_models=['gc_forest'],
+            gc_forest__n_layers=2,
+            gc_forest__n_estimators_per_layer=50,
             quantile=0.9,
         )
         pipe.fit(small_data)
@@ -176,11 +167,9 @@ class TestDeepForestPipeline:
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
             id_col='series_id',
-            include_models=['deep_forest'],
-            deep_forest__n_trees=8,
-            deep_forest__n_layers=2,
-            deep_forest__n_epochs=50,
-            deep_forest__accelerator='cpu',
+            include_models=['gc_forest'],
+            gc_forest__n_layers=2,
+            gc_forest__n_estimators_per_layer=50,
             quantile=None,
         )
         pipe.fit(panel_data)
@@ -188,18 +177,18 @@ class TestDeepForestPipeline:
         assert 'series_id' in result.columns
 
 
-class TestDeepForestRegistry:
+class TestGCForestRegistry:
     def test_model_in_registry(self):
         from PipelineTS.pipeline.pipeline_models import get_all_available_models
         models = get_all_available_models()
-        assert 'deep_forest' in models
+        assert 'gc_forest' in models
 
     def test_model_class(self):
         from PipelineTS.pipeline.pipeline_models import get_all_available_models
-        from PipelineTS.ml_model.deep_forest import DeepForestModel
+        from PipelineTS.ml_model.native_tree_models import gcForestModel
         models = get_all_available_models()
-        assert models['deep_forest'] is DeepForestModel
+        assert models['gc_forest'] is gcForestModel
 
     def test_backward_compat_alias(self):
-        from PipelineTS.ml_model import TorchDeepForestModel, DeepForestModel
-        assert TorchDeepForestModel is DeepForestModel
+        from PipelineTS.ml_model import DeepForestModel, gcForestModel
+        assert DeepForestModel is gcForestModel

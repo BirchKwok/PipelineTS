@@ -89,7 +89,7 @@ def test_strategy_selection():
     stat = {'auto_arima', 'prophet'}
     ml = {'wide_gbrt',
            'multi_output_model', 'multi_step_model', 'regressor_chain',
-           'deep_forest', 'torch_boosting_forest', 'torch_bagging_forest'}
+           'gc_forest', 'catboost', 'random_forest'}
     models_set = set(strategy['models'])
     assert models_set & ml, "No ML model selected"
     # Stat model not always selected for large datasets with strong patterns
@@ -124,12 +124,12 @@ def test_model_scoring_explanation():
         assert info['reasons'][0][0] == 'base'
         assert info['reasons'][0][1] == 50.0
 
-    # Check that torch_boosting_forest has a good score for Electric_Production
-    boost_score = router.model_scores_['torch_boosting_forest']['total']
-    assert boost_score > 50, f"TorchBoostingForest score too low: {boost_score}"
+    # Check that catboost has a good score for Electric_Production
+    boost_score = router.model_scores_['catboost']['total']
+    assert boost_score > 50, f"CatBoost score too low: {boost_score}"
 
     print(f"[PASS] test_model_scoring_explanation: "
-          f"torch_boosting_forest={boost_score:.1f}, "
+          f"catboost={boost_score:.1f}, "
           f"prophet={router.model_scores_['prophet']['total']:.1f}")
 
 
@@ -166,8 +166,8 @@ def test_small_data_routing():
     strategy = router._build_strategy(profile)
 
     has_stat = any(m in ('prophet', 'auto_arima') for m in strategy['models'])
-    has_ml = any(m in ('deep_forest', 'torch_boosting_forest',
-                        'torch_bagging_forest', 'wide_gbrt')
+    has_ml = any(m in ('gc_forest', 'catboost',
+                        'random_forest', 'wide_gbrt')
                  for m in strategy['models'])
     # SmartRouter may prefer ML/NN models over stat for some small data profiles
     assert has_stat or has_ml, f"No stat or ML model for small data: {strategy['models']}"
@@ -236,20 +236,20 @@ def test_ensemble_predictor_weighted():
     """Test EnsemblePredictor with weighted_avg strategy."""
     ep = EnsemblePredictor(
         pipeline=None,
-        model_names=['torch_boosting_forest', 'prophet'],
-        weights={'torch_boosting_forest': 0.6, 'prophet': 0.4},
+        model_names=['catboost', 'prophet'],
+        weights={'catboost': 0.6, 'prophet': 0.4},
         time_col='date',
         target_col='value',
         ensemble_method='weighted_avg',
     )
-    assert 'torch_boosting_forest' in ep.model_names
+    assert 'catboost' in ep.model_names
     assert abs(sum(ep.weights.values()) - 1.0) < 1e-6
     cfg = ep.all_configs
     assert cfg['ensemble'] is True
     assert cfg['strategy'] == 'weighted_avg'
     r = repr(ep)
     assert 'weighted_avg' in r
-    assert 'torch_boosting_forest' in r and 'prophet' in r
+    assert 'catboost' in r and 'prophet' in r
     print(f"[PASS] test_ensemble_predictor_weighted: {r}")
 
 
@@ -257,8 +257,8 @@ def test_ensemble_predictor_median():
     """Test EnsemblePredictor with median strategy."""
     ep = EnsemblePredictor(
         pipeline=None,
-        model_names=['torch_boosting_forest', 'prophet', 'torch_bagging_forest'],
-        weights={'torch_boosting_forest': 0.4, 'prophet': 0.3, 'torch_bagging_forest': 0.3},
+        model_names=['catboost', 'prophet', 'random_forest'],
+        weights={'catboost': 0.4, 'prophet': 0.3, 'random_forest': 0.3},
         time_col='date',
         target_col='value',
         ensemble_method='median',
@@ -328,7 +328,7 @@ def test_adaptive_hyperparams():
 
     assert isinstance(hp, dict)
     if profile.n_rows >= 300 and profile.seasonality_strength > 0.1:
-        assert 'torch_boosting_forest__n_trees' in hp
+        assert 'catboost__iterations' in hp
     print(f"[PASS] test_adaptive_hyperparams: {list(hp.keys())}")
 
 
@@ -339,7 +339,7 @@ def test_pipeline_time_limit_param():
     from PipelineTS.pipeline import ModelPipeline
     pipeline = ModelPipeline(
         time_col='date', target_col='value', lags=6,
-        include_models=['torch_boosting_forest'], time_limit=60, cv=2,
+        include_models=['catboost'], time_limit=60, cv=2,
     )
     assert pipeline.time_limit == 60
     print(f"[PASS] test_pipeline_time_limit_param")
@@ -351,7 +351,7 @@ def test_pipeline_time_limit_validation():
     try:
         ModelPipeline(
             time_col='date', target_col='value', lags=6,
-            include_models=['torch_boosting_forest'], time_limit=-1, cv=2,
+            include_models=['catboost'], time_limit=-1, cv=2,
         )
         assert False, "Should have raised ValueError"
     except ValueError:
@@ -371,7 +371,7 @@ def test_pipeline_error_resilience():
 
     pipeline = ModelPipeline(
         time_col='date', target_col='value', lags=6,
-        include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+        include_models=['catboost', 'random_forest'],
         cv=2,
     )
     leaderboard = pipeline.fit(data)
@@ -390,7 +390,7 @@ def test_pipeline_failed_skipped_properties():
 
     pipeline = ModelPipeline(
         time_col='date', target_col='value', lags=6,
-        include_models=['torch_boosting_forest'], cv=2,
+        include_models=['catboost'], cv=2,
     )
     # Before fit
     assert pipeline.failed_models == []
@@ -711,7 +711,7 @@ def test_pick_fast_eval_model():
     """Test fast model selection for lag evaluation."""
     r = SmartRouter(time_col='date', target_col='value')
 
-    assert r._pick_fast_eval_model(['tft', 'torch_boosting_forest', 'prophet']) == 'torch_boosting_forest'
+    assert r._pick_fast_eval_model(['tft', 'catboost', 'prophet']) == 'catboost'
     assert r._pick_fast_eval_model(['prophet', 'n_beats']) == 'prophet'
     assert r._pick_fast_eval_model(['transformer', 'srs_net']) == 'transformer'
 
@@ -865,7 +865,7 @@ def test_scoring_model_diversity():
     # Should have models from at least 2 different categories
     categories = set()
     ml = {'wide_gbrt', 'multi_output_model', 'multi_step_model', 'regressor_chain',
-          'deep_forest', 'torch_boosting_forest', 'torch_bagging_forest'}
+          'gc_forest', 'catboost', 'random_forest'}
     stat = {'auto_arima', 'prophet'}
     nn = {'d_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
           'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',
@@ -878,8 +878,8 @@ def test_scoring_model_diversity():
     assert len(categories) >= 2, \
         f"Insufficient diversity: {selected} -> categories={categories}"
 
-    # The top 5 should not be exclusively prophet+torch_boosting_forest+tft
-    always_same = {'prophet', 'torch_boosting_forest', 'tft'}
+    # The top 5 should not be exclusively prophet+catboost+tft
+    always_same = {'prophet', 'catboost', 'tft'}
     assert not always_same.issubset(set(selected[:3])), \
         f"Top 3 are still always the same: {selected[:3]}"
 
@@ -1086,7 +1086,7 @@ def test_5category_diversity():
     sel = r._select_models(p, n_candidates=8)
 
     categories = {
-        'ml': {'torch_boosting_forest', 'torch_bagging_forest', 'deep_forest',
+        'ml': {'catboost', 'random_forest', 'gc_forest',
                'wide_gbrt', 'multi_output_model', 'multi_step_model',
                'regressor_chain'},
         'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
@@ -1125,9 +1125,9 @@ def test_include_models_single_string():
 def test_include_models_list():
     """Test include_models accepts a list of model names."""
     r = SmartRouter(time_col='date', target_col='value',
-                    include_models=['prophet', 'torch_boosting_forest'],
+                    include_models=['prophet', 'catboost'],
                     verbose=False)
-    assert r.include_models == ['prophet', 'torch_boosting_forest']
+    assert r.include_models == ['prophet', 'catboost']
     assert r.max_models == 2
     print("[PASS] test_include_models_list")
 
@@ -1135,9 +1135,9 @@ def test_include_models_list():
 def test_include_models_max_models_override():
     """Test that explicit max_models overrides auto-adjustment from include_models."""
     r = SmartRouter(time_col='date', target_col='value',
-                    include_models=['prophet', 'torch_boosting_forest'],
+                    include_models=['prophet', 'catboost'],
                     max_models=5, verbose=False)
-    assert r.include_models == ['prophet', 'torch_boosting_forest']
+    assert r.include_models == ['prophet', 'catboost']
     assert r.max_models == 5  # explicit max_models takes precedence
     print("[PASS] test_include_models_max_models_override")
 
@@ -1167,7 +1167,7 @@ def test_include_models_empty_list():
 def test_include_models_bypasses_selection():
     """Test that include_models bypasses heuristic model selection."""
     df = LoadElectricDataSets()
-    pinned = ['prophet', 'torch_boosting_forest', 'tide']
+    pinned = ['prophet', 'catboost', 'tide']
     r = SmartRouter(time_col='date', target_col='value',
                     include_models=pinned, verbose=False, n_predict=12)
     df_dt = r._ensure_datetime(df)
@@ -1191,7 +1191,7 @@ def test_include_models_skips_screening():
     """Test that screening is skipped when include_models is set."""
     df = LoadElectricDataSets()
     r = SmartRouter(time_col='date', target_col='value',
-                    include_models=['prophet', 'torch_boosting_forest'],
+                    include_models=['prophet', 'catboost'],
                     search_strategy='thorough', verbose=False)
     r.profile_ = r._profile_data(r._ensure_datetime(df))
     # Even with thorough search, should_screen returns False for pinned models
@@ -1222,13 +1222,13 @@ def test_include_models_none_default():
 def test_sort_by_speed():
     """Test _sort_by_speed categorizes models into correct speed tiers."""
     candidates = [
-        'tft', 'prophet', 'n_beats', 'torch_boosting_forest',
-        'd_linear', 'transformer', 'deep_forest', 'tide',
+        'tft', 'prophet', 'n_beats', 'catboost',
+        'd_linear', 'transformer', 'gc_forest', 'tide',
     ]
     sorted_c = SmartRouter._sort_by_speed(candidates)
 
     # Fast models (tier 0) should come first
-    fast = {'prophet', 'torch_boosting_forest', 'deep_forest'}
+    fast = {'prophet', 'catboost', 'gc_forest'}
     light = {'d_linear', 'tide'}
     medium = {'n_beats'}
     heavy = {'tft', 'transformer'}
@@ -1262,8 +1262,8 @@ def test_sort_by_speed_preserves_order_within_tier():
     print("[PASS] test_sort_by_speed_preserves_order_within_tier")
 
 
-def test_deep_forest_scoring_rebalance():
-    """Test that deep_forest no longer gets excessive bonuses."""
+def test_gc_forest_scoring_rebalance():
+    """Test that gc_forest no longer gets excessive bonuses."""
     p = _make_profile(
         n_rows=400, freq='MS', stationarity='non_stationary',
         trend_strength=0.7, seasonality_strength=0.6,
@@ -1274,23 +1274,23 @@ def test_deep_forest_scoring_rebalance():
     r = SmartRouter(time_col='d', target_col='v', n_predict=12,
                     verbose=False, max_models=5)
 
-    df_score, df_reasons = r._score_model('deep_forest', p)
-    boost_score, _ = r._score_model('torch_boosting_forest', p)
+    df_score, df_reasons = r._score_model('gc_forest', p)
+    boost_score, _ = r._score_model('catboost', p)
     nbeats_score, _ = r._score_model('n_beats', p)
 
-    # deep_forest should NOT dominate over NN models
-    assert df_score < 95, f"deep_forest score still too high: {df_score}"
-    # deep_forest should not be more than 10 pts above n_beats
+    # gc_forest should NOT dominate over NN models
+    assert df_score < 95, f"gc_forest score still too high: {df_score}"
+    # gc_forest should not be more than 10 pts above n_beats
     assert df_score - nbeats_score < 10, \
-        f"deep_forest-n_beats gap too large: {df_score - nbeats_score}"
+        f"gc_forest-n_beats gap too large: {df_score - nbeats_score}"
 
-    print(f"[PASS] test_deep_forest_scoring_rebalance: "
-          f"deep_forest={df_score:.1f}, boost={boost_score:.1f}, "
+    print(f"[PASS] test_gc_forest_scoring_rebalance: "
+          f"gc_forest={df_score:.1f}, boost={boost_score:.1f}, "
           f"n_beats={nbeats_score:.1f}")
 
 
-def test_deep_forest_penalty_small_data():
-    """Test that deep_forest gets penalized on small datasets."""
+def test_gc_forest_penalty_small_data():
+    """Test that gc_forest gets penalized on small datasets."""
     p = _make_profile(
         n_rows=50, freq='D', stationarity='stationary',
         trend_strength=0.2, seasonality_strength=0.1,
@@ -1301,14 +1301,14 @@ def test_deep_forest_penalty_small_data():
     r = SmartRouter(time_col='d', target_col='v', n_predict=12,
                     verbose=False, max_models=5)
 
-    df_score, df_reasons = r._score_model('deep_forest', p)
+    df_score, df_reasons = r._score_model('gc_forest', p)
 
     # Should get penalty for small data
-    penalties = [d for reason, d in df_reasons if d < 0 and 'deep_forest' in reason]
-    assert len(penalties) > 0, "deep_forest should get penalties on small data"
-    assert df_score < 70, f"deep_forest too high on small data: {df_score}"
+    penalties = [d for reason, d in df_reasons if d < 0 and 'gc_forest' in reason]
+    assert len(penalties) > 0, "gc_forest should get penalties on small data"
+    assert df_score < 70, f"gc_forest too high on small data: {df_score}"
 
-    print(f"[PASS] test_deep_forest_penalty_small_data: score={df_score:.1f}")
+    print(f"[PASS] test_gc_forest_penalty_small_data: score={df_score:.1f}")
 
 
 def test_time_aware_epoch_capping():
@@ -1321,9 +1321,9 @@ def test_time_aware_epoch_capping():
     hyperparams = {
         'n_beats__epochs': 2000,
         'tide__epochs': 1500,
-        'torch_boosting_forest__n_epochs': 150,  # not NN, should not be capped
+        'catboost__iterations': 150,  # not NN, should not be capped
     }
-    models = ['n_beats', 'tide', 'torch_boosting_forest']
+    models = ['n_beats', 'tide', 'catboost']
 
     # Simulate epoch capping logic (per_model_budget = 60/3 = 20s → cap=100)
     remaining_time = 60.0
@@ -1358,8 +1358,8 @@ def test_time_aware_epoch_capping():
     assert hyperparams['tide__epochs'] == 100, \
         f"tide epochs not capped: {hyperparams['tide__epochs']}"
     # Non-NN model should NOT be affected
-    assert hyperparams['torch_boosting_forest__n_epochs'] == 150, \
-        f"tree epochs wrongly capped: {hyperparams['torch_boosting_forest__n_epochs']}"
+    assert hyperparams['catboost__iterations'] == 150, \
+        f"tree iterations wrongly capped: {hyperparams['catboost__iterations']}"
 
     print(f"[PASS] test_time_aware_epoch_capping: caps={hyperparams}")
 
@@ -1406,12 +1406,12 @@ def test_fusion_select_screening_dominates():
     # tft has LOW heuristic but BEST screening
     r.model_scores_ = {
         'd_linear': {'total': 80}, 'tide': {'total': 78},
-        'n_beats': {'total': 75}, 'torch_boosting_forest': {'total': 73},
+        'n_beats': {'total': 75}, 'catboost': {'total': 73},
         'auto_arima': {'total': 70}, 'tft': {'total': 55},
     }
     screen_lb = pd.DataFrame({
         'model': ['tft', 'tide', 'auto_arima', 'd_linear',
-                  'torch_boosting_forest', 'n_beats'],
+                  'catboost', 'n_beats'],
         'metric': [3.2, 3.5, 4.0, 4.2, 4.5, 5.0],
     })
     r.strategy_ = {'models': ['d_linear', 'tide', 'n_beats']}
@@ -1433,17 +1433,17 @@ def test_fusion_select_diversity():
 
     r.model_scores_ = {
         'd_linear': {'total': 80}, 'tide': {'total': 78},
-        'n_beats': {'total': 75}, 'torch_boosting_forest': {'total': 73},
+        'n_beats': {'total': 75}, 'catboost': {'total': 73},
         'auto_arima': {'total': 70}, 'tft': {'total': 65},
         'gau': {'total': 60}, 'prophet': {'total': 55},
     }
     screen_lb = pd.DataFrame({
         'model': ['tft', 'tide', 'auto_arima', 'd_linear',
-                  'torch_boosting_forest', 'n_beats', 'gau', 'prophet'],
+                  'catboost', 'n_beats', 'gau', 'prophet'],
         'metric': [3.2, 3.5, 4.0, 4.2, 4.5, 5.0, 5.5, 6.0],
     })
     r.strategy_ = {'models': ['d_linear', 'tide', 'n_beats',
-                               'torch_boosting_forest', 'auto_arima']}
+                               'catboost', 'auto_arima']}
     broad = list(screen_lb['model'])
     selected = r._fusion_select(screen_lb, broad)
 
@@ -1451,7 +1451,7 @@ def test_fusion_select_diversity():
     cats = set()
     cat_map = {
         'auto_arima': 'stat', 'prophet': 'stat',
-        'torch_boosting_forest': 'ml',
+        'catboost': 'ml',
         'd_linear': 'nn_light', 'tide': 'nn_light',
         'n_beats': 'nn_medium', 'gau': 'nn_medium',
         'tft': 'nn_heavy',
@@ -1485,22 +1485,22 @@ def test_fusion_select_ml_cap():
 
     # All ML models rank high in screening
     r.model_scores_ = {
-        'torch_boosting_forest': {'total': 80},
-        'torch_bagging_forest': {'total': 78},
-        'deep_forest': {'total': 76},
+        'catboost': {'total': 80},
+        'random_forest': {'total': 78},
+        'gc_forest': {'total': 76},
         'd_linear': {'total': 50}, 'tft': {'total': 50},
         'auto_arima': {'total': 50}, 'n_beats': {'total': 50},
     }
     screen_lb = pd.DataFrame({
-        'model': ['torch_boosting_forest', 'torch_bagging_forest',
-                  'deep_forest', 'd_linear', 'tft', 'auto_arima', 'n_beats'],
+        'model': ['catboost', 'random_forest',
+                  'gc_forest', 'd_linear', 'tft', 'auto_arima', 'n_beats'],
         'metric': [3.0, 3.1, 3.2, 3.5, 4.0, 4.5, 5.0],
     })
     r.strategy_ = {'models': []}
     broad = list(screen_lb['model'])
     selected = r._fusion_select(screen_lb, broad)
 
-    ml_models = {'torch_boosting_forest', 'torch_bagging_forest', 'deep_forest'}
+    ml_models = {'catboost', 'random_forest', 'gc_forest'}
     ml_count = sum(1 for m in selected if m in ml_models)
     assert ml_count <= 2, f"ML cap violated: {ml_count} ML in {selected}"
 
@@ -1606,15 +1606,15 @@ def test_hpo_search_space():
     """Test HPO search space definitions."""
     from PipelineTS.pipeline.hpo import get_search_space, MODEL_SEARCH_SPACES
 
-    # All tree models now use torch tree params: n_trees, tree_depth, learning_rate, n_epochs
-    boost_space = get_search_space('torch_boosting_forest')
-    assert 'n_trees' in boost_space
-    assert 'tree_depth' in boost_space
+    # CatBoost uses iterations, depth, learning_rate
+    boost_space = get_search_space('catboost')
+    assert 'iterations' in boost_space
+    assert 'depth' in boost_space
     assert 'learning_rate' in boost_space
 
-    # TorchBaggingForest also uses torch tree params
-    bag_space = get_search_space('torch_bagging_forest')
-    assert 'n_trees' in bag_space
+    # RandomForest uses n_estimators, max_depth
+    bag_space = get_search_space('random_forest')
+    assert 'n_estimators' in bag_space
 
     # NN models have learning_rate, epochs
     tcn_space = get_search_space('tcn')
@@ -1695,7 +1695,7 @@ def test_multi_quantile_pipeline():
     df['date'] = pd.to_datetime(df['date'])
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        quantile=0.9, include_models=['torch_boosting_forest'],
+        quantile=0.9, include_models=['catboost'],
     )
     pipe.fit(df)
 
@@ -1757,7 +1757,7 @@ def test_multi_quantile_monotonicity():
     df['date'] = pd.to_datetime(df['date'])
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        quantile=0.9, include_models=['torch_boosting_forest'],
+        quantile=0.9, include_models=['catboost'],
     )
     pipe.fit(df)
 
@@ -1784,7 +1784,7 @@ def test_multi_quantile_no_quantile():
     df['date'] = pd.to_datetime(df['date'])
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        include_models=['torch_boosting_forest'],
+        include_models=['catboost'],
     )
     pipe.fit(df)
 
@@ -1809,7 +1809,7 @@ def test_incremental_pipeline_update():
 
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        include_models=['torch_boosting_forest'],
+        include_models=['catboost'],
     )
     pipe.fit(initial)
 
@@ -1867,7 +1867,7 @@ def test_incremental_update_not_fitted():
 
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
-        include_models=['torch_boosting_forest'],
+        include_models=['catboost'],
     )
     try:
         pipe.update(df)
@@ -1895,8 +1895,8 @@ def test_per_model_lags_pipeline():
     # Test 1: per_model_lags overrides global lag for specific models
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=16,
-        include_models=['torch_boosting_forest', 'torch_bagging_forest'],
-        per_model_lags={'torch_boosting_forest': 12, 'torch_bagging_forest': 8},
+        include_models=['catboost', 'random_forest'],
+        per_model_lags={'catboost': 12, 'random_forest': 8},
         random_state=42,
     )
     lb = pipe.fit(df)
@@ -1904,8 +1904,8 @@ def test_per_model_lags_pipeline():
     assert len(lb) == 2
 
     # Verify models got their individual lags
-    boost_model = pipe.get_model('torch_boosting_forest')
-    bag_model = pipe.get_model('torch_bagging_forest')
+    boost_model = pipe.get_model('catboost')
+    bag_model = pipe.get_model('random_forest')
     assert boost_model.all_configs['lags'] == 12
     assert bag_model.all_configs['lags'] == 8
 
@@ -1919,15 +1919,15 @@ def test_per_model_lags_default_fallback():
 
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=16,
-        include_models=['torch_boosting_forest', 'torch_bagging_forest'],
-        per_model_lags={'torch_boosting_forest': 10},  # torch_bagging_forest not specified
+        include_models=['catboost', 'random_forest'],
+        per_model_lags={'catboost': 10},  # random_forest not specified
         random_state=42,
     )
     lb = pipe.fit(df)
     assert not lb.empty
 
-    boost_model = pipe.get_model('torch_boosting_forest')
-    bag_model = pipe.get_model('torch_bagging_forest')
+    boost_model = pipe.get_model('catboost')
+    bag_model = pipe.get_model('random_forest')
     assert boost_model.all_configs['lags'] == 10
     assert bag_model.all_configs['lags'] == 16  # fallback to global
 
@@ -1941,12 +1941,12 @@ def test_per_model_lags_empty_dict():
 
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=16,
-        include_models=['torch_boosting_forest'],
+        include_models=['catboost'],
         per_model_lags={},
         random_state=42,
     )
     lb = pipe.fit(df)
-    boost_model = pipe.get_model('torch_boosting_forest')
+    boost_model = pipe.get_model('catboost')
     assert boost_model.all_configs['lags'] == 16
 
     print("[PASS] test_per_model_lags_empty_dict")
@@ -1964,7 +1964,7 @@ def test_explore_lags_per_model():
     r.profile_ = r._profile_data(data)
     r.strategy_ = r._build_strategy(r.profile_)
 
-    models = ['torch_boosting_forest', 'torch_bagging_forest']
+    models = ['catboost', 'random_forest']
     primary_lag = r._explore_lags(data, models, r.strategy_)
 
     # Verify per-model lags stored
@@ -1992,7 +1992,7 @@ def test_include_models_fit_predict():
     router = SmartRouter(
         time_col='date', target_col='value', n_predict=12,
         verbose=True,
-        include_models=['prophet', 'torch_boosting_forest'],
+        include_models=['prophet', 'catboost'],
         search_strategy='basic',
         ensemble_strategy='auto',
         time_limit=120,
@@ -2004,12 +2004,12 @@ def test_include_models_fit_predict():
     assert router.leader_board_ is not None
     # Only the 2 pinned models should be trained
     trained_models = set(router.leader_board_['model'].tolist())
-    assert trained_models.issubset({'prophet', 'torch_boosting_forest'}), \
+    assert trained_models.issubset({'prophet', 'catboost'}), \
         f"Unexpected models trained: {trained_models}"
     assert len(router.leader_board_) <= 2
 
     # Strategy should reflect pinned models
-    assert router.strategy_['models'] == ['prophet', 'torch_boosting_forest']
+    assert router.strategy_['models'] == ['prophet', 'catboost']
 
     # Screening should NOT have run (include_models skips screening)
     assert router._screening_results is None
@@ -2036,7 +2036,7 @@ def test_include_models_single_model_optimization():
     router = SmartRouter(
         time_col='date', target_col='value', n_predict=12,
         verbose=True,
-        include_models='torch_boosting_forest',
+        include_models='catboost',
         search_strategy='auto',  # lag exploration should still work
         ensemble_strategy='none',
         time_limit=120,
@@ -2046,10 +2046,10 @@ def test_include_models_single_model_optimization():
 
     assert router.pipeline_ is not None
     assert len(router.leader_board_) == 1
-    assert router.leader_board_.iloc[0]['model'] == 'torch_boosting_forest'
+    assert router.leader_board_.iloc[0]['model'] == 'catboost'
 
     # Strategy optimized for the single model
-    assert router.strategy_['models'] == ['torch_boosting_forest']
+    assert router.strategy_['models'] == ['catboost']
     assert router.strategy_['lags'] > 0
     assert router.strategy_['scaler'] is not None
 
@@ -2101,8 +2101,8 @@ if __name__ == '__main__':
     test_stability_params_in_model_wrapper()
     test_sort_by_speed()
     test_sort_by_speed_preserves_order_within_tier()
-    test_deep_forest_scoring_rebalance()
-    test_deep_forest_penalty_small_data()
+    test_gc_forest_scoring_rebalance()
+    test_gc_forest_penalty_small_data()
     test_time_aware_epoch_capping()
     test_ensemble_eval_attribute()
     test_get_screen_pool_size()

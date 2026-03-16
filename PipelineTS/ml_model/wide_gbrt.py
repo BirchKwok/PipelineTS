@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from PipelineTS.spinesTS.ml_model import GBRTPreprocessing
 from sklearn.multioutput import RegressorChain
-from PipelineTS.ml_model._torch_tree import _TorchTreeWrapper
+from sklearn.ensemble import ExtraTreesRegressor as _DefaultEstimator
 from spinesUtils.asserts import generate_function_kwargs, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import gc_collector
@@ -26,7 +26,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
             differential_n=0,
             moving_avg_n=0,
             extend_daily_target_features=True,
-            estimator=_TorchTreeWrapper,
+            estimator=_DefaultEstimator,
             **model_init_configs
     ):
         """
@@ -70,21 +70,12 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
         """
         super().__init__(time_col=time_col, target_col=target_col)
 
-        # Map n_estimators to n_trees for _TorchTreeWrapper compatibility
-        if estimator is _TorchTreeWrapper and 'n_trees' not in model_init_configs:
-            model_init_configs['n_trees'] = n_estimators
-            self.all_configs['model_configs'] = generate_function_kwargs(
-                estimator,
-                random_state=random_state,
-                **model_init_configs
-            )
-        else:
-            self.all_configs['model_configs'] = generate_function_kwargs(
-                estimator,
-                n_estimators=n_estimators,
-                random_state=random_state,
-                **model_init_configs
-            )
+        self.all_configs['model_configs'] = generate_function_kwargs(
+            estimator,
+            n_estimators=n_estimators,
+            random_state=random_state,
+            **model_init_configs
+        )
 
         self._estimator = estimator
 
@@ -133,10 +124,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
 
     def _define_model_for_cv(self):
         cv_configs = dict(self.all_configs['model_configs'])
-        if 'n_trees' in cv_configs:
-            cv_configs['n_trees'] = min(32, cv_configs.get('n_trees', 48))
-        else:
-            cv_configs['n_estimators'] = min(100, cv_configs.get('n_estimators', 500))
+        cv_configs['n_estimators'] = min(100, cv_configs.get('n_estimators', 500))
         return RegressorChain(self._estimator(**cv_configs))
 
     def calculate_confidence_interval_gbrt(self, data, cv=5, fit_kwargs=None):

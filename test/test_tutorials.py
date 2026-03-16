@@ -103,8 +103,8 @@ class TestTutorial01QuickStart:
             assert df.shape[1] >= 2
 
     def test_single_model_fit_predict(self, base_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
-        model = TorchBoostingForestModel(
+        from PipelineTS.ml_model import CatBoostModel
+        model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS, quantile=0.9,
         )
         model.fit(base_data)
@@ -131,7 +131,7 @@ class TestTutorial01QuickStart:
 
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'], quantile=None, cv=2,
+            include_models=['catboost'], quantile=None, cv=2,
         )
         pipeline.fit(base_data)
 
@@ -170,7 +170,7 @@ class TestTutorial02AllModels:
         from PipelineTS.ml_model import WideGBRTModel
         model = WideGBRTModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_estimators=200, verbose=-1, differential_n=1,
+            quantile=0.9, n_estimators=200, verbose=False, differential_n=1,
         )
         model.fit(base_data)
         result = model.predict(PREDICT_N)
@@ -185,7 +185,7 @@ class TestTutorial02AllModels:
                            RegressorChainModel]:
             model = ModelClass(
                 time_col='date', target_col='value', lags=LAGS,
-                quantile=0.9, verbose=-1,
+                quantile=0.9, verbose=False,
             )
             model.fit(base_data)
             result = model.predict(PREDICT_N)
@@ -260,7 +260,7 @@ class TestTutorial03Multivariate:
             time_col='date', target_col='value',
             feature_cols=['value', 'feature_a', 'feature_b'],
             lags=LAGS,
-            include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+            include_models=['catboost', 'random_forest'],
             quantile=None, cv=2,
         )
         lb = pipeline.fit(multivariate_data)
@@ -276,16 +276,16 @@ class TestTutorial04AdvancedPipeline:
     def test_pipeline_configs(self, base_data):
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_small', {
-                'init_configs': {'n_trees': 32}, 'fit_configs': {},
+            ('catboost', 'boost_small', {
+                'init_configs': {'iterations': 32}, 'fit_configs': {},
             }),
-            ('torch_boosting_forest', 'boost_large', {
-                'init_configs': {'n_trees': 128}, 'fit_configs': {},
+            ('catboost', 'boost_large', {
+                'init_configs': {'iterations': 128}, 'fit_configs': {},
             }),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, quantile=None, cv=2,
         )
         lb = pipeline.fit(base_data)
@@ -294,18 +294,18 @@ class TestTutorial04AdvancedPipeline:
     def test_per_model_lags(self, base_data):
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_lag6', {
-                'init_configs': {'n_trees': 32},
+            ('catboost', 'boost_lag6', {
+                'init_configs': {'iterations': 32},
                 'pipeline_configs': {'lags': 6},
             }),
-            ('torch_boosting_forest', 'boost_lag20', {
-                'init_configs': {'n_trees': 32},
+            ('catboost', 'boost_lag20', {
+                'init_configs': {'iterations': 32},
                 'pipeline_configs': {'lags': 20},
             }),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, quantile=None, cv=2,
         )
         pipeline.fit(base_data)
@@ -318,18 +318,18 @@ class TestTutorial04AdvancedPipeline:
         from sklearn.preprocessing import StandardScaler
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_standard', {
-                'init_configs': {'n_trees': 32},
+            ('catboost', 'boost_standard', {
+                'init_configs': {'iterations': 32},
                 'pipeline_configs': {'scaler': StandardScaler()},
             }),
-            ('torch_boosting_forest', 'boost_noscale', {
-                'init_configs': {'n_trees': 32},
+            ('catboost', 'boost_noscale', {
+                'init_configs': {'iterations': 32},
                 'pipeline_configs': {'scaler': None},
             }),
         ])
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             configs=configs, scaler=True, quantile=None, cv=2,
         )
         pipeline.fit(base_data)
@@ -349,7 +349,7 @@ class TestTutorial04AdvancedPipeline:
         from PipelineTS.spinesTS.metrics import rmse
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+            include_models=['catboost', 'random_forest'],
             metric=rmse, metric_less_is_better=True,
             quantile=None, cv=2,
         )
@@ -360,10 +360,10 @@ class TestTutorial04AdvancedPipeline:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+            include_models=['catboost', 'random_forest'],
             quantile=None, cv=2,
-            torch_boosting_forest__n_trees=64,
-            torch_bagging_forest__n_trees=128,
+            catboost__iterations=64,
+            random_forest__n_estimators=128,
         )
         lb = pipeline.fit(base_data)
         assert len(lb) == 2
@@ -372,7 +372,7 @@ class TestTutorial04AdvancedPipeline:
         from PipelineTS.pipeline import ModelPipeline
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'], quantile=None, cv=2,
+            include_models=['catboost'], quantile=None, cv=2,
         )
         pipeline.fit(base_data)
         best = pipeline.get_model()
@@ -541,7 +541,7 @@ class TestTutorial07Benchmarks:
             pipe = ModelPipeline(
                 time_col=tc, target_col=tgt, lags=LAGS,
                 random_state=42,
-                include_models=['torch_boosting_forest'],
+                include_models=['catboost'],
                 metric=mean_absolute_error, metric_less_is_better=True,
                 quantile=None, cv=2,
             )
@@ -557,7 +557,7 @@ class TestTutorial07Benchmarks:
         df['date'] = pd.to_datetime(df['date'])
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            random_state=42, include_models=['torch_boosting_forest'],
+            random_state=42, include_models=['catboost'],
             metric=mean_absolute_error, metric_less_is_better=True,
             quantile=0.9, cv=2,
         )
@@ -589,9 +589,9 @@ class TestTutorial08Visualization:
         assert fig is not None
 
     def test_plot_forecast(self, base_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
+        from PipelineTS.ml_model import CatBoostModel
         from PipelineTS.plot import plot_forecast
-        model = TorchBoostingForestModel(
+        model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS, quantile=0.9,
         )
         model.fit(base_data)
@@ -605,7 +605,7 @@ class TestTutorial08Visualization:
         from PipelineTS.plot import plot_leaderboard, plot_leaderboard_detail
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+            include_models=['catboost', 'random_forest'],
             quantile=0.9, cv=2,
         )
         lb = pipe.fit(base_data)
@@ -651,7 +651,7 @@ class TestTutorial08Visualization:
         from PipelineTS.pipeline import ModelPipeline
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=0.9, cv=2,
         )
         pipe.fit(base_data)
@@ -671,8 +671,8 @@ class TestTutorial08Visualization:
 class TestTutorial09MultiQuantile:
 
     def test_single_quantile(self, base_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
-        model = TorchBoostingForestModel(
+        from PipelineTS.ml_model import CatBoostModel
+        model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS, quantile=0.9,
         )
         model.fit(base_data)
@@ -684,7 +684,7 @@ class TestTutorial09MultiQuantile:
         from PipelineTS.pipeline import ModelPipeline
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS, quantile=0.9,
-            include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+            include_models=['catboost', 'random_forest'],
             cv=2,
         )
         pipe.fit(base_data)
@@ -696,7 +696,7 @@ class TestTutorial09MultiQuantile:
         from PipelineTS.pipeline import ModelPipeline
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS, quantile=0.9,
-            include_models=['torch_boosting_forest'], cv=2,
+            include_models=['catboost'], cv=2,
         )
         pipe.fit(base_data)
         result = pipe.predict_quantiles(n=10, levels=[0.5, 0.8, 0.95])
@@ -734,8 +734,8 @@ class TestTutorial09MultiQuantile:
 class TestTutorial10MultiSeriesCovariates:
 
     def test_single_model_panel(self, panel_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
-        model = TorchBoostingForestModel(
+        from PipelineTS.ml_model import CatBoostModel
+        model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS, quantile=0.9,
         )
         model.all_configs['id_col'] = 'store'
@@ -749,7 +749,7 @@ class TestTutorial10MultiSeriesCovariates:
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
             id_col='store',
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=0.9, cv=2,
         )
         lb = pipe.fit(panel_data)
@@ -774,7 +774,7 @@ class TestTutorial10MultiSeriesCovariates:
             time_col='date', target_col='value', lags=LAGS,
             known_covariates=['holiday', 'promotion'],
             past_covariates=['temperature'],
-            include_models=['torch_boosting_forest', 'prophet'],
+            include_models=['catboost', 'prophet'],
             quantile=0.9, cv=2,
         )
         pipe.fit(covariate_data)
@@ -790,7 +790,7 @@ class TestTutorial10MultiSeriesCovariates:
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
             known_covariates=['holiday'],
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=None, cv=2,
         )
         pipe.fit(covariate_data)
@@ -831,7 +831,7 @@ class TestTutorial10MultiSeriesCovariates:
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
             id_col='region', known_covariates=['holiday'],
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=0.9, cv=2,
         )
         pipe.fit(combined)
@@ -853,7 +853,7 @@ class TestTutorial11IncrementalLearning:
 
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'], quantile=None, cv=2,
+            include_models=['catboost'], quantile=None, cv=2,
         )
         pipe.fit(initial)
         pred_before = pipe.predict(3)
@@ -910,7 +910,7 @@ class TestTutorial11IncrementalLearning:
 
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'], quantile=None, cv=2,
+            include_models=['catboost'], quantile=None, cv=2,
         )
         pipe.fit(full.iloc[:200])
 
@@ -925,7 +925,7 @@ class TestTutorial11IncrementalLearning:
         from PipelineTS.pipeline import ModelPipeline
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
         )
         with pytest.raises(ValueError):
             pipe.update(pd.DataFrame({'date': [1], 'value': [1]}))
@@ -957,16 +957,16 @@ class TestTutorial12SmartRouterPipeline:
     def test_pipeline_configs_variants(self, base_data):
         from PipelineTS.pipeline import ModelPipeline, PipelineConfigs
         configs = PipelineConfigs([
-            ('torch_boosting_forest', 'boost_fast', {
-                'init_configs': {'n_trees': 16}, 'fit_configs': {},
+            ('catboost', 'boost_fast', {
+                'init_configs': {'iterations': 16}, 'fit_configs': {},
             }),
-            ('torch_boosting_forest', 'boost_deep', {
-                'init_configs': {'n_trees': 128, 'tree_depth': 7}, 'fit_configs': {},
+            ('catboost', 'boost_deep', {
+                'init_configs': {'iterations': 128, 'depth': 7}, 'fit_configs': {},
             }),
         ])
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=12,
-            include_models=['torch_boosting_forest'], configs=configs,
+            include_models=['catboost'], configs=configs,
             quantile=None, cv=2,
         )
         lb = pipe.fit(base_data)
@@ -976,7 +976,7 @@ class TestTutorial12SmartRouterPipeline:
         from PipelineTS.pipeline import ModelPipeline
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=12, quantile=0.9,
-            include_models=['torch_boosting_forest'], cv=2,
+            include_models=['catboost'], cv=2,
         )
         pipe.fit(base_data)
         result = pipe.predict_quantiles(n=10, levels=[0.5, 0.8, 0.95])
@@ -988,7 +988,7 @@ class TestTutorial12SmartRouterPipeline:
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=12,
             id_col='store',
-            include_models=['torch_boosting_forest'],
+            include_models=['catboost'],
             quantile=0.9, cv=2,
         )
         pipe.fit(panel_data)
@@ -1007,7 +1007,7 @@ class TestTutorial12SmartRouterPipeline:
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=12,
             known_covariates=['holiday'], past_covariates=['temperature'],
-            include_models=['torch_boosting_forest', 'prophet'],
+            include_models=['catboost', 'prophet'],
             quantile=0.9, cv=2,
         )
         pipe.fit(cov_data)
@@ -1019,7 +1019,7 @@ class TestTutorial12SmartRouterPipeline:
         from PipelineTS.pipeline import ModelPipeline
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=12,
-            include_models=['torch_boosting_forest'], quantile=None, cv=2,
+            include_models=['catboost'], quantile=None, cv=2,
         )
         pipe.fit(base_data.iloc[:150])
         pipe.update(base_data.iloc[150:])

@@ -33,10 +33,10 @@ def small_data():
 
 @pytest.fixture(scope="module")
 def fitted_model(small_data):
-    from PipelineTS.ml_model import TorchBoostingForestModel
-    model = TorchBoostingForestModel(
+    from PipelineTS.ml_model import CatBoostModel
+    model = CatBoostModel(
         time_col='date', target_col='value', lags=LAGS,
-        quantile=None, n_trees=16, n_epochs=50
+        quantile=None, iterations=16
     )
     model.fit(small_data)
     return model
@@ -47,7 +47,7 @@ def fitted_pipeline(small_data):
     from PipelineTS.pipeline import ModelPipeline
     pipeline = ModelPipeline(
         time_col='date', target_col='value', lags=LAGS,
-        include_models=['torch_boosting_forest', 'torch_bagging_forest'],
+        include_models=['catboost', 'random_forest'],
         quantile=None, cv=2
     )
     pipeline.fit(small_data)

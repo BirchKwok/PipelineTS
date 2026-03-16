@@ -306,7 +306,7 @@ class SmartRouter:
     >>>
     >>> # Pin specific models and let SmartRouter optimize strategy/params
     >>> router = SmartRouter(time_col='date', target_col='value',
-    ...                      include_models=['prophet', 'torch_boosting_forest'],
+    ...                      include_models=['prophet', 'catboost'],
     ...                      hpo_strategy='quick')
     >>> router.fit(df)
     >>>
@@ -1241,7 +1241,7 @@ class SmartRouter:
         """Suggest model-specific hyperparameters based on data profile.
 
         Returns a dict in double-underscore format ready for ModelPipeline
-        kwargs, e.g. {'torch_boosting_forest__n_trees': 128}.
+        kwargs, e.g. {'catboost__iterations': 800}.
 
         Covers:
         - NN models: routing_mode, use_gtb, learning_rate, epochs, patience,
@@ -1351,30 +1351,29 @@ class SmartRouter:
             params['prophet__seasonality_mode'] = fe['prophet_seasonality_mode']
 
         # --- All tree models: verbose off by default ---
-        for m in ['torch_boosting_forest', 'torch_bagging_forest', 'deep_forest',
-                   'multi_output_model', 'multi_step_model', 'wide_gbrt']:
+        for m in ['catboost', 'xgboost', 'random_forest', 'extra_forest',
+                   'gc_forest', 'multi_output_model', 'multi_step_model', 'wide_gbrt']:
             params[f'{m}__verbose'] = False
 
-        # --- All tree models: adapt to data size ---
-        torch_tree_models = ['torch_boosting_forest', 'torch_bagging_forest']
+        # --- Native tree models: adapt to data size ---
+        # CatBoost uses 'iterations', others use 'n_estimators'
         if n >= 300:
-            for m in torch_tree_models:
-                params[f'{m}__n_trees'] = 128
-                params[f'{m}__n_epochs'] = 500
-            params['deep_forest__n_trees'] = 32
-            params['deep_forest__n_layers'] = 3
-            params['deep_forest__n_epochs'] = 500
+            params['catboost__iterations'] = 800
+            for m in ['xgboost', 'random_forest', 'extra_forest']:
+                params[f'{m}__n_estimators'] = 800
+            params['gc_forest__n_layers'] = 3
+            params['gc_forest__n_estimators_per_layer'] = 150
         elif n < 100:
-            for m in torch_tree_models:
-                params[f'{m}__n_trees'] = 48
-                params[f'{m}__n_epochs'] = 300
-            params['deep_forest__n_trees'] = 16
-            params['deep_forest__n_layers'] = 2
-            params['deep_forest__n_epochs'] = 300
+            params['catboost__iterations'] = 300
+            for m in ['xgboost', 'random_forest', 'extra_forest']:
+                params[f'{m}__n_estimators'] = 300
+            params['gc_forest__n_layers'] = 2
+            params['gc_forest__n_estimators_per_layer'] = 50
+        # CatBoost/XGBoost: lower learning rate for noisy data
         if p.noise_ratio > 0.7:
-            for m in torch_tree_models:
-                params[f'{m}__dropout'] = 0.15
-                params[f'{m}__weight_decay'] = 1e-4
+            params['catboost__learning_rate'] = 0.03
+            params['xgboost__learning_rate'] = 0.03
+            params['xgboost__subsample'] = 0.7
 
         return params
 
@@ -1424,7 +1423,7 @@ class SmartRouter:
 
         Uses a 5-category diversity system to ensure architecture variety:
         - statistic: auto_arima, prophet
-        - ml: torch_boosting_forest, torch_bagging_forest, deep_forest, wide_gbrt, ...
+        - ml: catboost, xgboost, random_forest, extra_forest, gc_forest, wide_gbrt, ...
         - nn_light: d_linear, n_linear, tide, tcn
         - nn_medium: n_beats, n_hits, stacking_rnn, patch_rnn, time2vec, gau
         - nn_heavy: transformer, tft, itransformer, srs_net, deepar
@@ -1451,12 +1450,11 @@ class SmartRouter:
             key=lambda x: x[1], reverse=True
         )
 
-        # 5-category diversity system (ml and ml_gpu merged since all tree
-        # models now use the same GPU-accelerated differentiable backend)
+        # 5-category diversity system
         categories = {
             'statistic': {'auto_arima', 'prophet'},
-            'ml': {'torch_boosting_forest', 'torch_bagging_forest',
-                   'deep_forest', 'wide_gbrt', 'multi_output_model',
+            'ml': {'catboost', 'xgboost', 'random_forest', 'extra_forest',
+                   'gc_forest', 'wide_gbrt', 'multi_output_model',
                    'multi_step_model', 'regressor_chain'},
             'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
             'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
@@ -1541,8 +1539,8 @@ class SmartRouter:
 
         # ---- Model category classification ----
         statistic_models = {'auto_arima', 'prophet'}
-        ml_models = {'torch_boosting_forest', 'torch_bagging_forest',
-                      'deep_forest', 'wide_gbrt', 'multi_output_model',
+        ml_models = {'catboost', 'xgboost', 'random_forest', 'extra_forest',
+                      'gc_forest', 'wide_gbrt', 'multi_output_model',
                       'multi_step_model', 'regressor_chain'}
         nn_light = {'d_linear', 'n_linear', 'tide', 'tcn'}
         nn_medium = {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
@@ -1687,7 +1685,7 @@ class SmartRouter:
                 _add(-3, 'regime_changes: assumes smooth patterns')
 
         # ---- ML consistency bonus (for main tree models) ----
-        if model_name in ('torch_boosting_forest', 'torch_bagging_forest'):
+        if model_name in ('catboost', 'xgboost', 'random_forest'):
             _add(3, 'tree: proven baseline performer')
 
         # ---- NN models with GTB/routing capability bonus ----
@@ -1706,12 +1704,15 @@ class SmartRouter:
         if model_name in statistic_models:
             _add(2, 'speed: fast (statistic)')
         elif model_name in ml_models:
-            _add(3, 'speed: fast GPU-accelerated tree')
+            _add(3, 'speed: fast native tree')
 
         # ---- Specific model strengths (conditional) ----
-        if model_name == 'torch_boosting_forest':
+        if model_name == 'catboost':
             if p.noise_ratio > 0.7 and n >= 200:
-                _add(3, 'boosting: robust for noisy large data')
+                _add(3, 'catboost: robust for noisy large data')
+        if model_name == 'xgboost':
+            if n >= 150 and p.noise_ratio < 0.8:
+                _add(3, 'xgboost: strong gradient boosting baseline')
 
         if model_name == 'prophet' and p.pct_missing > 0.01:
             _add(3, f'prophet: handles missing data ({p.pct_missing:.1%})')
@@ -1740,27 +1741,21 @@ class SmartRouter:
         if model_name == 'deepar' and n >= 200 and p.noise_ratio < 0.7:
             _add(4, 'deepar: probabilistic forecaster for clean data')
 
-        # ---- GPU tree model specific scoring ----
+        # ---- Native tree model specific scoring ----
         # NOTE: bonuses here are deliberately modest to avoid over-scoring
         # ML/tree models relative to NN models (see calibration analysis).
-        _gpu_tree_models = {'torch_boosting_forest', 'torch_bagging_forest', 'deep_forest'}
-        if model_name in _gpu_tree_models:
-            # GPU trees benefit from larger data (amortizes GPU overhead)
-            if n >= 200:
-                _add(3, f'{model_name}: GPU amortization on medium+ data')
+        if model_name == 'gc_forest':
+            # gcForest cascade: modest bonus, only for favorable conditions
+            if 100 <= n <= 800 and p.noise_ratio < 0.8:
+                _add(3, 'gc_forest: cascade representation learning')
             elif n < 80:
-                _add(-3, f'{model_name}: GPU overhead not worthwhile for small data')
-            # Differentiable trees can learn feature interactions end-to-end
-            if p.n_seasonalities >= 2 and p.regime_changes > 5:
-                _add(3, f'{model_name}: end-to-end feature learning')
-            if model_name == 'deep_forest':
-                # Deep Forest cascade: modest bonus, only for favorable conditions
-                if 100 <= n <= 800 and p.noise_ratio < 0.8:
-                    _add(3, 'deep_forest: cascade representation learning')
-                elif n < 80:
-                    _add(-5, 'deep_forest: cascade overfits on small data')
-            if model_name == 'torch_boosting_forest':
-                _add(2, 'torch_boosting_forest: differentiable boosting')
+                _add(-5, 'gc_forest: cascade overfits on small data')
+        if model_name == 'extra_forest':
+            # ExtraTrees: randomized splits → fast & low variance
+            if n >= 100:
+                _add(2, 'extra_forest: fast randomized ensemble')
+            if p.noise_ratio > 0.5:
+                _add(2, 'extra_forest: randomized splits reduce overfitting')
 
         if model_name in ('chronos_2', 'chronos_2_synth', 'chronos_2_small'):
             # Chronos-2 family: zero-shot foundation models — no training needed
@@ -1919,8 +1914,8 @@ class SmartRouter:
         # Category mapping (mirrors _select_models / _fusion_select)
         _categories = {
             'statistic': {'auto_arima', 'prophet'},
-            'ml': {'torch_boosting_forest', 'torch_bagging_forest',
-                   'deep_forest', 'wide_gbrt', 'multi_output_model',
+            'ml': {'catboost', 'xgboost', 'random_forest', 'extra_forest',
+                   'gc_forest', 'wide_gbrt', 'multi_output_model',
                    'multi_step_model', 'regressor_chain'},
             'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
             'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
@@ -2241,8 +2236,8 @@ class SmartRouter:
         # considered while diversity emerges naturally.
         categories = {
             'statistic': {'auto_arima', 'prophet'},
-            'ml': {'torch_boosting_forest', 'torch_bagging_forest',
-                   'deep_forest', 'wide_gbrt', 'multi_output_model',
+            'ml': {'catboost', 'xgboost', 'random_forest', 'extra_forest',
+                   'gc_forest', 'wide_gbrt', 'multi_output_model',
                    'multi_step_model', 'regressor_chain'},
             'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
             'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
@@ -2328,9 +2323,9 @@ class SmartRouter:
         _speed_tier = {}
         _fast = {
             'auto_arima', 'prophet',
-            'torch_boosting_forest', 'torch_bagging_forest', 'deep_forest',
-            'wide_gbrt', 'multi_output_model', 'multi_step_model',
-            'regressor_chain',
+            'catboost', 'xgboost', 'random_forest', 'extra_forest',
+            'gc_forest', 'wide_gbrt', 'multi_output_model',
+            'multi_step_model', 'regressor_chain',
         }
         _light = {'d_linear', 'n_linear', 'tide', 'tcn'}
         _medium = {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
@@ -2354,12 +2349,12 @@ class SmartRouter:
         Reduces GBDT estimators and NN epochs for faster evaluation.
         """
         params = {}
-        # All tree models now use _TorchTreeWrapper params
-        tree_models = {
-            'torch_boosting_forest', 'torch_bagging_forest',
-            'deep_forest',
+        # Native tree models use n_estimators (or iterations for catboost)
+        native_tree_models = {
+            'catboost', 'xgboost', 'random_forest', 'extra_forest',
+            'gc_forest',
         }
-        # Legacy multi-output models still use n_estimators
+        # Legacy multi-output models also use n_estimators
         legacy_ml_models = {
             'multi_output_model', 'multi_step_model', 'wide_gbrt',
             'regressor_chain',
@@ -2371,9 +2366,14 @@ class SmartRouter:
         }
 
         for m in candidates:
-            if m in tree_models:
-                params[f'{m}__n_trees'] = 16
-                params[f'{m}__n_epochs'] = 50
+            if m in native_tree_models:
+                if m == 'catboost':
+                    params[f'{m}__iterations'] = 30
+                elif m == 'gc_forest':
+                    params[f'{m}__n_estimators_per_layer'] = 30
+                    params[f'{m}__n_layers'] = 2
+                else:
+                    params[f'{m}__n_estimators'] = 30
             elif m in legacy_ml_models:
                 params[f'{m}__n_estimators'] = 30
             elif m in nn_models:
@@ -2509,7 +2509,7 @@ class SmartRouter:
     def _pick_fast_eval_model(self, models):
         """Pick the fastest model from the list for lag evaluation."""
         fast_preference = [
-            'torch_boosting_forest', 'torch_bagging_forest',
+            'catboost', 'xgboost', 'random_forest', 'extra_forest',
             'multi_output_model', 'multi_step_model',
             'prophet', 'auto_arima',
             'd_linear', 'n_linear', 'tide',

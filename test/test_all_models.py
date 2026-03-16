@@ -3,7 +3,7 @@ Comprehensive test suite for all models.
 
 Tests:
 - 7 NN models: NLinear, DLinear, NBeats, NHits, TFT, Transformer, TiDE
-- 2 ML tree models: TorchBoostingForest, TorchBaggingForest
+- 2 ML tree models: CatBoost, RandomForest
 - 1 Statistic model: AutoARIMA
 
 Each test verifies:
@@ -180,34 +180,34 @@ class TestTiDEModel:
 
 # ─── ML Model Tests ──────────────────────────────────────────────────────────
 
-class TestTorchBoostingForestModel:
+class TestCatBoostModel:
     def test_fit_predict(self, small_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
-        model = TorchBoostingForestModel(
+        from PipelineTS.ml_model import CatBoostModel
+        model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_trees=16, n_epochs=50
+            quantile=0.9, iterations=16
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)
         _check_prediction(result)
 
     def test_predict_with_data(self, small_data):
-        from PipelineTS.ml_model import TorchBoostingForestModel
-        model = TorchBoostingForestModel(
+        from PipelineTS.ml_model import CatBoostModel
+        model = CatBoostModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=None, n_trees=16, n_epochs=50
+            quantile=None, iterations=16
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N, data=small_data)
         _check_prediction(result, check_interval=False)
 
 
-class TestTorchBaggingForestModel:
+class TestRandomForestModel:
     def test_fit_predict(self, small_data):
-        from PipelineTS.ml_model import TorchBaggingForestModel
-        model = TorchBaggingForestModel(
+        from PipelineTS.ml_model import RandomForestModel
+        model = RandomForestModel(
             time_col='date', target_col='value', lags=LAGS,
-            quantile=0.9, n_trees=16, n_epochs=50, random_state=42
+            quantile=0.9, n_estimators=16, random_state=42
         )
         model.fit(small_data)
         result = model.predict(PREDICT_N)

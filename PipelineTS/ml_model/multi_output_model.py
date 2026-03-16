@@ -4,7 +4,7 @@ import pandas as pd
 from PipelineTS.spinesTS.ml_model import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
 from sklearn.multioutput import RegressorChain
 from PipelineTS.spinesTS.preprocessing import split_series, lag_splits
-from PipelineTS.ml_model._torch_tree import _TorchTreeWrapper
+from sklearn.ensemble import ExtraTreesRegressor as _DefaultEstimator
 from spinesUtils.asserts import generate_function_kwargs, ParameterTypeAssert, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
 from PipelineTS.spinesTS.pipeline import Pipeline
@@ -21,7 +21,7 @@ class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLMo
             target_col,
             lags=1,
             quantile=0.9,
-            estimator=_TorchTreeWrapper,
+            estimator=_DefaultEstimator,
             differential_n=0,
             **model_configs
     ):
@@ -280,7 +280,7 @@ class MultiOutputRegressorModel(_MultiOutputModelMixin):
             target_col,
             lags=1,
             quantile=0.9,
-            estimator=_TorchTreeWrapper,
+            estimator=_DefaultEstimator,
             **model_configs
     ):
         """
@@ -337,7 +337,7 @@ class MultiStepRegressorModel(_MultiOutputModelMixin):
             target_col,
             lags=1,
             quantile=0.9,
-            estimator=_TorchTreeWrapper,
+            estimator=_DefaultEstimator,
             **model_configs
     ):
         """
@@ -394,7 +394,7 @@ class RegressorChainModel(_MultiOutputModelMixin):
             target_col,
             lags=1,
             quantile=0.9,
-            estimator=_TorchTreeWrapper,
+            estimator=_DefaultEstimator,
             **model_configs
     ):
         """

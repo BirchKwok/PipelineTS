@@ -490,7 +490,7 @@ def plot_leaderboard(
     )
 
     # Labels
-    labels = df[model_col].values
+    labels = list(df[model_col].values)
     labels[0] = f'{labels[0]} {_L("best", lang)}'
     ax.set_yticks(np.arange(n))
     ax.set_yticklabels(labels, fontsize=10)

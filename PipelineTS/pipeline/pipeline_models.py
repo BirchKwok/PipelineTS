@@ -24,10 +24,12 @@ def get_all_available_models():
     models = {
         'auto_arima': AutoARIMAModel,
         'prophet': ProphetModel,
-        # ML tree models (all GPU-accelerated via differentiable trees)
-        'torch_boosting_forest': TorchBoostingForestModel,
-        'torch_bagging_forest': TorchBaggingForestModel,
-        'deep_forest': DeepForestModel,
+        # ML tree models (native implementations)
+        'catboost': CatBoostModel,
+        'xgboost': XGBoostModel,
+        'random_forest': RandomForestModel,
+        'extra_forest': ExtraForestModel,
+        'gc_forest': gcForestModel,
         'wide_gbrt': WideGBRTModel,
         'multi_output_model': MultiOutputRegressorModel,
         'multi_step_model': MultiStepRegressorModel,

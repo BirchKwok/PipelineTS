@@ -157,7 +157,7 @@ class ModelPipeline:
 
         if include_models == 'light':
             include_models = ['d_linear', 'itransformer', 'multi_output_model', 'multi_step_model',
-                              'n_hits', 'n_linear', 'patch_rnn', 'torch_bagging_forest',
+                              'n_hits', 'n_linear', 'patch_rnn', 'random_forest',
                               'regressor_chain', 'tide', 'transformer']
         elif include_models == 'all':
             include_models = None
@@ -166,8 +166,9 @@ class ModelPipeline:
                               'patch_rnn', 'stacking_rnn', 'tide', 'time2vec', 'transformer',
                               'itransformer', 'srs_net']
         elif include_models == 'ml':
-            include_models = ['torch_boosting_forest', 'torch_bagging_forest', 'multi_output_model',
-                              'multi_step_model', 'deep_forest', 'wide_gbrt']
+            include_models = ['catboost', 'xgboost', 'random_forest', 'extra_forest',
+                              'gc_forest', 'multi_output_model',
+                              'multi_step_model', 'wide_gbrt']
         elif isinstance(include_models, str):
             raise_if_not(ValueError, include_models in ModelPipeline.list_all_available_models(),
                          f"{include_models} is not a available model name. ")
@@ -250,9 +251,11 @@ class ModelPipeline:
                                                              'multi_output_model__verbose': False,
                                                              'multi_step_model__verbose': False,
                                                              'wide_gbrt__verbose': False,
-                                                             'torch_boosting_forest__verbose': False,
-                                                             'torch_bagging_forest__verbose': False,
-                                                             'deep_forest__verbose': False,
+                                                             'catboost__verbose': False,
+                                                             'xgboost__verbose': False,
+                                                             'random_forest__verbose': False,
+                                                             'extra_forest__verbose': False,
+                                                             'gc_forest__verbose': False,
                                                          })
 
         if time_limit is not None and time_limit <= 0:
@@ -451,9 +454,11 @@ class ModelPipeline:
         -------
         >>> ModelPipeline.list_all_available_models()
         ['auto_arima',
+         'catboost',
          'd_linear',
-         'deep_forest',
+         'extra_forest',
          'gau',
+         'gc_forest',
          'multi_output_model',
          'multi_step_model',
          'n_beats',
@@ -466,9 +471,8 @@ class ModelPipeline:
          'tft',
          'tide',
          'time2vec',
-         'torch_bagging_forest',
-         'torch_boosting_forest',
-         'transformer']
+         'transformer',
+         'xgboost']
         """
         return sorted(list(get_all_available_models().keys()))
 
@@ -783,9 +787,9 @@ class ModelPipeline:
         >>> leaderboard = pipeline.fit(train_data, valid_data)
         >>> print(leaderboard)
            Leaderboard         model  train_cost(s)  eval_cost(s)    metric
-        0           0  torch_boosting_forest_0  2.567801  0.978624  0.123456
-        1           1  torch_bagging_forest_0   3.123456  1.234567  0.456789
-        2           2  deep_forest_0            1.987654  0.876543  0.987654
+        0           0  catboost_0               2.567801  0.978624  0.123456
+        1           1  random_forest_0           3.123456  1.234567  0.456789
+        2           2  gc_forest_0               1.987654  0.876543  0.987654
         ...         ...            ...            ...           ...       ...
 
         Notes
@@ -1018,12 +1022,12 @@ class ModelPipeline:
         >>> pipeline = ModelPipeline(time_col='timestamp', target_col='value', lags=10)
         >>> pipeline.fit(train_data, valid_data)
         >>> best_model = pipeline.get_model()
-        >>> specific_model = pipeline.get_model('torch_boosting_forest_0')
+        >>> specific_model = pipeline.get_model('catboost_0')
 
         Notes
         -----
         - If model_name is not provided, the function returns the best-performing model based on the leaderboard.
-        - The function allows retrieving a specific trained model by providing its unique name (e.g., 'torch_boosting_forest_0').
+        - The function allows retrieving a specific trained model by providing its unique name (e.g., 'catboost_0').
         """
         if model_name is None:
             return self.best_model_
@@ -1054,12 +1058,12 @@ class ModelPipeline:
         >>> pipeline = ModelPipeline(time_col='timestamp', target_col='value', lags=10)
         >>> pipeline.fit(train_data, valid_data)
         >>> best_model_configs = pipeline.get_model_all_configs()
-        >>> specific_model_configs = pipeline.get_model_all_configs('torch_boosting_forest_0')
+        >>> specific_model_configs = pipeline.get_model_all_configs('catboost_0')
 
         Notes
         -----
         - If model_name is not provided, the function returns the configuration details of the best-performing model.
-        - The function allows retrieving configuration details for a specific trained model by providing its unique name (e.g., 'torch_boosting_forest_0').
+        - The function allows retrieving configuration details for a specific trained model by providing its unique name (e.g., 'catboost_0').
         """
         if model_name is None:
             return self.best_model_.all_configs
