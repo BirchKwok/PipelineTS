@@ -19,7 +19,13 @@ import pandas as pd
 import numpy as np
 from PipelineTS.pipeline.smart_router import SmartRouter, DataProfile, EnsemblePredictor
 from PipelineTS.pipeline.pipeline import ModelPipeline
-from PipelineTS.dataset import LoadElectricDataSets
+from PipelineTS.dataset import (
+    LoadElectricDataSets,
+    LoadMessagesSentHourDataSets,
+    LoadMessagesSentDataSets,
+    LoadWebSales,
+    LoadSupermarketIncoming,
+)
 
 
 # ─── Unit Tests (no model training) ─────────────────────────────────────────
@@ -1687,6 +1693,27 @@ def test_smart_router_search_basic():
     print(f"[PASS] test_smart_router_search_basic")
     print(f"  Best: {router.leader_board_.iloc[0]['model']} "
           f"(MAE={router.leader_board_.iloc[0]['metric']:.4f})")
+
+
+def test_builtin_dataset_benchmark_selection():
+    """Test that SmartRouter exposes built-in dataset benchmark results."""
+    df = LoadElectricDataSets()
+    router = SmartRouter(time_col='date', target_col='value', verbose=False,
+                         max_models=3, search_strategy='basic',
+                         ensemble_strategy='none')
+    profile = router._profile_data(router._ensure_datetime(df))
+    router._build_strategy(profile)
+    benchmark = router._benchmark_on_builtin_datasets()
+
+    assert isinstance(benchmark, list)
+    assert len(benchmark) >= 3
+    assert all('dataset' in row for row in benchmark)
+    assert all('top_model' in row for row in benchmark)
+    assert all('lag' in row for row in benchmark)
+
+    top_datasets = {row['dataset'] for row in benchmark if row.get('top_model')}
+    assert 'electric' in top_datasets
+    print(f"[PASS] test_builtin_dataset_benchmark_selection: {benchmark}")
 
 
 def test_multi_quantile_pipeline():

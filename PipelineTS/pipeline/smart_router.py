@@ -21,6 +21,13 @@ from spinesUtils.asserts import ParameterTypeAssert, raise_if
 from PipelineTS.pipeline.pipeline import ModelPipeline
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
 from PipelineTS.spinesTS.metrics import mae
+from PipelineTS.dataset import (
+    LoadElectricDataSets,
+    LoadMessagesSentHourDataSets,
+    LoadMessagesSentDataSets,
+    LoadWebSales,
+    LoadSupermarketIncoming,
+)
 from PipelineTS.preprocessing import (
     TimeSeriesMissingHandler,
     TimeSeriesOutlierDetector,
@@ -498,6 +505,7 @@ class SmartRouter:
         self._hpo_results = None
         self._ensemble_eval = None
         self._fusion_scores = None
+        self.dataset_benchmark_ = None
 
     # ------------------------------------------------------------------
     #  Public API
@@ -776,9 +784,11 @@ class SmartRouter:
             self.ensemble_ = self._evaluate_ensemble(self.ensemble_)
 
         self._compute_calibration()
+        self.dataset_benchmark_ = self._benchmark_on_builtin_datasets()
         total_time = time.time() - t0
         if self.verbose:
             self._log_calibration()
+            self._log_benchmark_summary()
             self._log_summary(total_time)
 
         return self
@@ -1128,6 +1138,13 @@ class SmartRouter:
             models = list(self.include_models)
         else:
             models = self._select_models(p)
+            # Preserve diversity on medium/large series by keeping at least
+            # one ML model in the heuristic pool when it is clearly viable.
+            if p.n_rows >= 100 and not any(m in {'catboost', 'xgboost', 'random_forest', 'extra_forest', 'gc_forest', 'wide_gbrt', 'multi_output_model', 'multi_step_model', 'regressor_chain'} for m in models):
+                ml_candidates = [m for m in sorted(self.model_scores_, key=lambda x: self.model_scores_[x]['total'], reverse=True)
+                                 if m in {'catboost', 'xgboost', 'random_forest', 'extra_forest', 'gc_forest', 'wide_gbrt', 'multi_output_model', 'multi_step_model', 'regressor_chain'}]
+                if ml_candidates:
+                    models = models[:-1] + [ml_candidates[0]]
 
         strategy = {
             'preprocessing': self._select_preprocessing(p),
@@ -1931,8 +1948,9 @@ class SmartRouter:
 
         covered_cats = {model_cat.get(m, 'unknown') for m in candidates}
 
-        # Phase 1: inject models from categories entirely absent in the pool
-        # (highest-value blind-spot correction)
+        # Prefer injecting from categories that are absent in the pool, but
+        # if the current pool already covers all categories, force a category
+        # swap by prioritising ML/NN-heavy candidates over same-category clones.
         new_cat_excluded = [
             m for m in excluded
             if model_cat.get(m, 'unknown') not in covered_cats
@@ -1953,7 +1971,19 @@ class SmartRouter:
             injections.append(m)
             covered_cats.add(model_cat.get(m, 'unknown'))
 
-        # Phase 2: fill remaining injection slots with random excluded models
+        # Phase 2: if we still need slots, preferentially inject at least one
+        # NN-heavy or other higher-value exploration candidate before random fill.
+        if len(injections) < n_inject:
+            preferred = [m for m in same_cat_excluded if model_cat.get(m) == 'nn_heavy']
+            if not preferred:
+                preferred = [m for m in same_cat_excluded if model_cat.get(m) in {'nn_medium', 'ml'}]
+            rng.shuffle(preferred)
+            for m in preferred:
+                if len(injections) >= n_inject:
+                    break
+                injections.append(m)
+
+        # Final fill: random excluded models
         if len(injections) < n_inject:
             remaining = [m for m in excluded if m not in injections]
             rng.shuffle(remaining)
@@ -3040,6 +3070,48 @@ class SmartRouter:
                 f"  All models agree: lag={the_lag}"
             )
 
+    def _benchmark_on_builtin_datasets(self):
+        """Evaluate heuristic strategy on bundled datasets using a light heuristic-only view.
+
+        This does not retrain every model on every dataset. Instead, it profiles
+        each dataset, reuses the same strategy builder, and reports the top
+        heuristic candidate together with the selected lag and model diversity.
+        """
+        datasets = {
+            'electric': LoadElectricDataSets,
+            'messages_hour': LoadMessagesSentHourDataSets,
+            'messages': LoadMessagesSentDataSets,
+            'web_sales': LoadWebSales,
+            'supermarket': LoadSupermarketIncoming,
+        }
+        results = []
+        for name, loader in datasets.items():
+            try:
+                df = loader()
+                df = self._ensure_datetime(df)
+                profile = self._profile_data(df)
+                strategy = self._build_strategy(profile)
+                top_model = strategy['models'][0] if strategy['models'] else None
+                results.append({
+                    'dataset': name,
+                    'rows': int(len(df)),
+                    'top_model': top_model,
+                    'lag': int(strategy['lags']),
+                    'n_models': int(len(strategy['models'])),
+                    'metric': float(self.model_scores_[top_model]['total']) if top_model and self.model_scores_ and top_model in self.model_scores_ else np.nan,
+                })
+            except Exception as e:
+                results.append({
+                    'dataset': name,
+                    'rows': 0,
+                    'top_model': None,
+                    'lag': None,
+                    'n_models': 0,
+                    'metric': np.nan,
+                    'error': str(e),
+                })
+        return results
+
     def _compute_calibration(self):
         """Compute Spearman rank correlation between heuristic and actual rankings."""
         if self.model_scores_ is None or self.leader_board_ is None:
@@ -3111,6 +3183,17 @@ class SmartRouter:
                 f"  {match} {m:<20} actual={i+1}  heuristic={h_rank+1}  "
                 f"score={h_score:.1f}  metric={actual_metric:.4f}"
             )
+
+    def _log_benchmark_summary(self):
+        """Log built-in dataset benchmark summary if available."""
+        if not self.dataset_benchmark_:
+            return
+        best = min(self.dataset_benchmark_, key=lambda x: x['metric'])
+        top_model = best.get('top_model') or best.get('model') or 'n/a'
+        self.logger.info(
+            f"  Built-in benchmark: best={best['dataset']} "
+            f"({top_model} @ {best['metric']:.4f})"
+        )
 
     def _log_summary(self, total_time):
         """Log final summary after fit completes."""

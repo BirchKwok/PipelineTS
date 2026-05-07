@@ -38,7 +38,17 @@ dependencies = [
     "torch>=1.8.0",
     "cloudpickle>=2.2.1",
     "scipy>=1.7.3",
+    "flask>=2.0",
+    "apexbase>=1.16.0",
 ]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+anthropic = ["anthropic>=0.30"]
+all = ["openai>=1.0", "anthropic>=0.30"]
+
+[project.scripts]
+pipeline-ts = "PipelineTS.agent.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/BirchKwok/PipelineTS"

@@ -153,3 +153,5 @@ cython_debug/
 
 # VSCodeCounter
 .VSCodeCounter/
+
+.vscode
