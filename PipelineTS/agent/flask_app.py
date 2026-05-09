@@ -1,7 +1,7 @@
 """Flask web backend for the PipelineTS agent.
 
 Launch with:
-    pipeline-ts web
+    pipelinets web
     python -m PipelineTS.agent.flask_app
 """
 
@@ -13,6 +13,7 @@ matplotlib.use("Agg")
 
 import json
 import os
+import queue
 import re
 import tempfile
 import uuid
@@ -50,12 +51,14 @@ class AppState:
         if stored:
             env_map = {
                 "provider": "PIPELINETS_PROVIDER",
+                "api_format": "PIPELINETS_API_FORMAT",
                 "openai_api_key": "OPENAI_API_KEY",
                 "openai_base_url": "OPENAI_BASE_URL",
                 "openai_model": "OPENAI_MODEL",
                 "anthropic_api_key": "ANTHROPIC_API_KEY",
                 "anthropic_model": "ANTHROPIC_MODEL",
                 "lang": "PIPELINETS_LANG",
+                "multimodal": "PIPELINETS_MULTIMODAL",
             }
             self.config.update(**{k: v for k, v in stored.items() if v and not os.environ.get(env_map.get(k, ""))})
 
@@ -85,6 +88,7 @@ class AppState:
         base_url = self.config.resolve_base_url()
         model = self.config.resolve_model()
         lang = self.config.lang
+        multimodal = self.config.multimodal
 
         if not api_key:
             raise ValueError(
@@ -100,6 +104,7 @@ class AppState:
             lang=lang,
             verbose=False,
             plot_dir=str(self.plot_dir),
+            multimodal=multimodal,
         )
         if previous_session is not None:
             agent.session = previous_session
@@ -110,6 +115,8 @@ class AppState:
         summary = f"{provider} | {model}"
         if lang:
             summary += f" | {lang}"
+        if agent.multimodal_enabled:
+            summary += " | vision"
         return self.agent, summary
 
 
@@ -126,6 +133,105 @@ def _mask_secret(value: str, keep: int = 4) -> str:
     if len(value) <= keep * 2:
         return "*" * len(value)
     return value[:keep] + "*" * (len(value) - keep * 2) + value[-keep:]
+
+
+_API_PROFILE_FIELDS = (
+    "provider",
+    "api_format",
+    "openai_api_key",
+    "openai_base_url",
+    "openai_model",
+    "anthropic_api_key",
+    "anthropic_model",
+)
+
+
+def _config_source() -> dict:
+    source = dict(_app.config._data)
+    if _app.storage.available:
+        source.update({k: v for k, v in _app.storage.get_config().items() if v})
+    return source
+
+
+def _load_api_profiles(source: dict | None = None) -> dict[str, dict]:
+    source = source or _config_source()
+    raw = source.get("api_profiles", "")
+    if isinstance(raw, dict):
+        profiles = raw
+    else:
+        try:
+            profiles = json.loads(raw) if raw else {}
+        except Exception:
+            profiles = {}
+    if not isinstance(profiles, dict):
+        return {}
+    cleaned = {}
+    for alias, profile in profiles.items():
+        if isinstance(profile, dict):
+            cleaned[str(alias)] = {k: str(v) for k, v in profile.items() if v is not None}
+    return cleaned
+
+
+def _legacy_api_profile(source: dict) -> dict:
+    profile = {k: str(source.get(k, "") or "") for k in _API_PROFILE_FIELDS}
+    if not profile.get("api_format"):
+        profile["api_format"] = "anthropic" if profile.get("provider") == "anthropic" else "openai"
+    if not profile.get("provider"):
+        profile["provider"] = "openai"
+    return profile
+
+
+def _profiles_with_legacy(source: dict) -> dict[str, dict]:
+    profiles = _load_api_profiles(source)
+    legacy = _legacy_api_profile(source)
+    has_legacy = any(legacy.get(k) for k in ("openai_api_key", "anthropic_api_key", "openai_model", "anthropic_model", "openai_base_url"))
+    if has_legacy and not profiles:
+        profiles["default"] = legacy
+    return profiles
+
+
+def _profile_aliases(profiles: dict[str, dict]) -> list[dict]:
+    aliases = []
+    for alias, profile in profiles.items():
+        api_format = profile.get("api_format") or ("anthropic" if profile.get("provider") == "anthropic" else "openai")
+        model = profile.get("anthropic_model") if api_format == "anthropic" else profile.get("openai_model")
+        aliases.append({
+            "alias": alias,
+            "provider": profile.get("provider", ""),
+            "api_format": api_format,
+            "model": model or "",
+        })
+    return aliases
+
+
+def _settings_result(alias: str = "") -> dict:
+    c = _app.config
+    source = _config_source()
+    profiles = _profiles_with_legacy(source)
+    active_alias = (alias or source.get("active_api_alias") or c.active_api_alias or "").strip()
+    if active_alias not in profiles:
+        active_alias = next(iter(profiles), active_alias or "default")
+    profile = dict(profiles.get(active_alias, _legacy_api_profile(source)))
+    real_openai_key = profile.get("openai_api_key", "")
+    real_anthropic_key = profile.get("anthropic_api_key", "")
+    provider = profile.get("provider") or c.provider
+    api_format = profile.get("api_format") or ("anthropic" if provider == "anthropic" else "openai")
+    return {
+        "api_alias": active_alias,
+        "active_api_alias": active_alias,
+        "api_aliases": _profile_aliases(profiles),
+        "provider": provider,
+        "api_format": api_format,
+        "openai_api_key": _mask_secret(real_openai_key),
+        "openai_api_key_set": bool(real_openai_key),
+        "openai_base_url": profile.get("openai_base_url", c.openai_base_url),
+        "openai_model": profile.get("openai_model", c.openai_model),
+        "anthropic_api_key": _mask_secret(real_anthropic_key),
+        "anthropic_api_key_set": bool(real_anthropic_key),
+        "anthropic_model": profile.get("anthropic_model", c.anthropic_model),
+        "lang": c.lang,
+        "multimodal": c.multimodal,
+    }
 
 
 def _column_values(value) -> list:
@@ -331,6 +437,7 @@ def create_app() -> "Flask":
         data = request.get_json(force=True) if request.is_json else {}
         message = (data or {}).get("message", "")
         selected_context = (data or {}).get("selected_context", "")
+        selected_data_context = (data or {}).get("selected_data_context")
 
         if not message or not message.strip():
             return jsonify({"error": "Empty message"}), 400
@@ -352,32 +459,37 @@ def create_app() -> "Flask":
             yield f"data: {json.dumps({'status': 'thinking'})}\n\n"
 
             # Buffer for stream events (tool calls, reasoning) emitted during chat()
-            event_buffer = []
+            event_buffer = queue.Queue()
+            previous_on_event = _app.agent._on_stream_event
 
             def on_event(evt):
-                event_buffer.append(evt)
+                event_buffer.put(evt)
 
             _app.agent._on_stream_event = on_event
 
+            def flush_events():
+                while True:
+                    try:
+                        evt = event_buffer.get_nowait()
+                    except queue.Empty:
+                        break
+                    yield f"data: {json.dumps(evt)}\n\n"
+
             try:
-                for chunk in _app.agent.chat(message, stream=True, context=selected_context):
-                    # Flush buffered events before text chunk
-                    while event_buffer:
-                        evt = event_buffer.pop(0)
-                        yield f"data: {json.dumps(evt)}\n\n"
+                for chunk in _app.agent.chat(message, stream=True, context=selected_context, selected_data_context=selected_data_context):
+                    yield from flush_events()
                     if chunk:
                         yield f"data: {json.dumps({'text': chunk})}\n\n"
 
-                # Flush remaining events
-                while event_buffer:
-                    evt = event_buffer.pop(0)
-                    yield f"data: {json.dumps(evt)}\n\n"
+                yield from flush_events()
 
                 status = _get_session_status()
                 status["done"] = True
                 yield f"data: {json.dumps(status)}\n\n"
             except Exception as e:
                 yield f"data: {json.dumps({'done': True, 'error': str(e)})}\n\n"
+            finally:
+                _app.agent._on_stream_event = previous_on_event
 
         return Response(
             generate(),
@@ -388,21 +500,8 @@ def create_app() -> "Flask":
     # ── Settings: load ────────────────────────────
     @app.route("/api/settings/load")
     def settings_load():
-        c = _app.config
-        real_openai_key = c.openai_api_key
-        real_anthropic_key = c.anthropic_api_key
-        result = {
-            "provider": c.provider,
-            "openai_api_key": _mask_secret(real_openai_key),
-            "openai_api_key_set": bool(real_openai_key),
-            "openai_base_url": c.openai_base_url,
-            "openai_model": c.openai_model,
-            "anthropic_api_key": _mask_secret(real_anthropic_key),
-            "anthropic_api_key_set": bool(real_anthropic_key),
-            "anthropic_model": c.anthropic_model,
-            "lang": c.lang,
-        }
-        return jsonify(result)
+        alias = request.args.get("alias", "").strip()
+        return jsonify(_settings_result(alias))
 
     # ── Settings: save ────────────────────────────
     @app.route("/api/settings/save", methods=["POST"])
@@ -411,54 +510,70 @@ def create_app() -> "Flask":
         if not data:
             return jsonify({"error": "No data"}), 400
 
-        # Helper: preserve existing config value when submitted value is empty/blank.
-        # Checks ApexBase storage first (truth), then in-memory config as fallback.
-        def _keep_if_empty(key: str, default: str = "") -> str:
+        source = _config_source()
+        profiles = _profiles_with_legacy(source)
+        alias = (
+            (data.get("api_alias") or data.get("active_api_alias") or data.get("alias") or "").strip()
+            or source.get("active_api_alias")
+            or "default"
+        )
+        existing_profile = profiles.get(alias, {})
+
+        def _keep_if_empty(key: str, default: str = "", profile: bool = True) -> str:
             submitted = (data.get(key) or "").strip()
             if not submitted:
-                if _app.storage.available:
-                    stored = _app.storage.get_config().get(key, "")
-                    if stored:
-                        return str(stored)
-                existing = _app.config._data.get(key, default)
+                stored = existing_profile.get(key, "") if profile else ""
+                if not stored and not profile:
+                    stored = source.get(key, "")
+                existing = stored or (_app.config._data.get(key, default) if not profile else default)
                 if existing:
                     return str(existing)
             return submitted
 
-        # Detect masked / unchanged API key to avoid overwriting real keys.
-        def _preserve_secret(key: str) -> None:
+        def _preserve_secret(key: str) -> str:
             submitted_key = (data.get(key) or "").strip()
-            existing_key = (
-                (_app.storage.get_config().get(key) if _app.storage.available else "")
-                or _app.config._data.get(key, "")
-            )
+            existing_key = existing_profile.get(key, "")
             if not submitted_key:
-                data[key] = existing_key
+                return existing_key
             elif existing_key:
                 masked = _mask_secret(existing_key)
                 if submitted_key == masked or set(submitted_key) <= {"*", "•"}:
-                    data[key] = existing_key
+                    return existing_key
+            return submitted_key
 
-        _preserve_secret("openai_api_key")
-        _preserve_secret("anthropic_api_key")
-
-        resolved = {
-            "provider": _keep_if_empty("provider", "openai"),
-            "openai_api_key": data.get("openai_api_key", ""),
+        provider = _keep_if_empty("provider", "openai")
+        api_format = _keep_if_empty("api_format", "anthropic" if provider == "anthropic" else "openai")
+        profile_resolved = {
+            "provider": provider,
+            "api_format": api_format,
+            "openai_api_key": _preserve_secret("openai_api_key"),
             "openai_base_url": _keep_if_empty("openai_base_url"),
             "openai_model": _keep_if_empty("openai_model"),
-            "anthropic_api_key": _keep_if_empty("anthropic_api_key"),
+            "anthropic_api_key": _preserve_secret("anthropic_api_key"),
             "anthropic_model": _keep_if_empty("anthropic_model"),
-            "lang": _keep_if_empty("lang", "en"),
+        }
+        profiles[alias] = {k: str(v) for k, v in profile_resolved.items() if v}
+        profiles_json = json.dumps(profiles, ensure_ascii=False)
+
+        resolved = {
+            "provider": profile_resolved.get("provider", "openai"),
+            "api_format": profile_resolved.get("api_format", "openai"),
+            "openai_api_key": profile_resolved.get("openai_api_key", ""),
+            "openai_base_url": profile_resolved.get("openai_base_url", ""),
+            "openai_model": profile_resolved.get("openai_model", ""),
+            "anthropic_api_key": profile_resolved.get("anthropic_api_key", ""),
+            "anthropic_model": profile_resolved.get("anthropic_model", ""),
+            "lang": _keep_if_empty("lang", "en", profile=False),
+            "multimodal": _keep_if_empty("multimodal", "auto", profile=False),
+            "active_api_alias": alias,
+            "api_profiles": profiles_json,
         }
 
-        # Save to ApexBase
         if _app.storage.available:
             _app.storage.set_config_bulk({
                 k: str(v) for k, v in resolved.items() if v
             })
 
-        # Also save to config file — guard each field against empty overwrite
         _app.config.update(**resolved)
 
         save_result = ""
@@ -475,10 +590,12 @@ def create_app() -> "Flask":
         except Exception as e:
             agent_status = f"Agent init failed: {e}"
 
-        return jsonify({
+        result = _settings_result(alias)
+        result.update({
             "save_status": save_result,
             "agent_status": agent_status,
         })
+        return jsonify(result)
 
     # ── Data: info about uploaded/stored data ──────
     @app.route("/api/data/info")

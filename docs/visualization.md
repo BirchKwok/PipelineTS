@@ -266,16 +266,16 @@ plot_acf_pacf(
 )
 ```
 
-**Note**: Requires `statsmodels`. Falls back gracefully if not installed.
-**注意**：需要 `statsmodels`。未安装时优雅回退。
+**Note**: Uses native ACF/PACF implementations.
+**注意**：使用原生 ACF/PACF 实现。
 
 ---
 
 ## plot_decomposition — Time Series Decomposition / 时间序列分解
 
-Decompose time series into trend, seasonal, and residual components. Uses `statsmodels.seasonal_decompose` if available, with a moving-average fallback.
+Decompose time series into trend, seasonal, and residual components using the native moving-average decomposition.
 
-将时间序列分解为趋势、季节性和残差分量。优先使用 `statsmodels.seasonal_decompose`，不可用时使用移动平均回退。
+使用原生移动平均分解将时间序列分解为趋势、季节性和残差分量。
 
 ```python
 from PipelineTS.plot import plot_decomposition

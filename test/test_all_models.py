@@ -390,6 +390,15 @@ class TestNoLegacyImport:
         assert 'import pmdarima' not in src and 'from pmdarima' not in src, \
             "auto_arima.py still imports pmdarima!"
 
+    def test_no_external_statistical_backend_dependency(self):
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        blocked = "stats" + "models"
+        for path in list((root / "PipelineTS").rglob("*.py")) + [root / "pyproject.toml"]:
+            src = path.read_text(encoding="utf-8")
+            assert blocked not in src, f"{path} still references external statistical backend!"
+
     def test_no_facebook_prophet(self):
         import importlib
         mod = importlib.import_module('PipelineTS.statistic_model.prophet')

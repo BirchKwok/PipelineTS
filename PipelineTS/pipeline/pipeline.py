@@ -27,7 +27,10 @@ from spinesUtils.timer import Timer
 # All model classes in PipelineTS are subclasses of the IntervalEstimationMixin class.
 from PipelineTS.base.base import IntervalEstimationMixin
 from PipelineTS.metrics import quantile_acc
-from PipelineTS.pipeline.pipeline_models import get_all_available_models, get_all_model_class_name
+from PipelineTS.pipeline.pipeline_models import (
+    get_all_available_models,
+    get_all_model_class_name,
+)
 from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 from PipelineTS.base.base_utils import generate_models_set
@@ -171,7 +174,7 @@ class ModelPipeline:
                               'multi_step_model', 'wide_gbrt']
         elif isinstance(include_models, str):
             raise_if_not(ValueError, include_models in ModelPipeline.list_all_available_models(),
-                         f"{include_models} is not a available model name. ")
+                         f"{include_models} is not an available model name.")
             include_models = [include_models]
         elif include_models is not None and not isinstance(include_models, (list, str)) and issubclass(include_models, IntervalEstimationMixin):
             include_models = [include_models]
@@ -188,8 +191,11 @@ class ModelPipeline:
                  "exclude_models must be None or in the list of models.")
 
         raise_if(ValueError, include_models is not None and
-                 (not all([i in self._available_models or
-                           issubclass(i, IntervalEstimationMixin) for i in include_models])),
+                 (not all([
+                     (isinstance(i, str) and i in self._available_models) or
+                     (isinstance(i, type) and issubclass(i, IntervalEstimationMixin))
+                     for i in include_models
+                 ])),
                  "include_models must be None or in the list of models or a available PipelineTS model.")
 
         if exclude_models is not None:

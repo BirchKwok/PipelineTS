@@ -15,6 +15,21 @@ import json
 import os
 from typing import Any, Iterator, Optional
 
+
+_OPENAI_COMPAT_PROVIDER_DEFAULTS = {
+    "moonshot": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "model": "moonshot-v1-8k",
+        "temperature": 1,
+    },
+    "kimi": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "model": "moonshot-v1-8k",
+        "temperature": 1,
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 #  Abstract base
 # ---------------------------------------------------------------------------
@@ -64,6 +79,7 @@ class OpenAIProvider(LLMProvider):
         api_key: str = None,
         base_url: str = None,
         model: str = None,
+        default_temperature: float = None,
     ):
         try:
             from openai import OpenAI
@@ -82,7 +98,18 @@ class OpenAIProvider(LLMProvider):
 
         base_url = base_url or os.environ.get("OPENAI_BASE_URL")
         self.model = model or os.environ.get("OPENAI_MODEL")
+        self.default_temperature = default_temperature
+        if self.default_temperature is None and self._requires_temperature_one(base_url, self.model):
+            self.default_temperature = 1
         self.client = OpenAI(api_key=api_key, base_url=base_url)
+
+    @staticmethod
+    def _requires_temperature_one(base_url: str = None, model: str = None) -> bool:
+        text = f"{base_url or ''} {model or ''}".lower()
+        return "moonshot.cn" in text
+
+    def _temperature(self, temperature: float) -> float:
+        return self.default_temperature if self.default_temperature is not None else temperature
 
     def chat(
         self,
@@ -96,7 +123,7 @@ class OpenAIProvider(LLMProvider):
         kwargs = dict(
             model=model or self.model,
             messages=messages,
-            temperature=temperature,
+            temperature=self._temperature(temperature),
             max_tokens=max_tokens,
         )
         if tools:
@@ -118,7 +145,7 @@ class OpenAIProvider(LLMProvider):
         kwargs = dict(
             model=model or self.model,
             messages=messages,
-            temperature=temperature,
+            temperature=self._temperature(temperature),
             max_tokens=max_tokens,
             stream=True,
         )
@@ -174,6 +201,111 @@ class AnthropicProvider(LLMProvider):
             })
         return anthropic_tools
 
+    def _stringify_content(self, content) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif isinstance(block, dict) and block.get("type") == "image_url":
+                    parts.append("[Image attached]")
+            return "\n".join(p for p in parts if p)
+        return str(content)
+
+    def _convert_image_block(self, block: dict) -> dict:
+        image_url = block.get("image_url", {})
+        url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url or "")
+        if url.startswith("data:") and "," in url:
+            header, data = url.split(",", 1)
+            media_type = header[5:].split(";")[0] or "image/png"
+            return {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data,
+                },
+            }
+        return {"type": "text", "text": f"[Image URL: {url}]"}
+
+    def _content_blocks(self, content) -> list[dict]:
+        if content is None:
+            return []
+        if isinstance(content, str):
+            return [{"type": "text", "text": content}] if content else []
+        if not isinstance(content, list):
+            return [{"type": "text", "text": str(content)}]
+
+        blocks = []
+        for block in content:
+            if isinstance(block, str):
+                if block:
+                    blocks.append({"type": "text", "text": block})
+                continue
+            if not isinstance(block, dict):
+                blocks.append({"type": "text", "text": str(block)})
+                continue
+            block_type = block.get("type")
+            if block_type == "text":
+                text = block.get("text", "")
+                if text:
+                    blocks.append({"type": "text", "text": text})
+            elif block_type == "image_url":
+                blocks.append(self._convert_image_block(block))
+        return blocks
+
+    def _append_api_message(self, api_messages: list[dict], role: str, content: list[dict]) -> None:
+        content = content or [{"type": "text", "text": ""}]
+        if api_messages and api_messages[-1].get("role") == role:
+            previous = api_messages[-1].get("content", [])
+            if isinstance(previous, str):
+                previous = [{"type": "text", "text": previous}] if previous else []
+            api_messages[-1]["content"] = previous + content
+        else:
+            api_messages.append({"role": role, "content": content})
+
+    def _convert_messages(self, messages: list[dict]) -> tuple[Optional[str], list[dict]]:
+        system = None
+        api_messages = []
+        for m in messages:
+            role = m.get("role")
+            content = m.get("content", "")
+            if role == "system":
+                system = self._stringify_content(content)
+                continue
+            if role == "tool":
+                self._append_api_message(api_messages, "user", [{
+                    "type": "tool_result",
+                    "tool_use_id": m.get("tool_call_id", ""),
+                    "content": self._stringify_content(content),
+                }])
+                continue
+            if role == "assistant":
+                blocks = self._content_blocks(content)
+                for tc in m.get("tool_calls") or []:
+                    func = tc.get("function", {})
+                    try:
+                        tool_input = json.loads(func.get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        tool_input = {}
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id", ""),
+                        "name": func.get("name", ""),
+                        "input": tool_input,
+                    })
+                self._append_api_message(api_messages, "assistant", blocks)
+                continue
+            if role == "user":
+                self._append_api_message(api_messages, "user", self._content_blocks(content))
+        return system, api_messages
+
     def _convert_response(self, response) -> dict:
         """Convert Anthropic response to an OpenAI-compatible dict for uniform handling."""
         content = response.content
@@ -208,13 +340,7 @@ class AnthropicProvider(LLMProvider):
         temperature=0.2,
         max_tokens=4096,
     ):
-        system = None
-        api_messages = []
-        for m in messages:
-            if m["role"] == "system":
-                system = m["content"]
-            else:
-                api_messages.append(m)
+        system, api_messages = self._convert_messages(messages)
 
         kwargs = dict(
             model=model or self.model,
@@ -239,28 +365,28 @@ class AnthropicProvider(LLMProvider):
         temperature=0.2,
         max_tokens=4096,
     ):
-        system = None
-        api_messages = []
-        for m in messages:
-            if m["role"] == "system":
-                system = m["content"]
-            else:
-                api_messages.append(m)
-
-        kwargs = dict(
-            model=model or self.model,
-            messages=api_messages,
+        response = self.chat(
+            messages=messages,
+            tools=tools,
+            model=model,
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        if system:
-            kwargs["system"] = system
-        if tools:
-            kwargs["tools"] = self._convert_tools(tools)
-
-        with self.client.messages.stream(**kwargs) as stream:
-            for event in stream:
-                yield event
+        message = response["choices"][0]["message"]
+        delta = {}
+        if message.get("content"):
+            delta["content"] = message["content"]
+        if message.get("tool_calls"):
+            delta["tool_calls"] = []
+            for idx, tc in enumerate(message["tool_calls"]):
+                delta["tool_calls"].append({
+                    "index": idx,
+                    "id": tc.get("id", ""),
+                    "type": "function",
+                    "function": tc.get("function", {}),
+                })
+        if delta:
+            yield {"choices": [{"delta": delta}]}
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +514,8 @@ def create_provider(
         )
     else:
         # OpenAI-compatible third-party providers (deepseek, ollama, etc.)
+        provider_key = str(effective_provider or "").strip().lower()
+        defaults = _OPENAI_COMPAT_PROVIDER_DEFAULTS.get(provider_key, {})
         resolved_key = (
             api_key
             or os.environ.get("OPENAI_API_KEY")
@@ -397,11 +525,13 @@ def create_provider(
             base_url
             or os.environ.get("OPENAI_BASE_URL")
             or cfg_base_url
+            or defaults.get("base_url")
         )
         resolved_model = (
             model
             or os.environ.get("OPENAI_MODEL")
             or cfg_model
+            or defaults.get("model")
         )
         if not resolved_key:
             raise ValueError(
@@ -412,4 +542,5 @@ def create_provider(
             api_key=resolved_key,
             base_url=resolved_url or None,
             model=resolved_model,
+            default_temperature=defaults.get("temperature"),
         )

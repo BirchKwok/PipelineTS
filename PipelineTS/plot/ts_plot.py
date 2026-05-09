@@ -648,13 +648,8 @@ def plot_residuals(
     ax = axes[1, 1]
     n_lags = min(30, len(residuals) // 2 - 1)
     if n_lags > 1:
-        try:
-            from statsmodels.tsa.stattools import acf as sm_acf
-            acf_vals = sm_acf(residuals, nlags=n_lags, fft=True)
-        except ImportError:
-            acf_vals = np.correlate(residuals, residuals, mode='full')
-            acf_vals = acf_vals[len(acf_vals) // 2:]
-            acf_vals = acf_vals[:n_lags + 1] / acf_vals[0]
+        from PipelineTS.utils.native_stats import acf as native_acf
+        acf_vals = native_acf(residuals, nlags=n_lags, fft=True)
         lags = np.arange(len(acf_vals))
         bound = 1.96 / np.sqrt(len(residuals))
         ax.bar(lags, acf_vals, color=COLORS['primary'], width=0.35, alpha=0.8)
@@ -706,13 +701,10 @@ def plot_acf_pacf(
         warnings.warn("Series too short for ACF/PACF plot.")
         return None
 
-    try:
-        from statsmodels.tsa.stattools import acf as sm_acf, pacf as sm_pacf
-        acf_vals = sm_acf(y, nlags=n_lags, fft=True)
-        pacf_vals = sm_pacf(y, nlags=n_lags)
-    except ImportError:
-        warnings.warn("statsmodels required for ACF/PACF. pip install statsmodels")
-        return None
+    from PipelineTS.utils.native_stats import acf as native_acf
+    from PipelineTS.utils.native_stats import pacf as native_pacf
+    acf_vals = native_acf(y, nlags=n_lags, fft=True)
+    pacf_vals = native_pacf(y, nlags=n_lags)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
     bound = 1.96 / np.sqrt(len(y))
@@ -787,31 +779,11 @@ def plot_decomposition(
         except Exception:
             period = max(2, len(y) // 10)
 
-    try:
-        from statsmodels.tsa.seasonal import seasonal_decompose
-        result = seasonal_decompose(y, model=model, period=period)
-        trend = result.trend
-        seasonal = result.seasonal
-        resid = result.resid
-    except ImportError:
-        # Fallback: simple moving-average decomposition
-        kernel = np.ones(period) / period
-        trend = np.convolve(y, kernel, mode='same')
-        # Fix edges
-        half = period // 2
-        trend[:half] = trend[half]
-        trend[-half:] = trend[-half - 1]
-        if model == 'multiplicative' and np.all(trend > 0):
-            seasonal = y / trend
-            # Average seasonal pattern
-            seasonal_avg = np.array([np.mean(seasonal[i::period]) for i in range(period)])
-            seasonal = np.tile(seasonal_avg, len(y) // period + 1)[:len(y)]
-            resid = y / (trend * seasonal)
-        else:
-            detrended = y - trend
-            seasonal_avg = np.array([np.mean(detrended[i::period]) for i in range(period)])
-            seasonal = np.tile(seasonal_avg, len(y) // period + 1)[:len(y)]
-            resid = y - trend - seasonal
+    from PipelineTS.utils.native_stats import seasonal_decompose
+    result = seasonal_decompose(y, model=model, period=period)
+    trend = result.trend
+    seasonal = result.seasonal
+    resid = result.resid
 
     fig, axes = plt.subplots(4, 1, figsize=figsize, sharex=True)
     fig.suptitle(title or _L('decomposition', lang), fontsize=14, fontweight='bold')

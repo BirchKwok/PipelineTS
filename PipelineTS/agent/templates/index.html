@@ -453,6 +453,67 @@ body {
   color: var(--primary);
   box-shadow: 0 10px 24px rgba(37,99,235,0.12);
 }
+.provider-combobox {
+  position: relative;
+  margin-top: 8px;
+}
+.settings-card .form-group .provider-combobox input {
+  margin-top: 0;
+  padding-right: 44px;
+}
+.provider-dropdown-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #64748B;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.provider-dropdown-btn:hover {
+  background: #F1F5F9;
+  color: var(--primary);
+}
+.provider-options {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 80;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid #CBD5E1;
+  border-radius: 14px;
+  background: #FFFFFF;
+  box-shadow: 0 18px 40px rgba(15,23,42,0.16);
+}
+.provider-combobox.open .provider-options {
+  display: block;
+}
+.provider-option {
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #334155;
+  font-size: 0.86rem;
+  text-align: left;
+  cursor: pointer;
+}
+.provider-option:hover,
+.provider-option.active {
+  background: var(--primary-light);
+  color: var(--primary);
+}
 .settings-card .btn-row {
   display: flex;
   justify-content: center;
@@ -601,6 +662,14 @@ body {
 .chat-msg .bubble details[open] summary::before {
   transform: rotate(90deg);
 }
+.chat-msg .bubble details.thinking-running summary {
+  color: #7C3AED;
+  background: #F5F3FF;
+}
+.chat-msg .bubble details.thinking-done summary {
+  color: #6B7280;
+  background: #F9FAFB;
+}
 .chat-msg .bubble details .detail-body {
   padding: 6px 10px;
   font-size: 0.75rem;
@@ -615,6 +684,72 @@ body {
 .chat-msg .bubble details .detail-body.tool-body {
   font-family: monospace;
   font-size: 0.72rem;
+}
+.chat-msg .bubble details.tool-running summary {
+  color: #2563EB;
+  background: #EFF6FF;
+}
+.chat-msg .bubble details.tool-done summary {
+  color: #059669;
+  background: #ECFDF5;
+}
+.chat-msg .bubble details.tool-error summary {
+  color: #DC2626;
+  background: #FEF2F2;
+}
+.chat-msg .bubble .tool-status-line {
+  margin-bottom: 6px;
+  color: #6B7280;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.chat-msg .bubble .tool-progress-meta {
+  margin-top: 4px;
+  color: #6B7280;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.68rem;
+}
+.chat-msg .bubble .tool-progress-bar {
+  display: none;
+  height: 6px;
+  margin: 6px 0 2px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #E5E7EB;
+}
+.chat-msg .bubble .tool-progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563EB;
+  transition: width 0.2s ease;
+}
+.chat-msg .bubble details.tool-done .tool-progress-fill {
+  background: #059669;
+}
+.chat-msg .bubble details.tool-error .tool-progress-fill {
+  background: #DC2626;
+}
+.chat-msg .bubble .tool-args,
+.chat-msg .bubble .tool-progress-log,
+.chat-msg .bubble .tool-result {
+  margin-top: 6px;
+}
+.chat-msg .bubble .tool-progress-log {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 120px;
+  overflow-y: auto;
+  color: #6B7280;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.chat-msg .bubble .tool-progress-item {
+  padding-left: 8px;
+  border-left: 2px solid #BFDBFE;
+}
+.chat-msg .bubble .tool-result {
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
 }
 .chat-msg .bubble .response-block {
   margin-top: 8px;
@@ -634,6 +769,38 @@ body {
   border-top-color: var(--primary);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
+}
+@keyframes typingDotPulse {
+  0%, 80%, 100% { opacity: 0.28; transform: translateY(0) scale(0.82); }
+  40% { opacity: 1; transform: translateY(-2px) scale(1); }
+}
+.agent-typing-line {
+  display: flex;
+  align-items: center;
+  min-height: 20px;
+  margin-top: 6px;
+}
+.chat-msg.assistant .bubble > .agent-typing-line:first-child {
+  margin-top: 0;
+}
+.agent-typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+.agent-typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: typingDotPulse 1.1s ease-in-out infinite;
+}
+.agent-typing-dots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.agent-typing-dots span:nth-child(3) {
+  animation-delay: 0.32s;
 }
 .hidden { display: none !important; }
 
@@ -833,6 +1000,7 @@ body {
 .data-preview-section {
   flex: 1 0 100%;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid var(--border);
@@ -1051,6 +1219,7 @@ body {
 /* Data grid */
 .data-grid-wrap {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   position: relative;
 }
@@ -1165,6 +1334,26 @@ body {
 .selection-bar .ask-btn:hover {
   background: var(--primary);
   color: #fff;
+}
+.selection-confirm-btn {
+  position: fixed;
+  display: none;
+  z-index: 90;
+  height: 18px;
+  min-width: 34px;
+  padding: 1px 6px;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  background: rgba(37,99,235,0.96);
+  color: #FFFFFF;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(37,99,235,0.22);
+}
+.selection-confirm-btn.visible {
+  display: block;
 }
 
 /* Resize handle between panels */
@@ -1351,8 +1540,21 @@ body {
             <div class="hint" data-i18n="settings.api_format_hint">Choose the actual API protocol used by your provider.</div>
           </div>
           <div class="form-group">
+            <label for="apiAlias" data-i18n="settings.api_alias">Alias</label>
+            <div class="provider-combobox" id="aliasCombobox">
+              <input type="text" id="apiAlias" placeholder="default" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="aliasOptions">
+              <button type="button" class="provider-dropdown-btn" id="aliasDropdownBtn" aria-label="Select API alias">⌄</button>
+              <div class="provider-options" id="aliasOptions" role="listbox"></div>
+            </div>
+            <div class="hint" data-i18n="settings.api_alias_hint">Name this API profile, then pick it later from history.</div>
+          </div>
+          <div class="form-group">
             <label for="provider" data-i18n="settings.provider">Provider</label>
-            <input type="text" id="provider" placeholder="deepseek">
+            <div class="provider-combobox" id="providerCombobox">
+              <input type="text" id="provider" placeholder="deepseek" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="providerOptions">
+              <button type="button" class="provider-dropdown-btn" id="providerDropdownBtn" aria-label="Select provider">⌄</button>
+              <div class="provider-options" id="providerOptions" role="listbox"></div>
+            </div>
             <div class="hint" data-i18n="settings.provider_hint">Provider name for LLM API, such as openai, deepseek, ollama, zhipu, qwen, or anthropic.</div>
           </div>
           <div class="form-group">
@@ -1361,6 +1563,15 @@ body {
               <option value="en" data-i18n="settings.lang.en">English</option>
               <option value="zh" data-i18n="settings.lang.zh">Chinese</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label data-i18n="settings.multimodal">Visual Context</label>
+            <select id="multimodalSelect">
+              <option value="auto" data-i18n="settings.multimodal.auto">Auto</option>
+              <option value="on" data-i18n="settings.multimodal.on">On</option>
+              <option value="off" data-i18n="settings.multimodal.off">Off</option>
+            </select>
+            <div class="hint" data-i18n="settings.multimodal_hint">Attach generated plots to vision-capable models for trend analysis.</div>
           </div>
           <div class="form-group settings-wide">
             <label for="openaiKey" data-i18n="settings.openai.key">API Key</label>
@@ -1418,11 +1629,13 @@ const I18N = {
     'settings.title': 'API Configuration',
     'settings.desc': 'Configure your LLM provider. Works with OpenAI, Ollama, vLLM, LiteLLM, or any OpenAI-compatible endpoint.',
     'settings.api_format': 'API Format', 'settings.api_format_hint': 'Choose the actual API protocol used by your provider.',
+    'settings.api_alias': 'Alias', 'settings.api_alias_hint': 'Name this API profile, then pick it later from history.',
     'settings.format.openai': 'OpenAI-compatible', 'settings.format.anthropic': 'Anthropic',
-    'settings.provider': 'Provider', 'settings.provider_hint': 'Provider name for LLM API, such as openai, deepseek, ollama, zhipu, qwen, or anthropic.', 'settings.provider.auto': 'Auto-detect', 'settings.provider.openai': 'OpenAI / OpenAI-compatible', 'settings.provider.anthropic': 'Anthropic Claude',
+    'settings.provider': 'Provider', 'settings.provider_hint': 'Provider name for LLM API, such as openai, deepseek, ollama, zhipu, qwen, or anthropic.', 'settings.provider.auto': 'Auto-detect', 'settings.provider.openai': 'OpenAI / OpenAI-compatible', 'settings.provider.anthropic': 'Anthropic Claude', 'settings.provider.deepseek': 'DeepSeek', 'settings.provider.ollama': 'Ollama', 'settings.provider.qwen': 'Qwen / DashScope', 'settings.provider.zhipu': 'Zhipu GLM', 'settings.provider.moonshot': 'Moonshot Kimi', 'settings.provider.openrouter': 'OpenRouter', 'settings.provider.gemini': 'Google Gemini', 'settings.provider.siliconflow': 'SiliconFlow', 'settings.provider.vllm': 'vLLM', 'settings.provider.litellm': 'LiteLLM',
     'settings.openai.title': 'OpenAI / OpenAI-Compatible', 'settings.openai.key': 'API Key', 'settings.openai.key_hint': 'Required. For Ollama, use any value.', 'settings.openai.url': 'Base URL', 'settings.openai.url_hint': 'Custom endpoint for compatible APIs (Ollama, vLLM, DeepSeek, etc.)', 'settings.openai.model': 'Model',
     'settings.anthropic.title': 'Anthropic Claude', 'settings.anthropic.key': 'API Key', 'settings.anthropic.key_hint': 'Requires: pip install anthropic', 'settings.anthropic.model': 'Model',
     'settings.lang': 'Language / 语言', 'settings.lang.en': 'English', 'settings.lang.zh': 'Chinese',
+    'settings.multimodal': 'Visual Context', 'settings.multimodal_hint': 'Attach generated plots to vision-capable models for trend analysis.', 'settings.multimodal.auto': 'Auto', 'settings.multimodal.on': 'On', 'settings.multimodal.off': 'Off',
     'settings.save': 'Save & Connect', 'settings.load': 'Reload from Disk',
     'data.upload': 'Click to upload', 'data.upload_or': ' or drag a CSV file here',
     'data.persist': 'Save to database for later reuse',
@@ -1450,11 +1663,13 @@ const I18N = {
     'settings.title': 'API 配置',
     'settings.desc': '配置你的大模型服务商。支持 OpenAI、Anthropic、Ollama、vLLM、LiteLLM 等。',
     'settings.api_format': 'API 格式', 'settings.api_format_hint': '请选择你的 API 提供商实际兼容的协议格式。',
+    'settings.api_alias': '别名', 'settings.api_alias_hint': '给这套 API 配置起一个别名，之后可从历史记录中切换。',
     'settings.format.openai': 'OpenAI', 'settings.format.anthropic': 'Anthropic',
-    'settings.provider': '服务商', 'settings.provider_hint': '大模型服务商名称，例如 openai、deepseek、ollama、zhipu、qwen 或 anthropic。', 'settings.provider.auto': '自动检测', 'settings.provider.openai': 'OpenAI / OpenAI 兼容', 'settings.provider.anthropic': 'Anthropic Claude',
+    'settings.provider': '服务商', 'settings.provider_hint': '大模型服务商名称，例如 openai、deepseek、ollama、zhipu、qwen 或 anthropic。', 'settings.provider.auto': '自动检测', 'settings.provider.openai': 'OpenAI / OpenAI 兼容', 'settings.provider.anthropic': 'Anthropic Claude', 'settings.provider.deepseek': 'DeepSeek', 'settings.provider.ollama': 'Ollama', 'settings.provider.qwen': 'Qwen / DashScope', 'settings.provider.zhipu': '智谱 GLM', 'settings.provider.moonshot': 'Moonshot Kimi', 'settings.provider.openrouter': 'OpenRouter', 'settings.provider.gemini': 'Google Gemini', 'settings.provider.siliconflow': '硅基流动', 'settings.provider.vllm': 'vLLM', 'settings.provider.litellm': 'LiteLLM',
     'settings.openai.title': 'OpenAI / OpenAI 兼容', 'settings.openai.key': 'API 密钥', 'settings.openai.key_hint': '必填。使用 Ollama 时填任意值。', 'settings.openai.url': 'Base URL', 'settings.openai.url_hint': '兼容接口地址，例如 Ollama、vLLM、DeepSeek 等。', 'settings.openai.model': '模型',
     'settings.anthropic.title': 'Anthropic Claude', 'settings.anthropic.key': 'API 密钥', 'settings.anthropic.key_hint': '需要：pip install anthropic', 'settings.anthropic.model': '模型',
     'settings.lang': 'Language / 语言', 'settings.lang.en': 'English', 'settings.lang.zh': '中文',
+    'settings.multimodal': '视觉上下文', 'settings.multimodal_hint': '将生成的图形传给支持视觉输入的大模型，用于趋势分析。', 'settings.multimodal.auto': '自动', 'settings.multimodal.on': '开启', 'settings.multimodal.off': '关闭',
     'settings.save': '保存并连接', 'settings.load': '从磁盘加载',
     'data.upload': '点击上传', 'data.upload_or': ' 或拖拽 CSV 文件到此处',
     'data.persist': '保存到数据库以便复用',
@@ -1487,6 +1702,12 @@ function applyLanguage(lang) {
     el.title = t(el.dataset.i18nTitle) || el.title;
   });
   document.querySelectorAll('.multi-select').forEach(updateMultiSelectLabel);
+  if (typeof renderProviderOptions === 'function' && typeof providerEl !== 'undefined') {
+    renderProviderOptions(providerEl.value);
+  }
+  if (typeof renderAliasOptions === 'function' && typeof apiAliasEl !== 'undefined') {
+    renderAliasOptions(apiAliasEl.value);
+  }
 }
 marked.setOptions({ breaks: true, gfm: true });
 function renderMarkdown(text) { if (!text) return ''; try { return marked.parse(text); } catch (e) { return escapeHtml(text); } }
@@ -1625,7 +1846,7 @@ function resizeMsgInput() {
   msgInput.style.height = msgInput.scrollHeight + 'px';
 }
 
-document.addEventListener('click', () => closeOtherMultiSelects(null));
+document.addEventListener('click', () => { closeOtherMultiSelects(null); closeProviderOptions(); closeAliasOptions(); });
 
 // ── Tabs ─────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -1713,8 +1934,9 @@ function addMessage(role, text) {
 // ── Chat ─────────────────────────────────────────
 let streamBuffer = '';
 let streamBlocks = [];  // [{type, content}] for current response
-let thinkingDiv = null;
+let activeThinkingBlock = null;
 let toolCounts = {};   // track tool call counts
+let activeToolTimers = [];
 let currentMsgDiv = null;
 
 function createMsgContainer() {
@@ -1728,32 +1950,216 @@ function createMsgContainer() {
   return { div, bubble };
 }
 
-function addThinkingBlock(bubble) {
-  const details = document.createElement('details');
-  const summary = document.createElement('summary');
-  summary.textContent = currentLang === 'zh' ? '思考过程' : 'Thinking';
-  details.appendChild(summary);
-  const body = document.createElement('div');
-  body.className = 'detail-body';
-  details.appendChild(body);
-  bubble.appendChild(details);
-  return body;
+function typingDotsHtml(kind) {
+  const label = kind === 'replying'
+    ? (currentLang === 'zh' ? '正在回复' : 'Replying')
+    : (currentLang === 'zh' ? '正在思考' : 'Thinking');
+  return '<span class="agent-typing-line" role="status" aria-label="' + escapeHtml(label) + '"><span class="agent-typing-dots" aria-hidden="true"><span></span><span></span><span></span></span></span>';
 }
 
-function addToolBlock(bubble, toolName, args) {
+function removeTypingIndicators(root) {
+  root.querySelectorAll('.agent-typing-line').forEach(el => el.remove());
+}
+
+function setTypingIndicator(root, kind) {
+  removeTypingIndicators(root);
+  root.insertAdjacentHTML('beforeend', typingDotsHtml(kind || 'thinking'));
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function thinkingSummaryText(done) {
+  if (currentLang === 'zh') return done ? '已完成思考' : '正在思考中...';
+  return done ? 'Thinking complete' : 'Thinking...';
+}
+
+function addThinkingBlock(bubble) {
+  const details = document.createElement('details');
+  details.className = 'thinking-running';
+  details.open = true;
+  const summary = document.createElement('summary');
+  summary.textContent = thinkingSummaryText(false);
+  details.appendChild(summary);
+  const body = document.createElement('div');
+  body.className = 'detail-body thinking-body';
+  details.appendChild(body);
+  details._thinkingText = '';
+  bubble.appendChild(details);
+  return { details, body };
+}
+
+function ensureThinkingBlock(bubble) {
+  if (!activeThinkingBlock || !activeThinkingBlock.details.parentElement || !activeThinkingBlock.details.classList.contains('thinking-running')) {
+    activeThinkingBlock = addThinkingBlock(bubble);
+  }
+  return activeThinkingBlock;
+}
+
+function appendThinkingText(bubble, text) {
+  const block = ensureThinkingBlock(bubble);
+  block.details._thinkingText = (block.details._thinkingText || '') + (text || '');
+  removeTypingIndicators(block.body);
+  block.body.innerHTML = (renderMarkdown(block.details._thinkingText) || '') + typingDotsHtml('thinking');
+  block.body.scrollTop = block.body.scrollHeight;
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function finishThinkingBlock(block) {
+  const target = block || activeThinkingBlock;
+  if (!target || !target.details || !target.details.parentElement) {
+    if (!block) activeThinkingBlock = null;
+    return;
+  }
+  removeTypingIndicators(target.body);
+  target.details.classList.remove('thinking-running');
+  target.details.classList.add('thinking-done');
+  const summary = target.details.querySelector('summary');
+  if (summary) summary.textContent = thinkingSummaryText(true);
+  target.details.open = false;
+  if (!block || target === activeThinkingBlock) activeThinkingBlock = null;
+}
+
+function clearActiveToolTimers() {
+  activeToolTimers.forEach(timer => clearInterval(timer));
+  activeToolTimers = [];
+}
+
+function formatToolElapsed(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return '';
+  if (value < 1) return Math.max(1, Math.round(value * 1000)) + 'ms';
+  return value.toFixed(value < 10 ? 2 : 1) + 's';
+}
+
+function addToolBlock(bubble, toolName, args, event) {
   toolCounts[toolName] = (toolCounts[toolName] || 0) + 1;
   const count = toolCounts[toolName];
   const details = document.createElement('details');
+  details.className = 'tool-running';
+  details.dataset.toolName = toolName || '';
+  if (event && event.call_id) details.dataset.toolCallId = event.call_id;
+  if (event && event.index !== undefined && event.index !== null) details.dataset.toolIndex = String(event.index);
   const summary = document.createElement('summary');
-  const label = currentLang === 'zh' ? '已调用' : 'Called';
-  summary.textContent = `${label} ${count} 次 ${toolName}`;
+  summary.textContent = currentLang === 'zh'
+    ? `正在运行 ${toolName}（第 ${count} 次）`
+    : `Running ${toolName} (#${count})`;
   details.appendChild(summary);
   const body = document.createElement('div');
   body.className = 'detail-body tool-body';
-  body.textContent = '参数: ' + JSON.stringify(args, null, 2);
+  const status = document.createElement('div');
+  status.className = 'tool-status-line';
+  status.textContent = currentLang === 'zh' ? '正在执行，等待返回结果...' : 'Running, waiting for result...';
+  const progressBar = document.createElement('div');
+  progressBar.className = 'tool-progress-bar';
+  const progressFill = document.createElement('div');
+  progressFill.className = 'tool-progress-fill';
+  progressBar.appendChild(progressFill);
+  const progressMeta = document.createElement('div');
+  progressMeta.className = 'tool-progress-meta';
+  const argsBlock = document.createElement('div');
+  argsBlock.className = 'tool-args';
+  argsBlock.textContent = (currentLang === 'zh' ? '参数:\n' : 'Arguments:\n') + JSON.stringify(args, null, 2);
+  body.appendChild(status);
+  body.appendChild(progressBar);
+  body.appendChild(progressMeta);
+  body.appendChild(argsBlock);
   details.appendChild(body);
   bubble.appendChild(details);
+  const startedAt = performance.now();
+  const timer = setInterval(() => {
+    const elapsed = formatToolElapsed((performance.now() - startedAt) / 1000);
+    if (!details._lastProgressText) {
+      status.textContent = (currentLang === 'zh' ? '正在执行，已用时 ' : 'Running, elapsed ') + elapsed;
+    }
+  }, 1000);
+  details._toolTimer = timer;
+  activeToolTimers.push(timer);
   return details;
+}
+
+function findRunningToolBlock(bubble, toolName, callId) {
+  const blocks = Array.from(bubble.querySelectorAll('details.tool-running'));
+  if (callId) {
+    const byId = blocks.find(block => block.dataset.toolCallId === callId);
+    if (byId) return byId;
+  }
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (!toolName || blocks[i].dataset.toolName === toolName) return blocks[i];
+  }
+  return blocks.length ? blocks[blocks.length - 1] : null;
+}
+
+function toolProgressPercent(event) {
+  let percent = Number(event.progress_percent);
+  if (!Number.isFinite(percent) && event.current !== undefined && event.total !== undefined) {
+    const current = Number(event.current);
+    const total = Number(event.total);
+    if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+      percent = current / total * 100;
+    }
+  }
+  if (!Number.isFinite(percent)) return null;
+  return Math.max(0, Math.min(100, percent));
+}
+
+function updateToolProgressBar(details, event) {
+  const body = details.querySelector('.detail-body');
+  if (!body) return;
+  const percent = toolProgressPercent(event);
+  const progressBar = body.querySelector('.tool-progress-bar');
+  const progressFill = body.querySelector('.tool-progress-fill');
+  const progressMeta = body.querySelector('.tool-progress-meta');
+  if (percent !== null && progressBar && progressFill) {
+    progressBar.style.display = 'block';
+    progressFill.style.width = percent.toFixed(percent < 10 ? 1 : 0) + '%';
+  }
+  if (progressMeta) {
+    const parts = [];
+    if (event.current !== undefined && event.total !== undefined) {
+      parts.push(`${event.current}/${event.total}`);
+    }
+    if (percent !== null) {
+      parts.push(percent.toFixed(percent < 10 ? 1 : 0) + '%');
+    }
+    if (event.model) {
+      parts.push(event.model);
+    }
+    if (event.metric !== undefined && event.metric !== null) {
+      const metric = Number(event.metric);
+      parts.push('metric=' + (Number.isFinite(metric) ? metric.toPrecision(5) : event.metric));
+    }
+    progressMeta.textContent = parts.join(' · ');
+  }
+}
+
+function addToolProgress(bubble, event) {
+  const details = findRunningToolBlock(bubble, event.name, event.call_id);
+  if (!details) return;
+  const body = details.querySelector('.detail-body');
+  if (!body) return;
+  const elapsed = formatToolElapsed(event.elapsed_seconds);
+  const message = event.message || event.stage || (currentLang === 'zh' ? '处理中...' : 'Processing...');
+  updateToolProgressBar(details, event);
+  const status = body.querySelector('.tool-status-line');
+  if (status) {
+    status.textContent = (elapsed ? `[${elapsed}] ` : '') + message;
+  }
+  const lineText = (elapsed ? `[${elapsed}] ` : '') + message;
+  if (details._lastProgressText === lineText) return;
+  details._lastProgressText = lineText;
+  let log = body.querySelector('.tool-progress-log');
+  if (!log) {
+    log = document.createElement('div');
+    log.className = 'tool-progress-log';
+    body.appendChild(log);
+  }
+  const item = document.createElement('div');
+  item.className = 'tool-progress-item';
+  item.textContent = lineText;
+  log.appendChild(item);
+  while (log.children.length > 30) {
+    log.removeChild(log.firstChild);
+  }
+  log.scrollTop = log.scrollHeight;
 }
 
 function addResponseBlock(bubble) {
@@ -1766,6 +2172,7 @@ function addResponseBlock(bubble) {
 function appendToBubble(bubble, text) {
   const wasEmpty = streamBuffer === '';
   streamBuffer += text;
+  removeTypingIndicators(bubble);
   // Find or create the response block; create fresh when buffer was just reset
   let block = !wasEmpty ? bubble.querySelector('.response-block:last-child') : null;
   if (!block) {
@@ -1775,13 +2182,15 @@ function appendToBubble(bubble, text) {
     }
     block = addResponseBlock(bubble);
   }
-  block.innerHTML = renderMarkdown(streamBuffer) || '<span class="spinner"></span>';
+  block.innerHTML = (renderMarkdown(streamBuffer) || '') + typingDotsHtml('replying');
   chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
 async function sendToAgent(message) {
   if (!message || !message.trim()) return;
-  const selectedContext = typeof formatSelectionContext === 'function' ? formatSelectionContext() : '';
+  const selectionPayload = typeof buildSelectionContext === 'function' ? buildSelectionContext() : { text: '', selection: null };
+  const selectedContext = selectionPayload && selectionPayload.text ? selectionPayload.text : '';
+  const selectedDataContext = selectionPayload && selectionPayload.selection ? selectionPayload.selection : null;
   sendBtn.disabled = true;
   msgInput.value = '';
   resizeMsgInput();
@@ -1790,23 +2199,25 @@ async function sendToAgent(message) {
   // Reset state
   streamBuffer = '';
   streamBlocks = [];
-  thinkingDiv = null;
+  activeThinkingBlock = null;
   toolCounts = {};
+  clearActiveToolTimers();
   const { bubble } = createMsgContainer();
   currentMsgDiv = bubble;
 
-  bubble.innerHTML = '<span class="spinner"></span>';
+  bubble.innerHTML = typingDotsHtml('thinking');
 
   try {
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, selected_context: selectedContext }),
+      body: JSON.stringify({ message, selected_context: selectedContext, selected_data_context: selectedDataContext }),
     });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '', first = true;
     let hadContent = false;
+    let hadError = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1819,32 +2230,63 @@ async function sendToAgent(message) {
           try {
             const d = JSON.parse(line.slice(6));
             if (d.type === 'reasoning') {
-              if (!thinkingDiv) {
-                bubble.innerHTML = '';
-                thinkingDiv = addThinkingBlock(bubble);
-              }
-              thinkingDiv.innerHTML = renderMarkdown((thinkingDiv.textContent || '') + (d.text || ''));
+              hadContent = true;
+              removeTypingIndicators(bubble);
+              appendThinkingText(bubble, d.text || '');
             } else if (d.type === 'tool_call') {
-              if (thinkingDiv && thinkingDiv.parentElement) {
-                thinkingDiv.parentElement.open = false;
-              }
-              const details = addToolBlock(bubble, d.name, d.arguments || {});
+              hadContent = true;
+              finishThinkingBlock();
+              removeTypingIndicators(bubble);
+              const details = addToolBlock(bubble, d.name, d.arguments || {}, d);
               if (Object.values(toolCounts).reduce((a,b)=>a+b,0) === 1) {
                 details.open = true;
               }
               // Reset text buffer so post-tool text starts in a fresh block
               streamBuffer = '';
+              setTypingIndicator(bubble, 'thinking');
             } else if (d.type === 'tool_result') {
-              const allDetails = bubble.querySelectorAll('details');
-              const lastDetail = allDetails[allDetails.length - 1];
-              if (lastDetail) {
-                const body = lastDetail.querySelector('.detail-body');
-                if (body) {
-                  body.textContent += '\n\n' + (currentLang === 'zh' ? '返回:' : 'Result:') + '\n' + (d.result || '');
+              hadContent = true;
+              const details = findRunningToolBlock(bubble, d.name, d.call_id);
+              if (details) {
+                if (details._toolTimer) clearInterval(details._toolTimer);
+                const resultText = d.result || '';
+                updateToolProgressBar(details, d);
+                const isError = d.success === false || d.status === 'error' || resultText.startsWith('Error');
+                details.classList.remove('tool-running');
+                details.classList.add(isError ? 'tool-error' : 'tool-done');
+                const elapsed = formatToolElapsed(d.elapsed_seconds);
+                const summary = details.querySelector('summary');
+                if (summary) {
+                  summary.textContent = currentLang === 'zh'
+                    ? `${isError ? '工具失败' : '工具完成'} ${d.name || details.dataset.toolName || ''}${elapsed ? `（${elapsed}）` : ''}`
+                    : `${isError ? 'Tool failed' : 'Tool finished'} ${d.name || details.dataset.toolName || ''}${elapsed ? ` (${elapsed})` : ''}`;
                 }
-                lastDetail.open = false;
+                const body = details.querySelector('.detail-body');
+                if (body) {
+                  const status = body.querySelector('.tool-status-line');
+                  if (status) {
+                    status.textContent = currentLang === 'zh'
+                      ? `${isError ? '执行失败' : '执行完成'}${elapsed ? `，耗时 ${elapsed}` : ''}`
+                      : `${isError ? 'Failed' : 'Finished'}${elapsed ? ` in ${elapsed}` : ''}`;
+                  }
+                  let resultBlock = body.querySelector('.tool-result');
+                  if (!resultBlock) {
+                    resultBlock = document.createElement('div');
+                    resultBlock.className = 'tool-result';
+                    body.appendChild(resultBlock);
+                  }
+                  resultBlock.textContent = (currentLang === 'zh' ? '返回:\n' : 'Result:\n') + resultText;
+                }
+                details.open = isError;
               }
+              setTypingIndicator(bubble, 'replying');
+            } else if (d.type === 'tool_progress') {
+              hadContent = true;
+              addToolProgress(bubble, d);
             } else if (d.type === 'plot_image') {
+              hadContent = true;
+              finishThinkingBlock();
+              removeTypingIndicators(bubble);
               const plotBlock = document.createElement('div');
               plotBlock.style.cssText = 'margin:8px 0;';
               const img = document.createElement('img');
@@ -1855,7 +2297,9 @@ async function sendToAgent(message) {
               img.addEventListener('click', function() { openLightbox(d.url); });
               plotBlock.appendChild(img);
               bubble.appendChild(plotBlock);
+              setTypingIndicator(bubble, 'replying');
             } else if (d.text) {
+              finishThinkingBlock();
               if (first) {
                 streamBuffer = '';
                 first = false;
@@ -1863,17 +2307,25 @@ async function sendToAgent(message) {
               hadContent = true;
               appendToBubble(bubble, d.text);
             } else if (d.error) {
+              finishThinkingBlock();
+              hadError = true;
               bubble.parentElement.classList.add('error');
               bubble.innerHTML = '<strong>Error:</strong> ' + escapeHtml(d.error);
+            } else if (d.status === 'thinking') {
+              setTypingIndicator(bubble, 'thinking');
             }
           } catch (e) {}
         }
       }
     }
-    if (!hadContent && streamBuffer.trim() === '') {
+    clearActiveToolTimers();
+    finishThinkingBlock();
+    removeTypingIndicators(bubble);
+    if (!hadError && !hadContent && streamBuffer.trim() === '') {
       bubble.innerHTML = '<em>' + escapeHtml(t('chat.no_response')) + '</em>';
     }
   } catch (e) {
+    clearActiveToolTimers();
     bubble.parentElement.classList.add('error');
     bubble.innerHTML = '<strong>Connection error:</strong> ' + escapeHtml(e.message);
   }
@@ -2249,13 +2701,206 @@ $('applyColsBtn').addEventListener('click', async () => {
 });
 
 // ── Settings ─────────────────────────────────────
+const apiAliasEl = $('apiAlias');
+const aliasCombobox = $('aliasCombobox');
+const aliasOptionsEl = $('aliasOptions');
+const aliasDropdownBtn = $('aliasDropdownBtn');
 const providerEl = $('provider');
+const providerCombobox = $('providerCombobox');
+const providerOptionsEl = $('providerOptions');
+const providerDropdownBtn = $('providerDropdownBtn');
 const providerFormatEls = Array.from(document.querySelectorAll('input[name="providerFormat"]'));
+const providerPresets = [
+  { value: 'auto', label: 'Auto-detect' },
+  { value: 'openai', label: 'OpenAI / OpenAI-compatible' },
+  { value: 'anthropic', label: 'Anthropic Claude' },
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'ollama', label: 'Ollama' },
+  { value: 'qwen', label: 'Qwen / DashScope' },
+  { value: 'zhipu', label: 'Zhipu GLM' },
+  { value: 'moonshot', label: 'Moonshot Kimi' },
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'gemini', label: 'Google Gemini' },
+  { value: 'siliconflow', label: 'SiliconFlow' },
+  { value: 'vllm', label: 'vLLM' },
+  { value: 'litellm', label: 'LiteLLM' },
+];
 let loadedSettingsData = null;
+let apiAliasItems = [];
 
 function getProviderFormat() {
   const checked = document.querySelector('input[name="providerFormat"]:checked');
   return checked ? checked.value : 'openai';
+}
+
+function normalizeProviderValue(value) {
+  return String(value || '').trim();
+}
+
+function normalizeAliasValue(value) {
+  return String(value || '').trim();
+}
+
+function aliasItemLabel(item) {
+  const alias = item.alias || '';
+  const details = [item.provider || '', item.model || ''].filter(Boolean).join(' · ');
+  return details ? alias + ' — ' + details : alias;
+}
+
+function matchingAliasesForProvider(provider) {
+  const key = normalizeProviderValue(provider).toLowerCase();
+  if (!key) return apiAliasItems;
+  return apiAliasItems.filter(item => String(item.provider || '').toLowerCase() === key);
+}
+
+function visibleAliasOptions(filter) {
+  const needle = normalizeAliasValue(filter).toLowerCase();
+  const current = normalizeAliasValue(apiAliasEl.value);
+  const scopedAliases = matchingAliasesForProvider(providerEl.value);
+  const options = scopedAliases.filter(item => {
+    if (!needle) return true;
+    return aliasItemLabel(item).toLowerCase().includes(needle);
+  });
+  if (current && !scopedAliases.some(item => String(item.alias || '').toLowerCase() === current.toLowerCase())) {
+    const customLabel = currentLang === 'zh' ? '使用 “' + current + '”' : 'Use "' + current + '"';
+    options.unshift({ alias: current, provider: '', model: '', label: customLabel });
+  }
+  return options;
+}
+
+function renderAliasOptions(filter) {
+  if (!aliasOptionsEl) return;
+  aliasOptionsEl.innerHTML = '';
+  const current = normalizeAliasValue(apiAliasEl.value).toLowerCase();
+  visibleAliasOptions(filter).forEach(item => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'provider-option' + (String(item.alias || '').toLowerCase() === current ? ' active' : '');
+    btn.dataset.value = item.alias || '';
+    btn.setAttribute('role', 'option');
+    btn.setAttribute('aria-selected', String(item.alias || '').toLowerCase() === current ? 'true' : 'false');
+    btn.textContent = item.label || aliasItemLabel(item);
+    aliasOptionsEl.appendChild(btn);
+  });
+}
+
+function openAliasOptions(filter) {
+  renderAliasOptions(filter);
+  aliasCombobox.classList.add('open');
+  apiAliasEl.setAttribute('aria-expanded', 'true');
+}
+
+function closeAliasOptions() {
+  if (!aliasCombobox) return;
+  aliasCombobox.classList.remove('open');
+  apiAliasEl.setAttribute('aria-expanded', 'false');
+}
+
+function setAliasValue(value) {
+  apiAliasEl.value = normalizeAliasValue(value);
+  renderAliasOptions(apiAliasEl.value);
+}
+
+function providerPresetLabel(item) {
+  const translated = t('settings.provider.' + item.value);
+  return translated === 'settings.provider.' + item.value ? item.label : translated;
+}
+
+function providerOptionItems() {
+  const items = [];
+  const seen = new Set();
+  function add(value, label) {
+    const normalized = normalizeProviderValue(value);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push({ value: normalized, label: label || normalized });
+  }
+  providerPresets.forEach(item => add(item.value, item.label));
+  apiAliasItems.forEach(item => add(item.provider, item.provider));
+  return items;
+}
+
+function visibleProviderOptions(filter) {
+  const needle = normalizeProviderValue(filter).toLowerCase();
+  const current = normalizeProviderValue(providerEl.value);
+  const source = providerOptionItems();
+  const options = source.filter(item => {
+    if (!needle) return true;
+    const label = providerPresetLabel(item).toLowerCase();
+    return item.value.toLowerCase().includes(needle) || label.includes(needle);
+  });
+  if (current && !source.some(item => item.value.toLowerCase() === current.toLowerCase())) {
+    const customLabel = currentLang === 'zh' ? '使用 “' + current + '”' : 'Use "' + current + '"';
+    options.unshift({ value: current, label: customLabel });
+  }
+  return options;
+}
+
+function renderProviderOptions(filter) {
+  if (!providerOptionsEl) return;
+  providerOptionsEl.innerHTML = '';
+  const current = normalizeProviderValue(providerEl.value).toLowerCase();
+  visibleProviderOptions(filter).forEach(item => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'provider-option' + (item.value.toLowerCase() === current ? ' active' : '');
+    btn.dataset.value = item.value;
+    btn.setAttribute('role', 'option');
+    btn.setAttribute('aria-selected', item.value.toLowerCase() === current ? 'true' : 'false');
+    btn.textContent = providerPresetLabel(item);
+    providerOptionsEl.appendChild(btn);
+  });
+}
+
+function openProviderOptions(filter) {
+  renderProviderOptions(filter);
+  providerCombobox.classList.add('open');
+  providerEl.setAttribute('aria-expanded', 'true');
+}
+
+function closeProviderOptions() {
+  if (!providerCombobox) return;
+  providerCombobox.classList.remove('open');
+  providerEl.setAttribute('aria-expanded', 'false');
+}
+
+function setProviderValue(value, syncFormat) {
+  providerEl.value = normalizeProviderValue(value);
+  renderProviderOptions('');
+  renderAliasOptions('');
+  if (syncFormat) {
+    const lower = providerEl.value.toLowerCase();
+    setProviderFormat(lower === 'anthropic' ? 'anthropic' : 'openai', false, true);
+  }
+}
+
+function clearCredentialFields() {
+  const isAnthropic = getProviderFormat() === 'anthropic';
+  $('openaiKey').value = '';
+  $('openaiKey').placeholder = isAnthropic ? 'sk-ant-...' : 'sk-...';
+  $('openaiModel').value = '';
+  $('openaiUrl').value = '';
+}
+
+async function handleProviderSelection(value) {
+  setProviderValue(value, true);
+  const matches = matchingAliasesForProvider(providerEl.value);
+  const currentAlias = normalizeAliasValue(apiAliasEl.value);
+  const currentStillMatches = matches.some(item => item.alias === currentAlias);
+  const nextAlias = currentStillMatches ? currentAlias : (matches[0] && matches[0].alias);
+  if (nextAlias) {
+    await loadSettings(nextAlias, false);
+  } else {
+    setAliasValue(normalizeProviderValue(providerEl.value) || 'default');
+    clearCredentialFields();
+  }
+}
+
+function updateAliasItems(data) {
+  apiAliasItems = Array.isArray(data.api_aliases) ? data.api_aliases : [];
+  setAliasValue(data.api_alias || data.active_api_alias || 'default');
 }
 
 function applyCredentialFields(data, format) {
@@ -2273,6 +2918,26 @@ function applyCredentialFields(data, format) {
   $('openaiUrl').value = data.openai_base_url || '';
 }
 
+function applySettingsData(data) {
+  loadedSettingsData = data;
+  const format = data.api_format || ((data.provider || '').toLowerCase() === 'anthropic' ? 'anthropic' : 'openai');
+  setProviderValue(data.provider || 'openai', false);
+  setProviderFormat(format, false, false);
+  updateAliasItems(data);
+  applyCredentialFields(data, format);
+  $('langSelect').value = data.lang || 'en';
+  $('multimodalSelect').value = data.multimodal || 'auto';
+}
+
+async function loadSettings(alias, showStatus) {
+  const suffix = alias ? '?alias=' + encodeURIComponent(alias) : '';
+  const res = await fetch('/api/settings/load' + suffix);
+  const data = await res.json();
+  applySettingsData(data);
+  if (showStatus) showMsg('settingsSaveStatus', 'Settings loaded.', 'success');
+  return data;
+}
+
 function setProviderFormat(format, syncProvider, syncFields) {
   const next = format === 'anthropic' ? 'anthropic' : 'openai';
   providerFormatEls.forEach(el => {
@@ -2281,13 +2946,115 @@ function setProviderFormat(format, syncProvider, syncFields) {
     if (option) option.classList.toggle('active', el.checked);
   });
   if (syncProvider && next === 'anthropic') {
-    providerEl.value = 'anthropic';
+    setProviderValue('anthropic', false);
   } else if (syncProvider && (!providerEl.value || providerEl.value === 'anthropic')) {
-    providerEl.value = 'openai';
+    setProviderValue('openai', false);
   }
   if (syncFields && loadedSettingsData) {
     applyCredentialFields(loadedSettingsData, next);
   }
+}
+
+if (providerCombobox) {
+  providerCombobox.addEventListener('click', e => e.stopPropagation());
+}
+if (providerDropdownBtn) {
+  providerDropdownBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    const wasOpen = providerCombobox.classList.contains('open');
+    if (wasOpen) {
+      closeProviderOptions();
+      return;
+    }
+    providerEl.focus();
+    openProviderOptions('');
+  });
+}
+if (providerEl) {
+  providerEl.addEventListener('focus', () => renderProviderOptions(providerEl.value));
+  providerEl.addEventListener('input', () => {
+    renderProviderOptions(providerEl.value);
+    openProviderOptions(providerEl.value);
+    if (providerEl.value.trim().toLowerCase() !== 'anthropic' && getProviderFormat() === 'anthropic') {
+      setProviderFormat('openai', false, true);
+    }
+  });
+  providerEl.addEventListener('keydown', async e => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      openProviderOptions('');
+    } else if (e.key === 'Escape') {
+      closeProviderOptions();
+    } else if (e.key === 'Enter' && providerCombobox.classList.contains('open')) {
+      const active = providerOptionsEl.querySelector('.provider-option.active') || providerOptionsEl.querySelector('.provider-option');
+      if (active) {
+        e.preventDefault();
+        await handleProviderSelection(active.dataset.value);
+        closeProviderOptions();
+      }
+    }
+  });
+}
+if (providerOptionsEl) {
+  providerOptionsEl.addEventListener('click', async e => {
+    const btn = e.target.closest('.provider-option');
+    if (!btn) return;
+    await handleProviderSelection(btn.dataset.value);
+    closeProviderOptions();
+  });
+}
+
+if (aliasCombobox) {
+  aliasCombobox.addEventListener('click', e => e.stopPropagation());
+}
+if (aliasDropdownBtn) {
+  aliasDropdownBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    const wasOpen = aliasCombobox.classList.contains('open');
+    if (wasOpen) {
+      closeAliasOptions();
+      return;
+    }
+    apiAliasEl.focus();
+    openAliasOptions('');
+  });
+}
+if (apiAliasEl) {
+  apiAliasEl.addEventListener('focus', () => renderAliasOptions(apiAliasEl.value));
+  apiAliasEl.addEventListener('input', () => {
+    renderAliasOptions(apiAliasEl.value);
+    openAliasOptions(apiAliasEl.value);
+  });
+  apiAliasEl.addEventListener('keydown', async e => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      openAliasOptions('');
+    } else if (e.key === 'Escape') {
+      closeAliasOptions();
+    } else if (e.key === 'Enter' && aliasCombobox.classList.contains('open')) {
+      const active = aliasOptionsEl.querySelector('.provider-option.active') || aliasOptionsEl.querySelector('.provider-option');
+      if (active) {
+        e.preventDefault();
+        setAliasValue(active.dataset.value);
+        closeAliasOptions();
+        if (apiAliasItems.some(item => item.alias === active.dataset.value)) {
+          await loadSettings(active.dataset.value, false);
+        }
+      }
+    }
+  });
+}
+if (aliasOptionsEl) {
+  aliasOptionsEl.addEventListener('click', async e => {
+    const btn = e.target.closest('.provider-option');
+    if (!btn) return;
+    const alias = btn.dataset.value || '';
+    setAliasValue(alias);
+    closeAliasOptions();
+    if (apiAliasItems.some(item => item.alias === alias)) {
+      await loadSettings(alias, false);
+    }
+  });
 }
 
 providerFormatEls.forEach(el => {
@@ -2298,22 +3065,16 @@ $('langSelect').addEventListener('change', () => { applyLanguage($('langSelect')
 
 $('loadSettingsBtn').addEventListener('click', async () => {
   try {
-    const res = await fetch('/api/settings/load');
-    const data = await res.json();
-    loadedSettingsData = data;
-    const format = (data.provider || '').toLowerCase() === 'anthropic' ? 'anthropic' : 'openai';
-    providerEl.value = data.provider || 'openai';
-    setProviderFormat(format, false, false);
-    applyCredentialFields(data, format);
-    $('langSelect').value = data.lang || 'en';
-    showMsg('settingsSaveStatus', 'Settings loaded.', 'success');
+    await loadSettings(normalizeAliasValue(apiAliasEl.value), true);
   } catch (e) { showMsg('settingsSaveStatus', 'Failed: ' + e.message, 'error'); }
 });
 
 $('saveSettingsBtn').addEventListener('click', async () => {
   const apiFormat = getProviderFormat();
-  const providerValue = apiFormat === 'anthropic' ? 'anthropic' : providerEl.value;
+  const providerValue = normalizeProviderValue(providerEl.value);
   const payload = {
+    api_alias: normalizeAliasValue(apiAliasEl.value) || 'default',
+    api_format: apiFormat,
     provider: providerValue,
     openai_api_key: apiFormat === 'anthropic' ? '' : $('openaiKey').value,
     openai_base_url: $('openaiUrl').value,
@@ -2321,10 +3082,12 @@ $('saveSettingsBtn').addEventListener('click', async () => {
     anthropic_api_key: apiFormat === 'anthropic' ? $('openaiKey').value : '',
     anthropic_model: apiFormat === 'anthropic' ? $('openaiModel').value : '',
     lang: $('langSelect').value,
+    multimodal: $('multimodalSelect').value,
   };
   try {
     const res = await fetch('/api/settings/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await res.json();
+    applySettingsData(data);
     showMsg('settingsSaveStatus', data.save_status || '', 'success');
     showMsg('settingsAgentStatus', data.agent_status || '', data.agent_status && data.agent_status.startsWith('Agent init failed') ? 'error' : 'success');
     applyLanguage(payload.lang);
@@ -2404,6 +3167,9 @@ let previewState = {
   selectedCells: new Set(),
   _selectStart: null,
   scrollTimer: null,
+  confirmedSelection: null,
+  lastSelectionState: null,
+  lastSelectionCell: null,
 };
 
 const ROW_HEIGHT = 26;
@@ -2648,6 +3414,7 @@ function renderDataChunk(columns, rows, startRow) {
 // ── Scroll-based lazy loading ────────────────────
 dataGridWrap.addEventListener('scroll', () => {
   if (!previewState.open) return;
+  updateSelectionConfirmButtonPosition();
   if (previewState.scrollTimer) clearTimeout(previewState.scrollTimer);
   previewState.scrollTimer = setTimeout(handleScrollLoad, 80);
 });
@@ -2735,6 +3502,116 @@ function parseCellKey(key) {
   return { row: parseInt(parts[0]), col: parseInt(parts[1]) };
 }
 
+let selectionConfirmBtn = null;
+
+function ensureSelectionConfirmButton() {
+  if (selectionConfirmBtn) return selectionConfirmBtn;
+  selectionConfirmBtn = document.createElement('button');
+  selectionConfirmBtn.type = 'button';
+  selectionConfirmBtn.className = 'selection-confirm-btn';
+  selectionConfirmBtn.textContent = currentLang === 'zh' ? '选择' : 'Select';
+  selectionConfirmBtn.title = currentLang === 'zh' ? '确认当前选中的区域' : 'Confirm selected cells';
+  selectionConfirmBtn.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    confirmCurrentSelection();
+  });
+  document.body.appendChild(selectionConfirmBtn);
+  return selectionConfirmBtn;
+}
+
+function hideSelectionConfirmButton() {
+  if (selectionConfirmBtn) selectionConfirmBtn.classList.remove('visible');
+}
+
+function selectedCellsForState(state) {
+  if (!state || !state.selectedCells) return [];
+  return [...state.selectedCells].map(parseCellKey).sort((a, b) => a.row === b.row ? a.col - b.col : a.row - b.row);
+}
+
+function invalidateConfirmedSelection() {
+  if (!previewState.confirmedSelection) return;
+  previewState.confirmedSelection = null;
+  hideSelectionConfirmButton();
+  getPreviewStates().forEach(updateSectionSelectionInfo);
+}
+
+function setLastSelectionAnchor(state, row, col) {
+  previewState.lastSelectionState = state || null;
+  previewState.lastSelectionCell = state ? { row, col } : null;
+  updateSelectionConfirmButtonPosition();
+}
+
+function updateSelectionConfirmButtonPosition() {
+  if (!previewState.lastSelectionState || !previewState.lastSelectionCell) {
+    hideSelectionConfirmButton();
+    return;
+  }
+  const state = previewState.lastSelectionState;
+  if (!state.selectedCells || !state.selectedCells.size) {
+    hideSelectionConfirmButton();
+    return;
+  }
+  const btn = ensureSelectionConfirmButton();
+  btn.textContent = currentLang === 'zh' ? '选择' : 'Select';
+  const cell = previewState.lastSelectionCell;
+  const td = state.gridBody && state.gridBody.querySelector('tr[data-row="' + cell.row + '"] td[data-col="' + cell.col + '"]');
+  if (!td) {
+    hideSelectionConfirmButton();
+    return;
+  }
+  const rect = td.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0 || rect.bottom < 0 || rect.right < 0 || rect.top > window.innerHeight || rect.left > window.innerWidth) {
+    hideSelectionConfirmButton();
+    return;
+  }
+  btn.classList.add('visible');
+  const bw = btn.offsetWidth || 34;
+  const bh = btn.offsetHeight || 18;
+  const left = Math.max(6, Math.min(window.innerWidth - bw - 6, rect.right + 4));
+  const top = Math.max(6, Math.min(window.innerHeight - bh - 6, rect.bottom + 3));
+  btn.style.left = left + 'px';
+  btn.style.top = top + 'px';
+}
+
+function isStateConfirmed(state) {
+  const payload = previewState.confirmedSelection && previewState.confirmedSelection.selection;
+  const sections = payload && Array.isArray(payload.sections) ? payload.sections : [];
+  return !!state && sections.some(item => item.dataset_id === state.datasetId);
+}
+
+function confirmedSectionForState(state) {
+  const payload = previewState.confirmedSelection && previewState.confirmedSelection.selection;
+  const sections = payload && Array.isArray(payload.sections) ? payload.sections : [];
+  if (!state || !sections.length) return null;
+  return sections.find(item => item.dataset_id === state.datasetId) || null;
+}
+
+function restoreConfirmedSelectionForState(state) {
+  const section = confirmedSectionForState(state);
+  if (!section) return;
+  const colIndexes = (section.selected_columns || [])
+    .map(col => (state.columns || []).indexOf(col))
+    .filter(idx => idx >= 0);
+  state.selectedCells.clear();
+  (section.row_ranges || []).forEach(item => {
+    if (!item || typeof item !== 'object') return;
+    const start = Math.max(0, Number(item.start) || 0);
+    const end = Math.max(start, Number(item.end == null ? start : item.end) || start);
+    for (let r = start; r <= end; r++) {
+      colIndexes.forEach(c => state.selectedCells.add(cellKey(r, c)));
+    }
+  });
+}
+
+function confirmCurrentSelection() {
+  const payload = buildCurrentSelectionContext();
+  if (!payload || !payload.selection) return;
+  previewState.confirmedSelection = payload;
+  hideSelectionConfirmButton();
+  getPreviewStates().forEach(updateSectionSelectionInfo);
+}
+
 function getSelectedCellList() {
   return [...previewState.selectedCells].map(parseCellKey).sort((a, b) => a.row === b.row ? a.col - b.col : a.row - b.row);
 }
@@ -2756,9 +3633,11 @@ function rowHasSelection(row) {
 }
 
 function clearSelection() {
+  invalidateConfirmedSelection();
   previewState.selectedCells.clear();
   previewState.anchorCell = null;
   dataGridBody.querySelectorAll('td.selected').forEach(td => td.classList.remove('selected'));
+  hideSelectionConfirmButton();
   updateSelectionInfo();
 }
 
@@ -2794,25 +3673,262 @@ function getSelectionData() {
   return cells;
 }
 
-function formatSelectionContext() {
-  const data = getSelectionData();
-  if (data.length === 0) return '';
-  const totalCells = data.length;
-
-  let ctx = 'Selected data cells from the preview (' + totalCells + ' cells)';
-  if (totalCells > 500) {
-    ctx += ' — showing first 500 cells to keep context concise';
-  }
-  ctx += '\n\n';
-
-  const displayData = totalCells > 500 ? data.slice(0, 500) : data;
-  ctx += '| Row | Column | Value |\n';
-  ctx += '|-----|--------|-------|\n';
-  displayData.forEach(d => {
-    const value = String(d.value || '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
-    ctx += '| ' + d.row + ' | ' + String(d.column).replace(/\|/g, '\\|') + ' | ' + value + ' |\n';
+function getRowValues(row) {
+  const tr = dataGridBody.querySelector('tr[data-row="' + row + '"]');
+  if (!tr) return null;
+  const values = {};
+  previewState.columns.forEach((col, ci) => {
+    const td = tr.querySelector('td[data-col="' + ci + '"]');
+    values[col] = td ? td.textContent : '';
   });
+  return values;
+}
+
+function rowsToRanges(rows) {
+  if (!rows.length) return [];
+  const ranges = [];
+  let start = rows[0];
+  let prev = rows[0];
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i] === prev + 1) {
+      prev = rows[i];
+      continue;
+    }
+    ranges.push({ start, end: prev });
+    start = rows[i];
+    prev = rows[i];
+  }
+  ranges.push({ start, end: prev });
+  return ranges;
+}
+
+function selectedRowsData(rows) {
+  return rows.map(row => {
+    const values = getRowValues(row);
+    return values ? { row: row + 1, values } : null;
+  }).filter(Boolean);
+}
+
+function parseNumericValue(value) {
+  if (value === null || value === undefined) return null;
+  const s = String(value).replace(/,/g, '').trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function summarizeNumericColumns(rowData, columns) {
+  const summaries = [];
+  (columns || previewState.columns || []).forEach(col => {
+    const values = rowData.map(r => parseNumericValue(r.values[col])).filter(v => v !== null);
+    if (!values.length) return;
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const variance = values.length > 1 ? values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (values.length - 1) : 0;
+    const first = values[0];
+    const last = values[values.length - 1];
+    const change = last - first;
+    summaries.push({
+      column: col,
+      count: values.length,
+      mean,
+      std: Math.sqrt(variance),
+      min: Math.min(...values),
+      max: Math.max(...values),
+      first,
+      last,
+      change,
+      changePct: first !== 0 ? change / Math.abs(first) * 100 : null,
+    });
+  });
+  return summaries;
+}
+
+function fmtNumber(value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '';
+  const abs = Math.abs(value);
+  const digits = abs >= 100 ? 2 : abs >= 1 ? 4 : 6;
+  return Number(value).toFixed(digits).replace(/\.?0+$/, '');
+}
+
+function escapeTableValue(value) {
+  return String(value == null ? '' : value).replace(/\|/g, '\\|').replace(/\n/g, ' ');
+}
+
+function datasetForState(state) {
+  if (!state) return null;
+  return dataWorkspaceState.datasets.find(item => item.id === state.datasetId) || null;
+}
+
+function datasetNameForState(state) {
+  const dataset = datasetForState(state);
+  return displayDatasetFilename((dataset && dataset.filename) || 'Dataset');
+}
+
+function primaryColumnValue(value) {
+  const values = asColumnList(value);
+  return values.length ? values[0] : '';
+}
+
+function stateColumnPayload(selectEl) {
+  return columnPayload(selectEl);
+}
+
+function stateRowValues(state, row) {
+  if (!state || !state.gridBody) return null;
+  const tr = state.gridBody.querySelector('tr[data-row="' + row + '"]');
+  if (!tr) return null;
+  const values = {};
+  (state.columns || []).forEach((col, ci) => {
+    const td = tr.querySelector('td[data-col="' + ci + '"]');
+    values[col] = td ? td.textContent : '';
+  });
+  return values;
+}
+
+function selectedRowsDataForState(state, rows) {
+  return rows.map(row => {
+    const values = stateRowValues(state, row);
+    return values ? { row: row + 1, values } : null;
+  }).filter(Boolean);
+}
+
+function legacyPreviewSelectionState() {
+  return {
+    datasetId: previewState.datasetId || dataWorkspaceState.activeDatasetId || null,
+    totalRows: previewState.totalRows,
+    columns: previewState.columns || [],
+    selectedCells: previewState.selectedCells || new Set(),
+    gridBody: dataGridBody,
+    timeSelect: previewTimeCol,
+    targetSelect: previewTargetCol,
+  };
+}
+
+function selectionStatesWithCells() {
+  const states = getPreviewStates().filter(state => state.selectedCells && state.selectedCells.size);
+  if (states.length) return states;
+  const legacyState = legacyPreviewSelectionState();
+  return legacyState.selectedCells.size ? [legacyState] : [];
+}
+
+function buildSelectionSectionContext(state) {
+  const selected = selectedCellsForState(state);
+  if (!selected.length) return null;
+  const rows = [...new Set(selected.map(c => c.row))].sort((a, b) => a - b);
+  const cols = [...new Set(selected.map(c => c.col))].sort((a, b) => a - b);
+  const colNames = cols.map(ci => state.columns[ci] || 'Col' + ci);
+  const rowData = selectedRowsDataForState(state, rows);
+  const timePayload = stateColumnPayload(state.timeSelect);
+  const targetPayload = stateColumnPayload(state.targetSelect);
+  const timeCol = primaryColumnValue(timePayload);
+  const timeValues = timeCol ? rowData.map(r => r.values[timeCol]).filter(v => v !== undefined && v !== null && String(v).trim() !== '') : [];
+  const timeStart = timeValues.length ? String(timeValues[0]) : '';
+  const timeEnd = timeValues.length ? String(timeValues[timeValues.length - 1]) : '';
+  const ranges = rowsToRanges(rows);
+  const rangeLabel = ranges.map(r => r.start === r.end ? String(r.start + 1) : (r.start + 1) + '-' + (r.end + 1)).join(', ');
+  const totalCells = selected.length;
+  const summaries = summarizeNumericColumns(rowData, state.columns || []);
+  return {
+    dataset_id: state.datasetId || null,
+    dataset_name: datasetNameForState(state),
+    total_rows: state.totalRows,
+    columns: state.columns || [],
+    time_col: timePayload,
+    target_col: targetPayload,
+    row_ranges: ranges,
+    row_count: rows.length,
+    selected_cell_count: totalCells,
+    selected_columns: colNames,
+    time_start: timeStart,
+    time_end: timeEnd,
+    range_label: rangeLabel,
+    numeric_summaries: summaries,
+    row_preview: rowData,
+  };
+}
+
+function appendSectionSelectionText(ctx, section, maxRowsPerSection) {
+  ctx += '### Dataset: ' + section.dataset_name + '\n';
+  ctx += '- Scope: ' + section.row_count + ' selected row(s), ' + section.selected_cell_count + ' selected cell(s), preview row(s): ' + section.range_label + '\n';
+  const timeLabel = formatColumnValue(section.time_col);
+  const targetLabel = formatColumnValue(section.target_col);
+  if (timeLabel) ctx += '- Time column: ' + timeLabel + '\n';
+  if (targetLabel) ctx += '- Current target column: ' + targetLabel + '\n';
+  if (section.time_start || section.time_end) ctx += '- Selected time range: ' + section.time_start + ' → ' + section.time_end + '\n';
+  ctx += '- Selected columns: ' + section.selected_columns.join(', ') + '\n\n';
+
+  if (section.numeric_summaries.length) {
+    ctx += 'Numeric summary over selected rows:\n';
+    ctx += '| Column | Count | Mean | Std | Min | Max | First | Last | Change | Change % |\n';
+    ctx += '|--------|-------|------|-----|-----|-----|-------|------|--------|----------|\n';
+    section.numeric_summaries.forEach(s => {
+      ctx += '| ' + escapeTableValue(s.column) + ' | ' + s.count + ' | ' + fmtNumber(s.mean) + ' | ' + fmtNumber(s.std) + ' | ' + fmtNumber(s.min) + ' | ' + fmtNumber(s.max) + ' | ' + fmtNumber(s.first) + ' | ' + fmtNumber(s.last) + ' | ' + fmtNumber(s.change) + ' | ' + (s.changePct === null ? '' : fmtNumber(s.changePct) + '%') + ' |\n';
+    });
+    ctx += '\n';
+  }
+
+  const displayRows = section.row_preview.slice(0, maxRowsPerSection);
+  ctx += 'Selected row preview';
+  if (section.row_preview.length > displayRows.length) ctx += ' (first ' + displayRows.length + ' of ' + section.row_preview.length + ' rows)';
+  ctx += ':\n';
+  ctx += '| Row | ' + section.columns.map(escapeTableValue).join(' | ') + ' |\n';
+  ctx += '|-----|' + section.columns.map(() => '---').join('|') + '|\n';
+  displayRows.forEach(r => {
+    ctx += '| ' + r.row + ' | ' + section.columns.map(col => escapeTableValue(r.values[col])).join(' | ') + ' |\n';
+  });
+  ctx += '\n';
   return ctx;
+}
+
+function buildCurrentSelectionContext() {
+  const sections = selectionStatesWithCells().map(buildSelectionSectionContext).filter(Boolean);
+  if (!sections.length) return { text: '', selection: null };
+  const totalCells = sections.reduce((sum, item) => sum + item.selected_cell_count, 0);
+  const totalRows = sections.reduce((sum, item) => sum + item.row_count, 0);
+  const selection = {
+    source: 'data_preview',
+    confirmed: true,
+    confirmed_at: new Date().toISOString(),
+    multi_dataset: sections.length > 1,
+    section_count: sections.length,
+    dataset_id: sections.length === 1 ? sections[0].dataset_id : null,
+    total_selected_rows: totalRows,
+    selected_cell_count: totalCells,
+    selected_columns: [...new Set(sections.flatMap(item => item.selected_columns || []))],
+    sections,
+  };
+  const primary = sections.find(item => item.dataset_id === dataWorkspaceState.activeDatasetId) || sections[0];
+  Object.assign(selection, {
+    total_rows: primary.total_rows,
+    columns: primary.columns,
+    time_col: primary.time_col,
+    target_col: primary.target_col,
+    row_ranges: primary.row_ranges,
+    row_count: primary.row_count,
+    time_start: primary.time_start,
+    time_end: primary.time_end,
+  });
+
+  let ctx = 'Confirmed user-selected data context from the web preview\n\n';
+  ctx += '- Confirmation: The user clicked the small Select button to explicitly confirm this selection.\n';
+  ctx += '- Hard instruction: Treat the confirmed selection below as the analysis scope for this turn. If the user asks about "this period", "这段时间", "selected data", anomalies, comparisons, or refers implicitly to the current table selection, analyze only the confirmed selected rows/time ranges. Do not analyze the full dataset unless the user explicitly asks for the full dataset.\n';
+  ctx += '- Selected dataset section(s): ' + sections.length + '\n';
+  ctx += '- Total selected row references: ' + totalRows + '\n';
+  ctx += '- Total selected cells: ' + totalCells + '\n\n';
+  const maxRowsPerSection = Math.max(1, Math.floor(600 / Math.max(1, sections.reduce((sum, item) => sum + Math.max(1, item.columns.length), 0))));
+  sections.forEach(section => {
+    ctx = appendSectionSelectionText(ctx, section, maxRowsPerSection);
+  });
+  return { text: ctx, selection };
+}
+
+function buildSelectionContext() {
+  return previewState.confirmedSelection || { text: '', selection: null };
+}
+
+function formatSelectionContext() {
+  const payload = buildSelectionContext();
+  return payload.text || '';
 }
 
 // ── Mouse selection on grid ──────────────────────
@@ -2820,6 +3936,7 @@ dataGridBody.addEventListener('mousedown', (e) => {
   const td = e.target.closest('td[data-row][data-col]');
   if (!td) return;
   e.preventDefault();
+  invalidateConfirmedSelection();
 
   const row = parseInt(td.dataset.row);
   const col = parseInt(td.dataset.col);
@@ -2851,6 +3968,7 @@ dataGridBody.addEventListener('mousedown', (e) => {
 
   refreshSelectionVisuals();
   updateSelectionInfo();
+  setLastSelectionAnchor(legacyPreviewSelectionState(), row, col);
 });
 
 dataGridWrap.addEventListener('mousemove', (e) => {
@@ -2869,6 +3987,7 @@ dataGridWrap.addEventListener('mousemove', (e) => {
   addCellRange(rMin, rMax, cMin, cMax);
 
   refreshSelectionVisuals();
+  setLastSelectionAnchor(legacyPreviewSelectionState(), row, col);
 });
 
 document.addEventListener('mouseup', () => {
@@ -2876,6 +3995,7 @@ document.addEventListener('mouseup', () => {
     previewState.selecting = false;
     previewState._selectStart = null;
     updateSelectionInfo();
+    updateSelectionConfirmButtonPosition();
   }
 });
 
@@ -2965,9 +4085,11 @@ function getPreviewStates() {
 
 function clearSectionSelection(state) {
   if (!state) return;
+  invalidateConfirmedSelection();
   state.selectedCells.clear();
   state.anchorCell = null;
   if (state.gridBody) state.gridBody.querySelectorAll('td.selected').forEach(td => td.classList.remove('selected'));
+  if (previewState.lastSelectionState === state) hideSelectionConfirmButton();
   updateSectionSelectionInfo(state);
 }
 
@@ -2984,17 +4106,20 @@ function updateSectionSelectionInfo(state) {
   if (!state || !state.selectionInfo) return;
   const selected = [...state.selectedCells].map(parseCellKey).sort((a, b) => a.row === b.row ? a.col - b.col : a.row - b.row);
   if (selected.length === 0) {
-    state.selectionInfo.textContent = t('data.no_selection') || 'Click cells to select, Cmd/Ctrl+click for multiple cells';
+    state.selectionInfo.textContent = isStateConfirmed(state)
+      ? (currentLang === 'zh' ? '已确认选区，可直接向 Agent 提问' : 'Confirmed selection ready for Agent')
+      : (t('data.no_selection') || 'Click cells to select, Cmd/Ctrl+click for multiple cells');
     return;
   }
   const rows = [...new Set(selected.map(c => c.row))].sort((a, b) => a - b);
   const cols = [...new Set(selected.map(c => c.col))].sort((a, b) => a - b);
   const colNames = cols.map(ci => state.columns[ci] || 'Col' + ci);
+  const prefix = isStateConfirmed(state) ? (currentLang === 'zh' ? '已确认 · ' : 'Confirmed · ') : '';
   if (selected.length === 1) {
-    state.selectionInfo.textContent = 'Row ' + (selected[0].row + 1) + ' · ' + colNames[0] + '  (1 cell)';
+    state.selectionInfo.textContent = prefix + 'Row ' + (selected[0].row + 1) + ' · ' + colNames[0] + '  (1 cell)';
     return;
   }
-  state.selectionInfo.textContent = rows.length + ' rows · ' + colNames.join(', ') + '  (' + selected.length + ' cells)';
+  state.selectionInfo.textContent = prefix + rows.length + ' rows · ' + colNames.join(', ') + '  (' + selected.length + ' cells)';
 }
 
 function refreshSectionSelectionVisuals(state) {
@@ -3048,6 +4173,8 @@ function createPreviewSection(dataset) {
     _selectStart: null,
     scrollTimer: null,
     applyTimer: null,
+    loading: false,
+    requestSeq: 0,
     shapeEl: section.querySelector('.preview-title-shape'),
     rowCountEl: section.querySelector('.preview-row-count'),
     timeSelect: section.querySelector('.preview-time-col'),
@@ -3059,6 +4186,7 @@ function createPreviewSection(dataset) {
   };
   section.querySelector('.close-dataset-btn').addEventListener('click', () => closeDatasetPreview(state.datasetId));
   state.rowCountEl.addEventListener('change', () => {
+    invalidateConfirmedSelection();
     state.currentRowCount = parseInt(state.rowCountEl.value) || 100;
     state.loadedStart = -1;
     state.loadedEnd = -1;
@@ -3070,6 +4198,7 @@ function createPreviewSection(dataset) {
   state.timeSelect.addEventListener('change', () => scheduleSectionColumnApply(state));
   state.targetSelect.addEventListener('change', () => scheduleSectionColumnApply(state));
   state.gridWrap.addEventListener('scroll', () => {
+    updateSelectionConfirmButtonPosition();
     if (state.scrollTimer) clearTimeout(state.scrollTimer);
     state.scrollTimer = setTimeout(() => handleSectionScrollLoad(state), 80);
   });
@@ -3095,6 +4224,7 @@ async function loadSectionInfo(state, dataset) {
     state.shapeEl.textContent = state.totalRows + ' x ' + state.columns.length;
     setMultiSelectOptions(state.timeSelect, state.columns, info.time_col || (dataset && dataset.time_col) || '');
     setMultiSelectOptions(state.targetSelect, state.columns, info.target_col || (dataset && dataset.target_col) || '');
+    restoreConfirmedSelectionForState(state);
     updateSectionSelectionInfo(state);
     await loadSectionDataChunk(state, 0, Math.min(state.currentRowCount, state.totalRows));
   } catch (e) {
@@ -3142,6 +4272,8 @@ openDataPreview = function() {
 
 closeDataPreview = function() {
   previewState.open = false;
+  previewState.confirmedSelection = null;
+  hideSelectionConfirmButton();
   previewState.sections = {};
   dataPreviewSections.innerHTML = '';
   dataPreviewSections.classList.remove('multi');
@@ -3207,16 +4339,23 @@ async function loadSectionDataChunk(state, start, end) {
   const pageSize = state.currentRowCount || 100;
   start = Math.max(0, Math.min(start, Math.max(0, state.totalRows - pageSize)));
   end = Math.min(state.totalRows, Math.max(start + 1, end));
+  const requestSeq = (state.requestSeq || 0) + 1;
+  state.requestSeq = requestSeq;
+  state.loading = true;
   const params = new URLSearchParams({ start: String(start), end: String(end) });
   if (state.datasetId) params.set('dataset_id', state.datasetId);
   try {
     const res = await fetch('/api/data/rows?' + params.toString());
     const data = await res.json();
+    if (requestSeq !== state.requestSeq) return;
     if (data.error) return;
     renderSectionDataChunk(state, data.columns, data.rows, data.start);
     state.loadedStart = data.start;
     state.loadedEnd = data.end;
-  } catch (e) {}
+  } catch (e) {
+  } finally {
+    if (requestSeq === state.requestSeq) state.loading = false;
+  }
 }
 
 function renderSectionDataChunk(state, columns, rows, startRow) {
@@ -3288,6 +4427,7 @@ function handleSectionMouseDown(e, state) {
   const td = e.target.closest('td[data-row][data-col]');
   if (!td) return;
   e.preventDefault();
+  invalidateConfirmedSelection();
   previewState.datasetId = state.datasetId;
   const row = parseInt(td.dataset.row);
   const col = parseInt(td.dataset.col);
@@ -3313,6 +4453,7 @@ function handleSectionMouseDown(e, state) {
   }
   refreshSectionSelectionVisuals(state);
   updateSectionSelectionInfo(state);
+  setLastSelectionAnchor(state, row, col);
 }
 
 function handleSectionMouseMove(e, state) {
@@ -3330,6 +4471,7 @@ function handleSectionMouseMove(e, state) {
     for (let c = cMin; c <= cMax; c++) state.selectedCells.add(cellKey(r, c));
   }
   refreshSectionSelectionVisuals(state);
+  setLastSelectionAnchor(state, row, col);
 }
 
 document.addEventListener('mouseup', () => {
@@ -3338,34 +4480,16 @@ document.addEventListener('mouseup', () => {
       state.selecting = false;
       state._selectStart = null;
       updateSectionSelectionInfo(state);
+      updateSelectionConfirmButtonPosition();
     }
   });
 });
 
+window.addEventListener('resize', updateSelectionConfirmButtonPosition);
+
 formatSelectionContext = function() {
-  const records = [];
-  getPreviewStates().forEach(state => {
-    [...state.selectedCells].map(parseCellKey).sort((a, b) => a.row === b.row ? a.col - b.col : a.row - b.row).forEach(({ row, col }) => {
-      const td = state.gridBody.querySelector('tr[data-row="' + row + '"] td[data-col="' + col + '"]');
-      if (!td) return;
-      const dataset = dataWorkspaceState.datasets.find(item => item.id === state.datasetId);
-      records.push({
-        dataset: (dataset && dataset.filename) || 'Dataset',
-        row: row + 1,
-        column: state.columns[col] || 'Col' + col,
-        value: td.textContent,
-      });
-    });
-  });
-  if (!records.length) return '';
-  const displayData = records.length > 500 ? records.slice(0, 500) : records;
-  let ctx = 'Selected data cells from the preview (' + records.length + ' cells)';
-  if (records.length > 500) ctx += ' — showing first 500 cells to keep context concise';
-  ctx += '\n\n| Dataset | Row | Column | Value |\n|---------|-----|--------|-------|\n';
-  displayData.forEach(d => {
-    ctx += '| ' + String(d.dataset).replace(/\|/g, '\\|') + ' | ' + d.row + ' | ' + String(d.column).replace(/\|/g, '\\|') + ' | ' + String(d.value || '').replace(/\|/g, '\\|').replace(/\n/g, ' ') + ' |\n';
-  });
-  return ctx;
+  const payload = buildSelectionContext();
+  return payload.text || '';
 };
 
 // ── Init ─────────────────────────────────────────
@@ -3374,15 +4498,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   const savedLang = localStorage.getItem('pipelints_lang');
   let lang = 'en';
   try {
-    const res = await fetch('/api/settings/load');
-    const data = await res.json();
-    loadedSettingsData = data;
-    const format = (data.provider || '').toLowerCase() === 'anthropic' ? 'anthropic' : 'openai';
-    providerEl.value = data.provider || 'openai';
-    setProviderFormat(format, false, false);
-    applyCredentialFields(data, format);
+    const data = await loadSettings('', false);
     lang = savedLang || data.lang || 'en';
     $('langSelect').value = lang;
+    $('multimodalSelect').value = data.multimodal || 'auto';
   } catch (e) { lang = savedLang || 'en'; }
   applyLanguage(lang);
   updateDataWorkspaceControls();

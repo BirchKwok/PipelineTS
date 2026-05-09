@@ -3,7 +3,7 @@
 Start an interactive chat session:
 
     python -m PipelineTS.agent.cli
-    pipeline-ts chat
+    pipelinets chat
 """
 
 from __future__ import annotations
@@ -93,6 +93,7 @@ def run_chat(
     lang: str = "en",
     verbose: bool = False,
     rich_mode: bool = True,
+    multimodal: str = "auto",
 ):
     """Run the interactive agent chat loop.
 
@@ -119,6 +120,7 @@ def run_chat(
             base_url=base_url,
             lang=lang,
             verbose=verbose,
+            multimodal=multimodal,
         )
     except Exception as e:
         print(f"Error initializing agent: {e}")
@@ -208,14 +210,14 @@ def run_chat(
 # ---------------------------------------------------------------------------
 
 def main():
-    """Main entry point for `pipeline-ts chat`."""
+    """Main entry point for `pipelinets chat`."""
     parser = argparse.ArgumentParser(
-        prog="pipeline-ts",
+        prog="pipelinets",
         description="PipelineTS Agent — natural language time series analysis",
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
-    # `pipeline-ts chat`
+    # `pipelinets chat`
     chat_parser = subparsers.add_parser("chat", help="Start interactive chat")
     chat_parser.add_argument(
         "--provider", default="auto",
@@ -246,13 +248,17 @@ def main():
         "--no-rich", action="store_true",
         help="Disable Rich terminal formatting",
     )
+    chat_parser.add_argument(
+        "--multimodal", default="auto", choices=["auto", "on", "off"],
+        help="Attach generated plots to vision-capable models",
+    )
 
-    # `pipeline-ts list-models`
+    # `pipelinets list-models`
     list_parser = subparsers.add_parser(
         "list-models", help="List all available time series models"
     )
 
-    # `pipeline-ts web`
+    # `pipelinets web`
     web_parser = subparsers.add_parser(
         "web", help="Launch the Flask web GUI"
     )
@@ -280,6 +286,7 @@ def main():
             lang=args.lang,
             verbose=args.verbose,
             rich_mode=not args.no_rich,
+            multimodal=args.multimodal,
         )
     elif args.command == "list-models":
         from PipelineTS.pipeline.pipeline_models import get_all_available_models

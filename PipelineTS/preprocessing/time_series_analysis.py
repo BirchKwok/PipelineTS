@@ -1,12 +1,15 @@
 """Stationarity tests, frequency auto-detection, and time series splitting.
 
-All statistical tests delegate to statsmodels for correctness.
+Statistical tests use native numpy/scipy implementations.
 Splitting utilities are pure numpy/pandas for performance.
 """
 
 import numpy as np
 import pandas as pd
 from typing import Optional, Union, Literal, Tuple, Generator
+
+from PipelineTS.utils.native_stats import adf_test as native_adf_test
+from PipelineTS.utils.native_stats import kpss_test as native_kpss_test
 
 
 # ---------------------------------------------------------------------------
@@ -48,21 +51,10 @@ class StationarityTest:
             Keys: 'statistic', 'p_value', 'used_lag', 'n_obs',
             'critical_values', 'is_stationary'.
         """
-        from statsmodels.tsa.stattools import adfuller
-
-        series = np.asarray(series, dtype=np.float64)
-        series = series[~np.isnan(series)]
-        result = adfuller(series, autolag='AIC')
-
-        return {
-            'test': 'ADF',
-            'statistic': float(result[0]),
-            'p_value': float(result[1]),
-            'used_lag': int(result[2]),
-            'n_obs': int(result[3]),
-            'critical_values': {k: float(v) for k, v in result[4].items()},
-            'is_stationary': result[1] < self.significance_level,
-        }
+        return native_adf_test(
+            series,
+            significance_level=self.significance_level,
+        )
 
     def kpss_test(self, series: np.ndarray, regression: str = 'c') -> dict:
         """KPSS test for stationarity.
@@ -80,23 +72,11 @@ class StationarityTest:
             Keys: 'statistic', 'p_value', 'used_lag',
             'critical_values', 'is_stationary'.
         """
-        from statsmodels.tsa.stattools import kpss
-        import warnings
-
-        series = np.asarray(series, dtype=np.float64)
-        series = series[~np.isnan(series)]
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            stat, p_value, lags, crit = kpss(series, regression=regression, nlags='auto')
-
-        return {
-            'test': 'KPSS',
-            'statistic': float(stat),
-            'p_value': float(p_value),
-            'used_lag': int(lags),
-            'critical_values': {k: float(v) for k, v in crit.items()},
-            'is_stationary': p_value >= self.significance_level,
-        }
+        return native_kpss_test(
+            series,
+            significance_level=self.significance_level,
+            regression=regression,
+        )
 
     def fit(self, series: np.ndarray) -> dict:
         """Run both ADF and KPSS tests and provide a combined conclusion.

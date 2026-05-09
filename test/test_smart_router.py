@@ -95,7 +95,7 @@ def test_strategy_selection():
     stat = {'auto_arima', 'prophet'}
     ml = {'wide_gbrt',
            'multi_output_model', 'multi_step_model', 'regressor_chain',
-           'gc_forest', 'catboost', 'random_forest'}
+           'gc_forest', 'catboost', 'xgboost', 'extra_forest', 'random_forest'}
     models_set = set(strategy['models'])
     assert models_set & ml, "No ML model selected"
     # Stat model not always selected for large datasets with strong patterns
@@ -871,7 +871,7 @@ def test_scoring_model_diversity():
     # Should have models from at least 2 different categories
     categories = set()
     ml = {'wide_gbrt', 'multi_output_model', 'multi_step_model', 'regressor_chain',
-          'gc_forest', 'catboost', 'random_forest'}
+          'gc_forest', 'catboost', 'xgboost', 'extra_forest', 'random_forest'}
     stat = {'auto_arima', 'prophet'}
     nn = {'d_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
           'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',

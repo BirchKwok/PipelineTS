@@ -31,7 +31,7 @@ DEFAULT_USER_DIR = Path.home() / ".pipelinets"
 DEFAULT_USER_CONFIG = DEFAULT_USER_DIR / "config.toml"
 
 # Sensitive keys that should be saved with a warning
-_SENSITIVE_KEYS = {"api_key", "openai_api_key", "anthropic_api_key"}
+_SENSITIVE_KEYS = {"api_key", "openai_api_key", "anthropic_api_key", "api_profiles"}
 
 
 class Config:
@@ -103,6 +103,8 @@ class Config:
             "anthropic_api_key": "ANTHROPIC_API_KEY",
             "anthropic_model": "ANTHROPIC_MODEL",
             "lang": "PIPELINETS_LANG",
+            "multimodal": "PIPELINETS_MULTIMODAL",
+            "api_format": "PIPELINETS_API_FORMAT",
         }
         for key, env_var in env_map.items():
             val = os.environ.get(env_var)
@@ -120,6 +122,14 @@ class Config:
     @provider.setter
     def provider(self, value: str):
         self._data["provider"] = value
+
+    @property
+    def api_format(self) -> str:
+        return self._data.get("api_format", "anthropic" if self.provider == "anthropic" else "openai")
+
+    @api_format.setter
+    def api_format(self, value: str):
+        self._data["api_format"] = value
 
     @property
     def openai_api_key(self) -> str:
@@ -169,6 +179,30 @@ class Config:
     def lang(self, value: str):
         self._data["lang"] = value
 
+    @property
+    def multimodal(self) -> str:
+        return self._data.get("multimodal", "auto")
+
+    @multimodal.setter
+    def multimodal(self, value: str):
+        self._data["multimodal"] = value
+
+    @property
+    def active_api_alias(self) -> str:
+        return self._data.get("active_api_alias", "default")
+
+    @active_api_alias.setter
+    def active_api_alias(self, value: str):
+        self._data["active_api_alias"] = value
+
+    @property
+    def api_profiles(self) -> str:
+        return self._data.get("api_profiles", "")
+
+    @api_profiles.setter
+    def api_profiles(self, value: str):
+        self._data["api_profiles"] = value
+
     # ------------------------------------------------------------------
     #  Resolution — decides which provider + credentials to use
     # ------------------------------------------------------------------
@@ -178,6 +212,8 @@ class Config:
 
         If provider is 'auto', prefers the one with an API key set.
         """
+        if self.api_format == "anthropic":
+            return "anthropic"
         if self.provider == "anthropic":
             return "anthropic"
         if self.provider == "openai":
@@ -284,7 +320,8 @@ class Config:
         for k, v in kwargs.items():
             if hasattr(self, k) or k in _SENSITIVE_KEYS | {
                 "provider", "openai_api_key", "openai_base_url", "openai_model",
-                "anthropic_api_key", "anthropic_model", "lang",
+                "anthropic_api_key", "anthropic_model", "lang", "multimodal",
+                "api_format", "active_api_alias", "api_profiles",
             }:
                 self._data[k] = v
 

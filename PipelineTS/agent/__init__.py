@@ -6,9 +6,9 @@
 #   response = agent.chat("Load the electric dataset and inspect it")
 #
 # CLI:
-#   pipeline-ts chat        # interactive terminal chat
-#   pipeline-ts web         # Flask web GUI
-#   pipeline-ts list-models # list available models
+#   pipelinets chat        # interactive terminal chat
+#   pipelinets web         # Flask web GUI
+#   pipelinets list-models # list available models
 #
 # Configuration:
 #   Config file (~/.pipelints/config.toml) or env vars (OPENAI_API_KEY, etc.)

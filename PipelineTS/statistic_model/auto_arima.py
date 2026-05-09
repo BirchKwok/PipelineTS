@@ -3,12 +3,11 @@ import itertools
 
 import numpy as np
 import pandas as pd
-from statsmodels.tsa.statespace.sarimax import SARIMAX
-from statsmodels.tsa.stattools import adfuller
 from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
 from PipelineTS.utils import check_time_col_is_timestamp, infer_freq, make_future_dates
+from PipelineTS.utils.native_stats import adf_test
 
 
 def _determine_d(y, max_d=2):
@@ -20,28 +19,176 @@ def _determine_d(y, max_d=2):
         if len(series) < 3:
             return d
         try:
-            p_value = adfuller(series, autolag='AIC')[1]
-            if p_value < 0.05:
+            if adf_test(series)['is_stationary']:
                 return d
         except Exception:
             return d
     return max_d
 
 
+def _difference_values(y, d=0):
+    z = np.asarray(y, dtype=np.float64)
+    for _ in range(int(d)):
+        z = np.diff(z)
+    return z
+
+
+def _inverse_difference(history, diffs, d=0):
+    history = np.asarray(history, dtype=np.float64)
+    diffs = np.asarray(diffs, dtype=np.float64).reshape(-1)
+    if d <= 0:
+        return diffs
+    if len(diffs) == 0:
+        return diffs
+    if d == 1:
+        return float(history[-1]) + np.cumsum(diffs)
+    last_diff = float(history[-1] - history[-2]) if len(history) >= 2 else 0.0
+    first_diff = last_diff + np.cumsum(diffs)
+    return float(history[-1]) + np.cumsum(first_diff)
+
+
+class _NativeARIMAResult:
+    def __init__(
+        self,
+        y,
+        order,
+        seasonal_order,
+        coef,
+        feature_spec,
+        residual_tail,
+        aic,
+        exog_mean=None,
+    ):
+        self.y = np.asarray(y, dtype=np.float64).reshape(-1)
+        self.order = order
+        self.seasonal_order = seasonal_order
+        self.coef = np.asarray(coef, dtype=np.float64).reshape(-1)
+        self.feature_spec = feature_spec
+        self.residual_tail = list(np.asarray(residual_tail, dtype=np.float64).reshape(-1))
+        self.aic = float(aic)
+        self.exog_mean = None if exog_mean is None else np.asarray(exog_mean, dtype=np.float64).reshape(-1)
+
+    def _row(self, z_hist, residual_hist, exog_row):
+        row = [1.0]
+        for lag in self.feature_spec['ar_lags']:
+            row.append(float(z_hist[-lag]) if len(z_hist) >= lag else 0.0)
+        for lag in self.feature_spec['ma_lags']:
+            row.append(float(residual_hist[-lag]) if len(residual_hist) >= lag else 0.0)
+        if exog_row is not None:
+            row.extend(np.asarray(exog_row, dtype=np.float64).reshape(-1).tolist())
+        return np.asarray(row, dtype=np.float64)
+
+    def forecast(self, steps, exog=None):
+        steps = int(steps)
+        p, d, q = self.order
+        z_hist = _difference_values(self.y, d=d).astype(np.float64).tolist()
+        residual_hist = list(self.residual_tail)
+        if exog is not None:
+            exog_future = np.asarray(exog, dtype=np.float64)
+            if exog_future.ndim == 1:
+                exog_future = exog_future.reshape(-1, 1)
+        elif self.exog_mean is not None:
+            exog_future = np.tile(self.exog_mean.reshape(1, -1), (steps, 1))
+        else:
+            exog_future = None
+        preds_z = []
+        for i in range(steps):
+            exog_row = None
+            if exog_future is not None:
+                if i < len(exog_future):
+                    exog_row = exog_future[i]
+                else:
+                    exog_row = self.exog_mean if self.exog_mean is not None else np.zeros(exog_future.shape[1])
+            row = self._row(z_hist, residual_hist, exog_row)
+            pred = float(row @ self.coef)
+            preds_z.append(pred)
+            z_hist.append(pred)
+            residual_hist.append(0.0)
+        return _inverse_difference(self.y, np.asarray(preds_z, dtype=np.float64), d=d)
+
+
+def _build_lags(p, q, seasonal_order):
+    P, D, Q, m = seasonal_order if seasonal_order else (0, 0, 0, 0)
+    ar_lags = list(range(1, int(p) + 1))
+    ma_lags = list(range(1, int(q) + 1))
+    if m and m > 1:
+        ar_lags.extend([int(m) * i for i in range(1, int(P) + 1)])
+        ma_lags.extend([int(m) * i for i in range(1, int(Q) + 1)])
+    ar_lags = sorted(set(lag for lag in ar_lags if lag > 0))
+    ma_lags = sorted(set(lag for lag in ma_lags if lag > 0))
+    return ar_lags, ma_lags
+
+
+def _fit_native_arima(y, order, seasonal_order=None, exog=None, ridge=1e-8):
+    y = np.asarray(y, dtype=np.float64).reshape(-1)
+    p, d, q = order
+    seasonal_order = seasonal_order if seasonal_order else (0, 0, 0, 0)
+    z = _difference_values(y, d=d)
+    if len(z) < 4:
+        coef = np.array([float(np.mean(z)) if len(z) else 0.0])
+        return _NativeARIMAResult(y, order, seasonal_order, coef, {'ar_lags': [], 'ma_lags': []}, [], np.inf)
+    exog_arr = None
+    exog_mean = None
+    if exog is not None:
+        exog_arr = np.asarray(exog, dtype=np.float64)
+        if exog_arr.ndim == 1:
+            exog_arr = exog_arr.reshape(-1, 1)
+        exog_arr = exog_arr[-len(z):]
+        exog_mean = np.nanmean(exog_arr, axis=0)
+        exog_arr = np.nan_to_num(exog_arr, nan=0.0, posinf=0.0, neginf=0.0)
+    ar_lags, ma_lags = _build_lags(p, q, seasonal_order)
+    max_lag = max(ar_lags + ma_lags + [0])
+    if len(z) <= max_lag + 2:
+        return None
+
+    idx = np.arange(max_lag, len(z), dtype=np.int64)
+
+    def design(residuals=None):
+        columns = [np.ones(len(idx), dtype=np.float64)]
+        columns.extend(z[idx - lag] for lag in ar_lags)
+        if residuals is None:
+            columns.extend(np.zeros(len(idx), dtype=np.float64) for _ in ma_lags)
+        else:
+            columns.extend(residuals[idx - lag] for lag in ma_lags)
+        x = np.column_stack(columns)
+        if exog_arr is not None:
+            x = np.column_stack((x, exog_arr[idx]))
+        return x, z[idx]
+
+    x, target = design(None)
+    try:
+        xtx = x.T @ x + np.eye(x.shape[1]) * ridge
+        coef = np.linalg.solve(xtx, x.T @ target)
+    except np.linalg.LinAlgError:
+        coef = np.linalg.pinv(x) @ target
+    residuals = np.zeros(len(z), dtype=np.float64)
+    residuals[max_lag:] = target - x @ coef
+    if ma_lags:
+        x, target = design(residuals)
+        try:
+            xtx = x.T @ x + np.eye(x.shape[1]) * ridge
+            coef = np.linalg.solve(xtx, x.T @ target)
+        except np.linalg.LinAlgError:
+            coef = np.linalg.pinv(x) @ target
+        residuals[max_lag:] = target - x @ coef
+    rss = float(np.dot(residuals[max_lag:], residuals[max_lag:]))
+    n_obs = max(len(target), 1)
+    k = len(coef)
+    aic = float(n_obs * np.log(max(rss / n_obs, 1e-12)) + 2 * k)
+    feature_spec = {'ar_lags': ar_lags, 'ma_lags': ma_lags}
+    residual_tail = residuals[-max(max_lag, 1):] if max_lag > 0 else []
+    return _NativeARIMAResult(y, order, seasonal_order, coef, feature_spec, residual_tail, aic, exog_mean=exog_mean)
+
+
 def _fit_arima(y, order, seasonal_order=None, suppress_warnings=True, exog=None):
-    """Fit a SARIMAX model and return (model_result, aic) or None on failure."""
+    """Fit a native ARIMA model and return (model_result, aic) or None on failure."""
     try:
         with warnings.catch_warnings():
             if suppress_warnings:
                 warnings.simplefilter("ignore")
-            model = SARIMAX(
-                y, order=order,
-                seasonal_order=seasonal_order if seasonal_order else (0, 0, 0, 0),
-                exog=exog,
-                enforce_stationarity=False,
-                enforce_invertibility=False
-            )
-            result = model.fit(disp=False, maxiter=200)
+            result = _fit_native_arima(y, order, seasonal_order, exog=exog)
+            if result is None:
+                return None
             return result, result.aic
     except Exception:
         return None
@@ -63,7 +210,7 @@ def _auto_arima_search(y, start_p=0, max_p=5, start_q=0, max_q=5,
     best_seasonal = (0, 0, 0, 0)
 
     if seasonal and m > 1:
-        D = min(1, max_D)
+        D = 0
         seasonal_combos = list(itertools.product(range(max_P + 1), range(max_Q + 1)))
     else:
         seasonal_combos = [(0, 0)]
@@ -111,8 +258,8 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
             **arima_configs
     ):
         """
-        AutoARIMAModel: Auto ARIMA using statsmodels SARIMAX with AIC-based grid search.
-        No dependency on pmdarima.
+        AutoARIMAModel: Auto ARIMA using native conditional least squares with AIC-based grid search.
+        No dependency on external ARIMA libraries.
 
         Parameters
         ----------
@@ -143,8 +290,8 @@ class AutoARIMAModel(StatisticModelMixin, IntervalEstimationMixin):
 
         Attributes
         ----------
-        model : statsmodels SARIMAX result
-            The fitted SARIMAX model.
+        model : native ARIMA result
+            The fitted native ARIMA model.
         """
         super().__init__(time_col=time_col, target_col=target_col)
 

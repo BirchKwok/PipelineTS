@@ -8,6 +8,9 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 
+from PipelineTS.utils.native_stats import acf as native_acf
+from PipelineTS.utils.native_stats import ljung_box
+
 
 class ResidualAnalyzer:
     """Analyze forecast residuals for model diagnostics.
@@ -107,8 +110,6 @@ class ResidualAnalyzer:
             Keys: 'acf_values' (np.ndarray), 'significant_lags' (list of int),
             'ljung_box' (dict with statistic, p_value, has_autocorrelation).
         """
-        from statsmodels.tsa.stattools import acf as sm_acf
-
         r = self.residuals
         n_lags = min(max_lags, len(r) // 2 - 1)
         if n_lags < 1:
@@ -119,7 +120,7 @@ class ResidualAnalyzer:
                               'has_autocorrelation': None},
             }
 
-        acf_vals = sm_acf(r, nlags=n_lags, fft=True)
+        acf_vals = native_acf(r, nlags=n_lags, fft=True)
 
         # Significance bound (approximate 95% CI)
         bound = 1.96 / np.sqrt(len(r))
@@ -128,19 +129,7 @@ class ResidualAnalyzer:
         # Ljung-Box test
         lb_result = {'statistic': np.nan, 'p_value': np.nan, 'has_autocorrelation': None}
         if len(r) > n_lags + 1:
-            try:
-                from statsmodels.stats.diagnostic import acorr_ljungbox
-                lb = acorr_ljungbox(r, lags=min(10, n_lags), return_df=True)
-                # Use the last lag's p-value
-                p_val = float(lb['lb_pvalue'].iloc[-1])
-                stat_val = float(lb['lb_stat'].iloc[-1])
-                lb_result = {
-                    'statistic': stat_val,
-                    'p_value': p_val,
-                    'has_autocorrelation': p_val < 0.05,
-                }
-            except Exception:
-                pass
+            lb_result = ljung_box(r, lags=min(10, n_lags))
 
         return {
             'acf_values': acf_vals,

@@ -7,6 +7,20 @@ Each tool is a dict with 'type': 'function', 'function': {name, description, par
 # Data Loading
 # ---------------------------------------------------------------------------
 
+def _tool(name, description, properties=None, required=None):
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties or {},
+                "required": required or [],
+            },
+        },
+    }
+
 LOAD_CSV = {
     "type": "function",
     "function": {
@@ -152,6 +166,270 @@ DATA_QUALITY_REPORT = {
     },
 }
 
+GET_DATA_CONTEXT = {
+    "type": "function",
+    "function": {
+        "name": "get_data_context",
+        "description": "Return evidence-backed numeric context from the actual dataset for selected rows, same-day/all-day rows, the full dataset, or comparisons between them. Use this when the user asks how a confirmed selection differs from the whole day, overall data, full dataset, surrounding period, or a specific column such as HUFL. This tool is intentionally not auto-limited to the confirmed selection.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": [
+                        "selected",
+                        "same_day",
+                        "full_dataset",
+                        "selected_vs_same_day",
+                        "selected_vs_full_dataset",
+                    ],
+                    "description": "Data scope to summarize. Use 'selected_vs_same_day' for questions involving 全天/all-day context around the confirmed selection. Default: selected_vs_same_day when a selection exists, otherwise full_dataset.",
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Numeric columns to summarize. If omitted, uses selected non-time columns, then the current target column, then available numeric columns.",
+                },
+                "max_rows": {
+                    "type": "integer",
+                    "description": "Maximum rows to include in each preview table. Default: 40.",
+                },
+                "include_preview": {
+                    "type": "boolean",
+                    "description": "Whether to include row previews for the returned scopes. Default: true.",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+ANALYZE_TIME_INDEX = _tool(
+    "analyze_time_index",
+    "Analyze timestamp quality: validity, monotonicity, duplicates, inferred frequency, interval distribution, irregular gaps, and large gap examples.",
+)
+
+PROFILE_SERIES = _tool(
+    "profile_series",
+    "Compute rich target-series characteristics: quantiles, skew/kurtosis, coefficient of variation, zeros/negatives, Hurst exponent, spectral entropy, and transformation hints.",
+)
+
+ANALYZE_AUTOCORRELATION = _tool(
+    "analyze_autocorrelation",
+    "Analyze ACF/PACF and Ljung-Box autocorrelation to identify memory, AR structure, and useful lag candidates.",
+    {
+        "max_lags": {
+            "type": "integer",
+            "description": "Maximum lag to analyze. Default: 40.",
+        },
+    },
+)
+
+DETECT_SEASONALITY = _tool(
+    "detect_seasonality",
+    "Detect seasonal periods using FFT spectral peaks, ACF peaks, and optional STL seasonal-strength analysis.",
+    {
+        "period": {
+            "type": "integer",
+            "description": "Optional known seasonal period to evaluate with STL.",
+        },
+        "top_k": {
+            "type": "integer",
+            "description": "Number of candidate periods to report. Default: 5.",
+        },
+    },
+)
+
+ANALYZE_TREND = _tool(
+    "analyze_trend",
+    "Analyze trend direction and strength using linear slope, Kendall trend test, rolling slope, and trend sign reversals.",
+    {
+        "window": {
+            "type": "integer",
+            "description": "Rolling window for local trend slopes. Auto-selected if omitted.",
+        },
+    },
+)
+
+DETECT_CHANGEPOINTS = _tool(
+    "detect_changepoints",
+    "Detect likely structural breaks/changepoints in mean, variance, or CUSUM-style regime changes.",
+    {
+        "method": {
+            "type": "string",
+            "enum": ["auto", "mean", "variance", "cusum"],
+            "description": "Changepoint scoring method. Default: auto.",
+        },
+        "window": {
+            "type": "integer",
+            "description": "Comparison window around each candidate point. Auto-selected if omitted.",
+        },
+        "top_k": {
+            "type": "integer",
+            "description": "Maximum number of changepoints to report. Default: 5.",
+        },
+    },
+)
+
+DETECT_DISTRIBUTION_SHIFT = _tool(
+    "detect_distribution_shift",
+    "Compare early/middle/recent segments to detect distribution drift using segment statistics and Kolmogorov-Smirnov tests.",
+    {
+        "segments": {
+            "type": "integer",
+            "description": "Number of chronological segments to compare. Default: 3.",
+        },
+    },
+)
+
+ANALYZE_VOLATILITY = _tool(
+    "analyze_volatility",
+    "Analyze rolling volatility, coefficient of variation, volatility trend, high-volatility windows, and volatility clustering.",
+    {
+        "window": {
+            "type": "integer",
+            "description": "Rolling window for volatility statistics. Auto-selected if omitted.",
+        },
+    },
+)
+
+SUGGEST_LAG_FEATURES = _tool(
+    "suggest_lag_features",
+    "Suggest useful lag windows and lag features based on autocorrelation significance and top lag correlations.",
+    {
+        "max_lags": {
+            "type": "integer",
+            "description": "Maximum lag to consider. Default: 60.",
+        },
+        "top_k": {
+            "type": "integer",
+            "description": "Number of top lag correlations to report. Default: 10.",
+        },
+    },
+)
+
+DETECT_CALENDAR_EFFECTS = _tool(
+    "detect_calendar_effects",
+    "Detect calendar effects by comparing target averages across hour, weekday, day-of-month, month, and quarter groups.",
+    {
+        "granularity": {
+            "type": "string",
+            "enum": ["auto", "hour", "weekday", "dayofmonth", "month", "quarter"],
+            "description": "Calendar grouping to analyze. Default: auto analyzes all available groupings.",
+        },
+        "top_k": {
+            "type": "integer",
+            "description": "Maximum number of strongest groups to show. Default: 10.",
+        },
+    },
+)
+
+ANALYZE_COVARIATES = _tool(
+    "analyze_covariates",
+    "Analyze numeric covariate relationships with the target using Pearson/Spearman correlations and lead/lag correlations.",
+    {
+        "covariates": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Optional list of covariate columns. If omitted, all numeric non-target columns are considered.",
+        },
+        "max_lag": {
+            "type": "integer",
+            "description": "Maximum positive/negative lag to test. Default: 12.",
+        },
+        "top_k": {
+            "type": "integer",
+            "description": "Number of strongest covariates to report. Default: 10.",
+        },
+    },
+)
+
+ANALYZE_INTERMITTENCY = _tool(
+    "analyze_intermittency",
+    "Classify demand pattern as smooth/intermittent/erratic/lumpy using ADI and CV², with zero-ratio and nonzero-gap statistics.",
+)
+
+DECOMPOSE_COMPONENTS = _tool(
+    "decompose_components",
+    "Summarize STL component strengths for trend, seasonality, and residual noise without generating a plot.",
+    {
+        "period": {
+            "type": "integer",
+            "description": "Seasonal period for STL. Auto-detected if omitted.",
+        },
+    },
+)
+
+RECOMMEND_TIMESERIES_ACTIONS = _tool(
+    "recommend_timeseries_actions",
+    "Generate actionable recommendations for preprocessing, transformations, lag features, seasonal features, and model families based on diagnostics.",
+)
+
+ASSESS_FORECASTABILITY = _tool(
+    "assess_forecastability",
+    "Assess whether the target series is intrinsically forecastable using memory, entropy, seasonal/trend strengths, history length, and noise indicators.",
+    {
+        "horizon": {
+            "type": "integer",
+            "description": "Forecast horizon used to judge whether history is sufficient.",
+        },
+        "seasonal_period": {
+            "type": "integer",
+            "description": "Optional known seasonal period to evaluate. Auto-detected if omitted.",
+        },
+    },
+)
+
+BENCHMARK_BASELINES = _tool(
+    "benchmark_baselines",
+    "Benchmark simple naive forecasting baselines on a holdout window so trained models have a concrete performance target.",
+    {
+        "horizon": {
+            "type": "integer",
+            "description": "Forecast horizon to use as holdout size when test_size is omitted.",
+        },
+        "seasonal_period": {
+            "type": "integer",
+            "description": "Optional seasonal period for seasonal naive baseline. Auto-detected if omitted.",
+        },
+        "test_size": {
+            "type": "integer",
+            "description": "Explicit holdout size for baseline evaluation.",
+        },
+    },
+)
+
+ANALYZE_PANEL_STRUCTURE = _tool(
+    "analyze_panel_structure",
+    "Analyze multi-series/panel structure: series count, length balance, duplicate id-time keys, per-series regularity, coverage, and target heterogeneity.",
+)
+
+DETECT_LEAKAGE_RISK = _tool(
+    "detect_leakage_risk",
+    "Detect likely target leakage or invalid covariate usage from feature names, same-time target correlation, lead correlation, and configured known/past covariates.",
+    {
+        "horizon": {
+            "type": "integer",
+            "description": "Maximum lead horizon to inspect for future-target leakage. Default: 12.",
+        },
+        "corr_threshold": {
+            "type": "number",
+            "description": "Correlation threshold for review findings. Default: 0.98.",
+        },
+    },
+)
+
+ASSESS_MODELING_READINESS = _tool(
+    "assess_modeling_readiness",
+    "Assess whether the dataset is ready for modeling, including blocking issues, warnings, validation horizon guidance, lag/seasonality hints, covariate availability, and panel concerns.",
+    {
+        "horizon": {
+            "type": "integer",
+            "description": "Forecast horizon used for readiness and validation recommendations.",
+        },
+    },
+)
+
 # ---------------------------------------------------------------------------
 # Preprocessing
 # ---------------------------------------------------------------------------
@@ -193,6 +471,172 @@ HANDLE_OUTLIERS = {
         },
     },
 }
+
+SORT_AND_DEDUPLICATE = _tool(
+    "sort_and_deduplicate",
+    "Sort data by time (and id column for panel data), remove invalid timestamps, and aggregate duplicate timestamps.",
+    {
+        "duplicate_strategy": {
+            "type": "string",
+            "enum": ["mean", "sum", "median", "min", "max", "first", "last"],
+            "description": "Aggregation strategy for numeric duplicate timestamp rows. Default: mean.",
+        },
+    },
+)
+
+RESAMPLE_TIME_SERIES = _tool(
+    "resample_time_series",
+    "Regularize or resample the time series to a fixed frequency, aggregating numeric columns and filling gaps.",
+    {
+        "freq": {
+            "type": "string",
+            "description": "Target pandas frequency string such as 'D', 'H', 'W', 'MS'. Auto-inferred if omitted.",
+        },
+        "agg": {
+            "type": "string",
+            "enum": ["mean", "sum", "median", "min", "max", "first", "last"],
+            "description": "Aggregation for numeric columns. Default: mean.",
+        },
+        "fill_method": {
+            "type": "string",
+            "enum": ["linear", "ffill", "bfill", "zero", "none"],
+            "description": "How to fill numeric gaps after resampling. Default: linear.",
+        },
+    },
+)
+
+TRANSFORM_TARGET = _tool(
+    "transform_target",
+    "Create transformed target column(s) or replace existing target values using log1p, sqrt, Box-Cox, Yeo-Johnson, standardize, or minmax.",
+    {
+        "method": {
+            "type": "string",
+            "enum": ["log1p", "sqrt", "boxcox", "yeojohnson", "standardize", "minmax"],
+            "description": "Target transformation method.",
+        },
+        "columns": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Columns to transform. Defaults to current target column(s).",
+        },
+        "suffix": {
+            "type": "string",
+            "description": "Suffix for created column(s). Defaults to method name.",
+        },
+        "replace": {
+            "type": "boolean",
+            "description": "If true, replace original column instead of creating a new one. Default: false.",
+        },
+    },
+    required=["method"],
+)
+
+DIFFERENCE_SERIES = _tool(
+    "difference_series",
+    "Create differenced target columns for detrending or seasonal differencing.",
+    {
+        "order": {
+            "type": "integer",
+            "description": "Non-seasonal differencing order. Default: 1.",
+        },
+        "seasonal_period": {
+            "type": "integer",
+            "description": "Optional seasonal differencing period.",
+        },
+        "columns": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Columns to difference. Defaults to current target column(s).",
+        },
+        "suffix": {
+            "type": "string",
+            "description": "Suffix for created columns. Defaults to diff order.",
+        },
+        "drop_na": {
+            "type": "boolean",
+            "description": "Drop initial rows with NaN after differencing. Default: false.",
+        },
+    },
+)
+
+SMOOTH_SERIES = _tool(
+    "smooth_series",
+    "Create rolling/EMA-smoothed target columns for trend extraction or noise reduction.",
+    {
+        "method": {
+            "type": "string",
+            "enum": ["rolling_mean", "rolling_median", "ewm"],
+            "description": "Smoothing method. Default: rolling_mean.",
+        },
+        "window": {
+            "type": "integer",
+            "description": "Rolling window or EWM span. Default: 7.",
+        },
+        "columns": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Columns to smooth. Defaults to current target column(s).",
+        },
+        "suffix": {
+            "type": "string",
+            "description": "Suffix for created columns.",
+        },
+        "replace": {
+            "type": "boolean",
+            "description": "If true, replace original column instead of creating a new one. Default: false.",
+        },
+    },
+)
+
+CLIP_OR_WINSORIZE = _tool(
+    "clip_or_winsorize",
+    "Clip numeric target columns to lower/upper quantiles for robust outlier handling.",
+    {
+        "lower_q": {
+            "type": "number",
+            "description": "Lower quantile. Default: 0.01.",
+        },
+        "upper_q": {
+            "type": "number",
+            "description": "Upper quantile. Default: 0.99.",
+        },
+        "columns": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Columns to clip. Defaults to current target column(s).",
+        },
+        "replace": {
+            "type": "boolean",
+            "description": "If true, replace original columns. Default: true.",
+        },
+        "suffix": {
+            "type": "string",
+            "description": "Suffix when replace=false. Default: winsor.",
+        },
+    },
+)
+
+SET_COVARIATES = _tool(
+    "set_covariates",
+    "Configure known future covariates, past covariates, and general feature columns for later model training.",
+    {
+        "known_covariates": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Columns known into the forecast horizon, such as holidays, prices, promotions, planned capacity.",
+        },
+        "past_covariates": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Columns only observed historically, such as weather measurements or sensor readings.",
+        },
+        "feature_cols": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "General feature columns for multivariate models.",
+        },
+    },
+)
 
 # ---------------------------------------------------------------------------
 # Visualization
@@ -615,9 +1059,36 @@ ALL_TOOLS = [
     DETECT_OUTLIERS,
     CHECK_STATIONARITY,
     DATA_QUALITY_REPORT,
+    GET_DATA_CONTEXT,
+    ANALYZE_TIME_INDEX,
+    PROFILE_SERIES,
+    ANALYZE_AUTOCORRELATION,
+    DETECT_SEASONALITY,
+    ANALYZE_TREND,
+    DETECT_CHANGEPOINTS,
+    DETECT_DISTRIBUTION_SHIFT,
+    ANALYZE_VOLATILITY,
+    SUGGEST_LAG_FEATURES,
+    DETECT_CALENDAR_EFFECTS,
+    ANALYZE_COVARIATES,
+    ANALYZE_INTERMITTENCY,
+    DECOMPOSE_COMPONENTS,
+    RECOMMEND_TIMESERIES_ACTIONS,
+    ASSESS_FORECASTABILITY,
+    BENCHMARK_BASELINES,
+    ANALYZE_PANEL_STRUCTURE,
+    DETECT_LEAKAGE_RISK,
+    ASSESS_MODELING_READINESS,
     # Preprocessing
     FILL_MISSING_VALUES,
     HANDLE_OUTLIERS,
+    SORT_AND_DEDUPLICATE,
+    RESAMPLE_TIME_SERIES,
+    TRANSFORM_TARGET,
+    DIFFERENCE_SERIES,
+    SMOOTH_SERIES,
+    CLIP_OR_WINSORIZE,
+    SET_COVARIATES,
     # Visualization
     PLOT_TIME_SERIES,
     PLOT_ACF_PACF,

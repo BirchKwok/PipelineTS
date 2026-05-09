@@ -1,7 +1,7 @@
 """Web GUI launcher for the PipelineTS agent (Flask backend).
 
 Launch with:
-    pipeline-ts web
+    pipelinets web
     python -m PipelineTS.agent.web
 """
 

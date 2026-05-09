@@ -76,8 +76,8 @@ class TimeSeriesFeatureExtractor:
     @staticmethod
     def add_seasonal_decomposition(df, target_col, time_col, period=None):
         """添加季节性分解特征"""
-        from statsmodels.tsa.seasonal import seasonal_decompose
-        
+        from PipelineTS.utils.native_stats import seasonal_decompose
+
         df = df.copy()
         
         # 如果没有指定周期，尝试自动检测

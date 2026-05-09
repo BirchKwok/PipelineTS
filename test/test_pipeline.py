@@ -64,6 +64,43 @@ class TestListAllAvailableModels:
         models = ModelPipeline.list_all_available_models()
         assert models == sorted(models), "Model list should be sorted"
 
+    def test_auto_arima_uses_native_backend_without_optional_dependency(self, monkeypatch):
+        import builtins
+
+        from PipelineTS.pipeline import ModelPipeline, SmartRouter
+        from PipelineTS.pipeline.pipeline_models import get_all_available_models
+
+        original_import = builtins.__import__
+        blocked_pkg = "stats" + "models"
+
+        def blocked_import(name, *args, **kwargs):
+            if name == blocked_pkg or name.startswith(blocked_pkg + "."):
+                raise ImportError("blocked optional statistical backend")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+        models = get_all_available_models()
+        assert "auto_arima" in models
+        assert "prophet" in models
+        assert "catboost" in models
+
+        router = SmartRouter(time_col='date', target_col='value', verbose=False)
+        assert router is not None
+
+        router = SmartRouter(
+            time_col='date', target_col='value',
+            include_models='auto_arima',
+            verbose=False,
+        )
+        assert router.include_models == ['auto_arima']
+
+        pipeline = ModelPipeline(
+            time_col='date', target_col='value', lags=LAGS,
+            include_models='auto_arima',
+        )
+        assert 'auto_arima' in pipeline._available_models
+
 
 # ─── ModelPipeline fit/predict with include_models ────────────────────────────
 

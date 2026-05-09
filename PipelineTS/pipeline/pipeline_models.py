@@ -65,7 +65,6 @@ def get_all_available_models():
 
     return frozendict(models)
 
-
 def get_all_model_class_name():
     models = dict(get_all_available_models())
 

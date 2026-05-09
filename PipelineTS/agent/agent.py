@@ -7,7 +7,12 @@ to the LLM with tools, executes tool calls, and returns results.
 from __future__ import annotations
 
 import json
+import base64
+import mimetypes
+import queue
 import re
+import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
@@ -53,6 +58,8 @@ class TSAgent:
         lang: str = "en",
         verbose: bool = False,
         plot_dir: str = None,
+        multimodal: bool | str = "auto",
+        max_visual_context_images: int = 4,
     ):
         if isinstance(provider, LLMProvider):
             self.llm = provider
@@ -74,6 +81,10 @@ class TSAgent:
         self._base_url = base_url or getattr(self.llm, 'client', None)
         self._base_prompt = get_system_prompt(lang)
         self._transient_user_context: Optional[str] = None
+        self._transient_selected_data_context: Optional[dict] = None
+        self.multimodal = self._normalize_multimodal(multimodal)
+        self.multimodal_enabled = self._resolve_multimodal_enabled()
+        self.max_visual_context_images = max(0, int(max_visual_context_images or 0))
 
         # Plot result marker pattern: [PLOT]label saved.{filename}[/PLOT]
         self._plot_pattern = re.compile(r'\[PLOT\](.+?)\.\{(.+?)\}\[/PLOT\]')
@@ -82,12 +93,13 @@ class TSAgent:
         self._on_tool_call: Optional[Callable] = None
         self._on_response: Optional[Callable] = None
         self._on_stream_event: Optional[Callable] = None  # for SSE UI events
+        self._stream_event_seq = 0
 
     # ------------------------------------------------------------------
     #  Public API
     # ------------------------------------------------------------------
 
-    def chat(self, message: str, *, stream: bool = False, context: str = None) -> str:
+    def chat(self, message: str, *, stream: bool = False, context: str = None, selected_data_context: dict = None) -> str:
         """Send a message and return the agent's response.
 
         Parameters
@@ -104,21 +116,29 @@ class TSAgent:
         self.session.messages.append({"role": "user", "content": message})
 
         previous_context = self._transient_user_context
-        self._transient_user_context = context.strip() if context and context.strip() else None
+        previous_selected_data_context = self._transient_selected_data_context
+        confirmed_context = isinstance(selected_data_context, dict) and selected_data_context.get("confirmed") is True
+        self._transient_user_context = context.strip() if confirmed_context and context and context.strip() else None
+        self._transient_selected_data_context = selected_data_context if confirmed_context else None
+        self.executor.selected_data_context = self._transient_selected_data_context
 
         if stream:
-            return self._chat_stream_with_context(previous_context)
+            return self._chat_stream_with_context(previous_context, previous_selected_data_context)
         else:
             try:
                 return self._chat_sync()
             finally:
                 self._transient_user_context = previous_context
+                self._transient_selected_data_context = previous_selected_data_context
+                self.executor.selected_data_context = previous_selected_data_context
 
-    def _chat_stream_with_context(self, previous_context: Optional[str]) -> Iterator[str]:
+    def _chat_stream_with_context(self, previous_context: Optional[str], previous_selected_data_context: Optional[dict]) -> Iterator[str]:
         try:
             yield from self._chat_stream()
         finally:
             self._transient_user_context = previous_context
+            self._transient_selected_data_context = previous_selected_data_context
+            self.executor.selected_data_context = previous_selected_data_context
 
     def _chat_sync(self) -> str:
         """Run the agent loop synchronously, returning the final text."""
@@ -136,6 +156,8 @@ class TSAgent:
             assistant_msg["role"] = "assistant"
             assistant_msg["content"] = assistant_msg.get("content") or ""
             self.session.messages.append(assistant_msg)
+
+            plot_context_messages = []
 
             # Execute each tool call
             for tc in msg["tool_calls"]:
@@ -157,15 +179,21 @@ class TSAgent:
                 if self._on_tool_call:
                     self._on_tool_call(tool_name, arguments, result)
 
-                # Strip plot marker from LLM-visible content
+                plot_info = self._extract_plot_info(result)
+                if plot_info:
+                    plot_context = self._build_plot_context_message(tool_name, plot_info)
+                    if plot_context:
+                        plot_context_messages.append(plot_context)
+
                 llm_result = self._plot_pattern.sub(r'\1.', result)
 
-                # Append tool result
                 self.session.messages.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id", ""),
                     "content": llm_result,
                 })
+
+            self.session.messages.extend(plot_context_messages)
 
             # ── 3. Send tool results back to LLM ────────
             messages = self._build_messages()
@@ -187,6 +215,109 @@ class TSAgent:
 
         return content
 
+    @staticmethod
+    def _legacy_function_call_to_tool_delta(function_call: dict) -> dict:
+        if not isinstance(function_call, dict):
+            return {}
+        function = {}
+        if function_call.get("name"):
+            function["name"] = function_call.get("name", "")
+        if function_call.get("arguments"):
+            function["arguments"] = function_call.get("arguments", "")
+        if not function:
+            return {}
+        return {
+            "tool_calls": [{
+                "index": 0,
+                "id": function_call.get("id", ""),
+                "type": "function",
+                "function": function,
+            }]
+        }
+
+    @staticmethod
+    def _compute_progress_percent(current, total) -> Optional[float]:
+        try:
+            cur = float(current)
+            tot = float(total)
+        except (TypeError, ValueError):
+            return None
+        if tot <= 0:
+            return None
+        return round(max(0.0, min(100.0, cur / tot * 100.0)), 1)
+
+    def _emit_stream_event(self, event: dict) -> bool:
+        if not self._on_stream_event:
+            return False
+        payload = dict(event or {})
+        if payload.get("sequence") is None:
+            self._stream_event_seq += 1
+            payload["sequence"] = self._stream_event_seq
+        payload.setdefault("created_at", round(time.time(), 3))
+        self._on_stream_event(payload)
+        return True
+
+    def _dispatch_tool_stream(self, tool_name: str, arguments: dict, call_id: str = None) -> Iterator[str]:
+        progress_queue = queue.Queue()
+        done_marker = object()
+        result_box: dict[str, str] = {}
+        started = time.perf_counter()
+        previous_callback = getattr(self.executor, "progress_callback", None)
+
+        def progress_callback(event):
+            payload = dict(event) if isinstance(event, dict) else {"message": str(event)}
+            payload["type"] = "tool_progress"
+            payload.setdefault("name", tool_name)
+            if call_id:
+                payload.setdefault("call_id", call_id)
+            payload["elapsed_seconds"] = round(time.perf_counter() - started, 2)
+            if payload.get("progress_percent") is None:
+                percent = self._compute_progress_percent(payload.get("current"), payload.get("total"))
+                if percent is not None:
+                    payload["progress_percent"] = percent
+            progress_queue.put(payload)
+
+        def run_tool():
+            self.executor.progress_callback = progress_callback
+            try:
+                result_box["result"] = self.executor.dispatch(tool_name, arguments)
+            except Exception as exc:
+                result_box["result"] = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
+            finally:
+                self.executor.progress_callback = previous_callback
+                progress_queue.put(done_marker)
+
+        worker = threading.Thread(target=run_tool, name=f"pipelinets-tool-{tool_name}", daemon=True)
+        worker.start()
+        last_heartbeat = started
+
+        while True:
+            try:
+                event = progress_queue.get(timeout=0.5)
+            except queue.Empty:
+                now = time.perf_counter()
+                if now - last_heartbeat >= 5:
+                    last_heartbeat = now
+                    if self._emit_stream_event({
+                        "type": "tool_progress",
+                        "name": tool_name,
+                        "call_id": call_id,
+                        "stage": "running",
+                        "message": "Still running...",
+                        "elapsed_seconds": round(now - started, 2),
+                        "heartbeat": True,
+                    }):
+                        yield ""
+                continue
+
+            if event is done_marker:
+                break
+            if self._emit_stream_event(event):
+                yield ""
+
+        worker.join()
+        return result_box.get("result", "")
+
     def _chat_stream(self) -> Iterator[str]:
         """Run the agent loop with streaming output."""
         messages = self._build_messages()
@@ -201,6 +332,8 @@ class TSAgent:
             if not chunk.get("choices"):
                 continue
             delta = chunk["choices"][0].get("delta", {})
+            if delta.get("function_call") and not delta.get("tool_calls"):
+                delta.update(self._legacy_function_call_to_tool_delta(delta.get("function_call", {})))
 
             # Text content
             if delta.get("content"):
@@ -211,8 +344,8 @@ class TSAgent:
             if delta.get("reasoning_content"):
                 rchunk = delta["reasoning_content"]
                 full_reasoning += rchunk
-                if self._on_stream_event:
-                    self._on_stream_event({"type": "reasoning", "text": rchunk})
+                if self._emit_stream_event({"type": "reasoning", "text": rchunk}):
+                    yield ""
 
             # Collect any other provider-specific extra fields
             for key in delta:
@@ -253,54 +386,80 @@ class TSAgent:
 
         # If there are tool calls, handle them and recurse
         if full_tool_calls:
+            for tool_index, tc in enumerate(full_tool_calls):
+                if not tc.get("id"):
+                    tc["id"] = f"tool_call_{len(self.session.messages)}_{tool_index}"
+
             self.session.messages.append(
                 _build_assistant_msg(full_content, full_tool_calls, full_reasoning, extra_delta_keys)
             )
 
-            for tc in full_tool_calls:
+            plot_context_messages = []
+
+            for tool_index, tc in enumerate(full_tool_calls):
                 tool_name = tc["function"]["name"]
+                call_id = tc.get("id") or f"tool_call_{len(self.session.messages)}_{tool_index}"
                 try:
                     arguments = json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     arguments = {}
 
                 # Emit tool_call event for UI
-                if self._on_stream_event:
-                    self._on_stream_event({
-                        "type": "tool_call",
-                        "name": tool_name,
-                        "arguments": arguments,
-                    })
+                if self._emit_stream_event({
+                    "type": "tool_call",
+                    "name": tool_name,
+                    "call_id": call_id,
+                    "index": tool_index,
+                    "arguments": arguments,
+                }):
+                    yield ""
 
-                result = self.executor.dispatch(tool_name, arguments)
+                tool_started = time.perf_counter()
+                result = yield from self._dispatch_tool_stream(tool_name, arguments, call_id=call_id)
+                elapsed_seconds = round(time.perf_counter() - tool_started, 2)
 
-                # Check for plot image result
                 plot_match = self._plot_pattern.search(result)
                 plot_filename = plot_match.group(2) if plot_match else None
-                # Strip plot marker from LLM-visible content
-                # Strip plot marker from LLM-visible content in _chat_stream
+                plot_info = self._extract_plot_info(result)
+                if plot_info:
+                    plot_context = self._build_plot_context_message(tool_name, plot_info)
+                    if plot_context:
+                        plot_context_messages.append(plot_context)
+
                 llm_result = self._plot_pattern.sub(r'\1.', result)
 
                 # Emit tool_result event for UI
-                if self._on_stream_event:
-                    self._on_stream_event({
-                        "type": "tool_result",
-                        "name": tool_name,
-                        "result": llm_result[:200] + "..." if len(llm_result) > 200 else llm_result,
-                    })
+                is_error = llm_result.startswith("Error")
+                is_truncated = len(llm_result) > 1200
+                if self._emit_stream_event({
+                    "type": "tool_result",
+                    "name": tool_name,
+                    "call_id": call_id,
+                    "status": "error" if is_error else "success",
+                    "success": not is_error,
+                    "result": llm_result[:1200] + "..." if is_truncated else llm_result,
+                    "result_size": len(llm_result),
+                    "truncated": is_truncated,
+                    "elapsed_seconds": elapsed_seconds,
+                    "progress_percent": 100,
+                }):
                     if plot_filename:
-                        self._on_stream_event({
+                        self._emit_stream_event({
                             "type": "plot_image",
                             "name": tool_name,
+                            "call_id": call_id,
                             "filename": plot_filename,
                             "url": f"/api/plots/{plot_filename}",
                         })
+                    yield ""
 
                 self.session.messages.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id", ""),
                     "content": llm_result,
                 })
+
+            self.session.messages.extend(plot_context_messages)
 
             # Recurse for LLM's final response
             yield from self._chat_stream()
@@ -315,9 +474,128 @@ class TSAgent:
 
     def _build_messages(self) -> list[dict]:
         """Build the full message list including dynamic system prompt."""
+        visual_indices = [
+            i for i, m in enumerate(self.session.messages)
+            if m.get("_pipelinets_image_path")
+        ]
+        active_visual_indices = (
+            set(visual_indices[-self.max_visual_context_images:])
+            if self.max_visual_context_images
+            else set()
+        )
         return [
             {"role": "system", "content": self._build_system_prompt()},
-        ] + self.session.messages
+        ] + [
+            self._materialize_message(m, attach_image=i in active_visual_indices)
+            for i, m in enumerate(self.session.messages)
+        ]
+
+    def _materialize_message(self, message: dict, attach_image: bool = False) -> dict:
+        msg = {
+            k: v for k, v in message.items()
+            if not str(k).startswith("_pipelinets_")
+        }
+        image_path = message.get("_pipelinets_image_path")
+        if self.multimodal_enabled and attach_image and image_path:
+            data_url = self._image_path_to_data_url(image_path)
+            if data_url:
+                text = msg.get("content") or "Generated plot image."
+                msg["content"] = [
+                    {"type": "text", "text": text},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ]
+        return msg
+
+    @staticmethod
+    def _normalize_multimodal(value) -> str:
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        text = str(value or "auto").strip().lower()
+        if text in {"1", "true", "yes", "on", "enabled", "enable"}:
+            return "on"
+        if text in {"0", "false", "no", "off", "disabled", "disable", "none"}:
+            return "off"
+        return "auto"
+
+    def _resolve_multimodal_enabled(self) -> bool:
+        if self.multimodal == "on":
+            return True
+        if self.multimodal == "off":
+            return False
+        provider = str(self._provider or "").lower()
+        model = str(self._model or "").lower()
+        if provider == "anthropic" and (
+            "claude-3" in model
+            or "claude-4" in model
+            or "claude-sonnet-4" in model
+            or "claude-opus-4" in model
+        ):
+            return True
+        markers = (
+            "gpt-4o", "gpt-4.1", "gpt-4.5", "o3", "o4",
+            "vision", "vl", "llava", "internvl", "minicpm-v",
+            "glm-4v", "qwen-vl", "qwen2-vl", "qwen2.5-vl",
+            "qwen3-vl", "pixtral", "gemma-3", "deepseek-vl",
+            "kimi-vl",
+        )
+        return any(marker in model for marker in markers)
+
+    def _extract_plot_info(self, result: str) -> Optional[dict]:
+        match = self._plot_pattern.search(result or "")
+        if not match:
+            return None
+        return {"label": match.group(1), "filename": match.group(2)}
+
+    def _build_plot_context_message(self, tool_name: str, plot_info: dict) -> Optional[dict]:
+        if not self.multimodal_enabled:
+            return None
+        image_path = self._resolve_plot_file(plot_info.get("filename", ""))
+        if not image_path:
+            return None
+        label = plot_info.get("label") or "Generated plot"
+        return {
+            "role": "user",
+            "content": (
+                f"Visual context generated by tool `{tool_name}`: {label}. "
+                "Inspect this image directly when analyzing the data trend, seasonality, outliers, structural breaks, or forecast behavior."
+            ),
+            "_pipelinets_image_path": str(image_path),
+            "_pipelinets_image_label": label,
+            "_pipelinets_image_tool": tool_name,
+        }
+
+    def _resolve_plot_file(self, filename: str) -> Optional[Path]:
+        if not filename:
+            return None
+        candidates = []
+        if self.executor.plot_dir:
+            candidates.append(self.executor.plot_dir / Path(filename).name)
+        if self.session.last_plot_path:
+            candidates.append(Path(self.session.last_plot_path))
+        candidates.append(Path(filename))
+        for path in candidates:
+            try:
+                if path.exists() and path.is_file():
+                    return path
+            except OSError:
+                continue
+        return None
+
+    @staticmethod
+    def _image_path_to_data_url(image_path: str) -> Optional[str]:
+        path = Path(image_path)
+        try:
+            if not path.exists() or not path.is_file():
+                return None
+            if path.stat().st_size > 8 * 1024 * 1024:
+                return None
+            mime_type = mimetypes.guess_type(str(path))[0] or "image/png"
+            if not mime_type.startswith("image/"):
+                return None
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            return f"data:{mime_type};base64,{encoded}"
+        except OSError:
+            return None
 
     def _build_system_prompt(self) -> str:
         """Build a dynamic system prompt with full harness context."""
@@ -330,7 +608,7 @@ class TSAgent:
         env_lines.append(f"Python: {sys.version.split()[0]}")
         env_lines.append(f"OS: {platform.system()} {platform.release()}")
         # Key dependencies
-        for pkg in ("pandas", "numpy", "scikit-learn", "matplotlib", "torch", "statsmodels"):
+        for pkg in ("pandas", "numpy", "scikit-learn", "matplotlib", "torch", "scipy"):
             try:
                 m = __import__(pkg)
                 v = getattr(m, "__version__", "?")
@@ -342,6 +620,7 @@ class TSAgent:
         model_lines = []
         model_lines.append(f"Provider: {self._provider}")
         model_lines.append(f"Model: {self._model}")
+        model_lines.append(f"Multimodal image input: {'enabled' if self.multimodal_enabled else 'disabled'} ({self.multimodal})")
         if self._base_url:
             bu = str(self._base_url)
             if not bu.startswith("<"):
@@ -423,9 +702,11 @@ class TSAgent:
         parts.append("\n## Session State")
         parts.append("\n".join(f"- {l}" for l in session_lines))
         if self._transient_user_context:
-            parts.append("\n## User-selected data context")
-            parts.append("The user selected the following cells in the web data preview. Use this only when the current user message is asking about the selected cells or refers to them implicitly; otherwise ignore it.")
+            parts.append("\n## Confirmed user-selected data context")
+            parts.append("The user explicitly confirmed this selection in the web data preview by clicking the small selection button. Treat the confirmed selection as the focal scope for this turn. If the user asks only about this period, selected data, selected dates, anomalies, or refers to the selection implicitly, analyze only the confirmed selected scope. If the user asks how this period changes within or compared with a broader scope such as all-day/全天, same-day, overall, surrounding period, or full dataset, first call get_data_context with the matching comparison scope and use the selected rows plus that broader returned context as evidence. Never replace missing broader context with dataset/domain knowledge. State in your answer which scopes were actually used.")
             parts.append(self._transient_user_context)
+        parts.append("\n## Data Harness and Evidence Rules")
+        parts.append("Uploaded preview rows, confirmed selection payloads, in-memory session data, uploaded CSV files listed in session state, tool results, and generated plots are the only valid data sources. Most diagnostic and plotting tools are automatically scoped to the confirmed selection when a confirmed selection exists. The get_data_context tool is the explicit escape hatch for broader evidence; use it for all-day/same-day/full-dataset comparisons. If a requested scope cannot be retrieved from these sources, say the comparison is unsupported instead of speculating.")
         parts.append(f"\n## Available Tools ({len(self.tools)})\n{tool_list}")
 
         return "\n".join(parts)
@@ -434,6 +715,7 @@ class TSAgent:
         """Reset the conversation and session state."""
         old_plot_dir = self.executor.plot_dir
         self._transient_user_context = None
+        self._transient_selected_data_context = None
         self.session = Session()
         self.executor = Executor(self.session, plot_dir=old_plot_dir)
 

@@ -335,6 +335,121 @@ print(f"Dominant periods: {info['dominant_periods']}")  # e.g. [30, 7, 365] (via
 
 ---
 
+## Native Time Series Diagnostics / 原生时序诊断 API
+
+PipelineTS exposes the same deep diagnostics used by the Agent as native Python APIs under `PipelineTS.preprocessing`.
+The Agent only calls these APIs; analysis logic is implemented in preprocessing modules and can be used without the Agent.
+
+PipelineTS 在 `PipelineTS.preprocessing` 下提供 Agent 使用的同等深度诊断能力。
+Agent 只调用这些 API；分析逻辑位于预处理模块中，用户也可以脱离 Agent 直接使用。
+
+```python
+from PipelineTS.preprocessing import (
+    time_index_report,
+    series_profile,
+    autocorrelation_report,
+    seasonality_report,
+    trend_report,
+    changepoint_report,
+    distribution_shift_report,
+    volatility_report,
+    lag_feature_report,
+    calendar_effect_report,
+    covariate_relationship_report,
+    intermittency_report,
+    decomposition_report,
+    forecastability_report,
+    baseline_forecast_report,
+    panel_structure_report,
+    leakage_risk_report,
+    modeling_readiness_report,
+    recommendation_report,
+)
+
+print(time_index_report(data, time_col='date'))
+print(series_profile(data, target_col='value'))
+print(seasonality_report(data, target_col='value'))
+print(trend_report(data, time_col='date', target_col='value'))
+print(recommendation_report(data, time_col='date', target_col='value'))
+```
+
+### Diagnostic Coverage / 诊断覆盖范围
+
+| API / 接口 | Purpose / 用途 |
+|---|---|
+| `time_index_report()` | Timestamp validity, monotonicity, duplicates, frequency, interval regularity, large gaps / 时间戳有效性、单调性、重复、频率、间隔规则性、大间隔 |
+| `series_profile()` | Distribution, quantiles, skew/kurtosis, zeros/negatives, Hurst, spectral entropy / 分布、分位数、偏度峰度、零值负值、Hurst、谱熵 |
+| `autocorrelation_report()` | ACF/PACF, significant lags, Ljung-Box test / ACF/PACF、显著滞后、Ljung-Box 检验 |
+| `seasonality_report()` | FFT periods, ACF seasonal peaks, STL seasonal strength / FFT 周期、ACF 季节峰、STL 季节强度 |
+| `trend_report()` | Global/local trend, Kendall test, rolling slope reversals / 全局和局部趋势、Kendall 检验、滚动斜率反转 |
+| `changepoint_report()` | Mean, variance, and CUSUM-style structural breaks / 均值、方差和 CUSUM 风格结构突变 |
+| `distribution_shift_report()` | Chronological segment drift and KS tests / 时间分段漂移与 KS 检验 |
+| `volatility_report()` | Rolling volatility, volatility trend, clustering / 滚动波动率、波动率趋势、聚集性 |
+| `lag_feature_report()` | Useful lag-window guidance from autocorrelation / 基于自相关给出滞后窗口建议 |
+| `calendar_effect_report()` | Hour, weekday, day-of-month, month, quarter effects / 小时、星期、月内日、月份、季度效应 |
+| `covariate_relationship_report()` | Same-time and lead/lag target-covariate relationships / 协变量与目标的同期及超前滞后关系 |
+| `intermittency_report()` | ADI/CV² demand pattern classification / ADI/CV² 间歇需求分类 |
+| `decomposition_report()` | STL trend/seasonal/residual strengths / STL 趋势、季节、残差强度 |
+| `forecastability_report()` | Intrinsic forecastability score using memory, entropy, trend, seasonality, and history sufficiency / 基于记忆性、熵、趋势、季节性、历史长度的可预测性评分 |
+| `baseline_forecast_report()` | Holdout benchmark of naive, mean, median, drift, and seasonal-naive forecasts / 朴素、均值、中位数、漂移、季节朴素预测的留出集基线 |
+| `panel_structure_report()` | Panel series count, length balance, duplicate id-time keys, regularity, coverage, heterogeneity / 面板序列数量、长度均衡、id-time 重复、规则性、覆盖范围、异质性 |
+| `leakage_risk_report()` | Feature-name, same-time correlation, and future-lead correlation leakage checks / 基于特征名、同期相关、未来超前相关的泄漏风险检查 |
+| `modeling_readiness_report()` | Blocking issues, warnings, validation horizon, lag/seasonality guidance, covariate availability / 建模阻塞问题、警告、验证窗口、滞后季节性建议、协变量可用性 |
+| `recommendation_report()` | Concise preprocessing, feature, seasonality, and model-family recommendations / 预处理、特征、季节性和模型族建议 |
+
+### Pre-modeling Readiness Workflow / 建模前就绪度工作流
+
+```python
+from PipelineTS.preprocessing import (
+    modeling_readiness_report,
+    leakage_risk_report,
+    baseline_forecast_report,
+    forecastability_report,
+)
+
+horizon = 14
+
+print(modeling_readiness_report(
+    data,
+    time_col='date',
+    target_col='sales',
+    id_col='store_id',
+    horizon=horizon,
+    known_covariates=['holiday', 'promotion'],
+    past_covariates=['temperature'],
+))
+
+print(leakage_risk_report(
+    data,
+    time_col='date',
+    target_col='sales',
+    id_col='store_id',
+    known_covariates=['holiday', 'promotion'],
+    past_covariates=['temperature'],
+    horizon=horizon,
+))
+
+print(forecastability_report(data, target_col='sales', horizon=horizon))
+print(baseline_forecast_report(data, time_col='date', target_col='sales', id_col='store_id', horizon=horizon))
+```
+
+Recommended order before expensive training:
+
+建模前推荐顺序：
+
+1. `time_index_report()` and `modeling_readiness_report()` to find blocking data issues.
+   使用 `time_index_report()` 和 `modeling_readiness_report()` 发现阻塞性数据问题。
+2. `series_profile()`, `seasonality_report()`, `trend_report()`, and `forecastability_report()` to understand signal structure.
+   使用 `series_profile()`、`seasonality_report()`、`trend_report()` 和 `forecastability_report()` 理解信号结构。
+3. `covariate_relationship_report()` and `leakage_risk_report()` before enabling covariates.
+   启用协变量前使用 `covariate_relationship_report()` 和 `leakage_risk_report()`。
+4. `baseline_forecast_report()` to set a minimum performance target for trained models.
+   使用 `baseline_forecast_report()` 为训练模型设定必须超过的最低性能基线。
+5. `recommendation_report()` to summarize preprocessing, feature engineering, and model-family choices.
+   使用 `recommendation_report()` 汇总预处理、特征工程和模型族选择。
+
+---
+
 ## Time Series Split / 时间序列分割
 
 `TimeSeriesSplit` provides time-aware train/test splitting that preserves temporal ordering (unlike sklearn's random split).

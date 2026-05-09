@@ -16,11 +16,14 @@ matplotlib.use("Agg")
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from pathlib import Path
 
 from PipelineTS.agent.session import Session
+from PipelineTS.preprocessing import time_series_diagnostics as tsdiag
+from PipelineTS.preprocessing import time_series_preprocessing as tsprep
 
 
 def _as_columns(value) -> list:
@@ -60,6 +63,39 @@ class Executor:
     def __init__(self, session: Session, plot_dir: Path = None):
         self.session = session
         self.plot_dir = plot_dir
+        self.selected_data_context = None
+        self.progress_callback = None
+
+    def _emit_progress(self, stage: str, message: str, **payload):
+        if not self.progress_callback:
+            return
+        event = {"stage": stage, "message": message}
+        event.update(payload)
+        self.progress_callback(event)
+
+    def _pipeline_progress_callback(self, stage: str = "model_complete"):
+        def callback(model_name, model, fit_info, idx, total):
+            try:
+                metric = fit_info.get("metric")
+                train_cost = fit_info.get("train_cost")
+                eval_cost = fit_info.get("eval_cost")
+                metric_value = float(metric) if metric is not None else None
+                train_seconds = float(train_cost) if train_cost is not None else None
+                eval_seconds = float(eval_cost) if eval_cost is not None else None
+                metric_text = f", metric={metric_value:.6g}" if metric_value is not None else ""
+                self._emit_progress(
+                    stage,
+                    f"[{idx + 1}/{total}] Finished {model_name}{metric_text}",
+                    current=idx + 1,
+                    total=total,
+                    model=model_name,
+                    metric=metric_value,
+                    train_seconds=train_seconds,
+                    eval_seconds=eval_seconds,
+                )
+            except Exception:
+                pass
+        return callback
 
     def dispatch(self, tool_name: str, arguments: dict) -> str:
         """Route a tool call to the appropriate handler.
@@ -80,10 +116,272 @@ class Executor:
         if handler is None:
             return f"Error: unknown tool '{tool_name}'"
         try:
+            scoped = self._selected_scope_for_tool(tool_name)
+            if scoped is not None:
+                scoped_df, scope_note, scope_ctx = scoped
+                original_data = self.session.data
+                original_time_col = self.session.time_col
+                original_target_col = self.session.target_col
+                selected_time_col = _primary_column(scope_ctx.get("time_col")) if isinstance(scope_ctx, dict) else ""
+                selected_target_col = self._selected_context_target_col(scoped_df, scope_ctx)
+                self.session.data = scoped_df
+                if selected_time_col and selected_time_col in scoped_df.columns:
+                    self.session.time_col = selected_time_col
+                if selected_target_col and selected_target_col in scoped_df.columns:
+                    self.session.target_col = selected_target_col
+                try:
+                    result = handler(**arguments)
+                finally:
+                    self.session.data = original_data
+                    self.session.time_col = original_time_col
+                    self.session.target_col = original_target_col
+                return f"{scope_note}\n\n{result}"
             return handler(**arguments)
         except Exception as exc:
             tb = traceback.format_exc()
             return f"Error executing {tool_name}: {type(exc).__name__}: {exc}\n\nTraceback:\n{tb}"
+
+    def _selected_scope_for_tool(self, tool_name: str):
+        scoped_tools = {
+            "inspect_data",
+            "check_missing_values",
+            "detect_outliers",
+            "check_stationarity",
+            "data_quality_report",
+            "analyze_time_index",
+            "profile_series",
+            "analyze_autocorrelation",
+            "detect_seasonality",
+            "analyze_trend",
+            "detect_changepoints",
+            "detect_distribution_shift",
+            "analyze_volatility",
+            "suggest_lag_features",
+            "detect_calendar_effects",
+            "analyze_covariates",
+            "analyze_intermittency",
+            "decompose_components",
+            "recommend_timeseries_actions",
+            "assess_forecastability",
+            "benchmark_baselines",
+            "analyze_panel_structure",
+            "detect_leakage_risk",
+            "assess_modeling_readiness",
+            "plot_time_series",
+            "plot_acf_pacf",
+            "plot_decomposition",
+        }
+        if tool_name not in scoped_tools:
+            return None
+        scope_ctx = self._selected_scope_context()
+        if not scope_ctx:
+            return None
+        scoped_df = self._selected_scope_dataframe(scope_ctx)
+        if scoped_df is None or scoped_df.empty:
+            return None
+        return scoped_df, self._selected_scope_note(len(scoped_df), scope_ctx), scope_ctx
+
+    def _selected_scope_context(self) -> dict:
+        ctx = self.selected_data_context
+        if not isinstance(ctx, dict) or ctx.get("confirmed") is not True:
+            return {}
+        sections = [item for item in ctx.get("sections", []) if isinstance(item, dict)] if isinstance(ctx.get("sections"), list) else []
+        if not sections:
+            return ctx
+        active_id = self.session.metadata.get("active_dataset_id") if isinstance(self.session.metadata, dict) else None
+        selected_id = ctx.get("dataset_id")
+        chosen = None
+        if active_id:
+            chosen = next((item for item in sections if item.get("dataset_id") == active_id), None)
+        if chosen is None and selected_id:
+            chosen = next((item for item in sections if item.get("dataset_id") == selected_id), None)
+        if chosen is None:
+            chosen = sections[0]
+        merged = dict(ctx)
+        merged.update(chosen)
+        merged["confirmed"] = True
+        return merged
+
+    def _selected_scope_dataframe(self, ctx: dict):
+        if not isinstance(ctx, dict):
+            return None
+        sections = [item for item in ctx.get("sections", []) if isinstance(item, dict)] if isinstance(ctx.get("sections"), list) else []
+        if ctx.get("multi_dataset") is True and len(sections) > 1:
+            return self._selected_multi_scope_dataframe(sections)
+        file_scoped = self._selected_rows_dataframe_from_file(ctx)
+        if file_scoped is not None and not file_scoped.empty:
+            return file_scoped.reset_index(drop=True)
+        df = self._selected_source_dataframe(ctx)
+        if df is None or df.empty:
+            return None
+        return self._slice_dataframe_by_context(df, ctx)
+
+    def _slice_dataframe_by_context(self, df: pd.DataFrame, ctx: dict):
+        time_col = _primary_column(ctx.get("time_col")) or _primary_column(self.session.time_col)
+        time_start = ctx.get("time_start")
+        time_end = ctx.get("time_end")
+        row_ranges = ctx.get("row_ranges") or []
+        use_time_scope = len(row_ranges) <= 1
+        if use_time_scope and time_col and time_col in df.columns and time_start and time_end:
+            scoped = self._filter_dataframe_by_time(df, time_col, time_start, time_end)
+            if scoped is not None and not scoped.empty:
+                return scoped.reset_index(drop=True)
+
+        rows = []
+        for item in row_ranges:
+            if not isinstance(item, dict):
+                continue
+            try:
+                start = int(item.get("start", 0))
+                end = int(item.get("end", start))
+            except (TypeError, ValueError):
+                continue
+            if end < start:
+                start, end = end, start
+            start = max(0, start)
+            end = min(len(df) - 1, end)
+            if start <= end:
+                rows.extend(range(start, end + 1))
+        if rows:
+            return df.iloc[sorted(set(rows))].reset_index(drop=True)
+        return None
+
+    def _selected_multi_scope_dataframe(self, sections: list):
+        frames = []
+        for section in sections:
+            scoped = self._selected_rows_dataframe_from_file(section)
+            if scoped is None or scoped.empty:
+                df = self._selected_source_dataframe(section)
+                if df is None or df.empty:
+                    continue
+                scoped = self._slice_dataframe_by_context(df, section)
+            if scoped is None or scoped.empty:
+                continue
+            scoped = scoped.copy()
+            dataset_name = section.get("dataset_name") or section.get("dataset_id") or "Dataset"
+            if "__dataset__" in scoped.columns:
+                scoped["__dataset__"] = dataset_name
+            else:
+                scoped.insert(0, "__dataset__", dataset_name)
+            frames.append(scoped)
+        if not frames:
+            return None
+        return pd.concat(frames, ignore_index=True, sort=False)
+
+    def _selected_rows_dataframe_from_file(self, ctx: dict):
+        dataset_id = ctx.get("dataset_id")
+        active_id = self.session.metadata.get("active_dataset_id") if isinstance(self.session.metadata, dict) else None
+        if self.session.data is not None and not self.session.data.empty and (not dataset_id or not active_id or dataset_id == active_id):
+            return None
+        filepath = None
+        if dataset_id:
+            item = self._dataset_item_for_id(dataset_id)
+            filepath = item.get("filepath") if item else None
+        if not filepath and self.session.data is None:
+            filepath = self.session.data_filepath
+        if not filepath:
+            return None
+        path = Path(filepath)
+        if not path.exists() or not path.is_file():
+            return None
+        row_ranges = ctx.get("row_ranges") or []
+        if not row_ranges:
+            return None
+        frames = []
+        for item in row_ranges:
+            if not isinstance(item, dict):
+                continue
+            try:
+                start = max(0, int(item.get("start", 0)))
+                end = max(start, int(item.get("end", start)))
+            except (TypeError, ValueError):
+                continue
+            try:
+                chunk = pd.read_csv(path, skiprows=range(1, start + 1), nrows=end - start + 1)
+            except Exception:
+                return None
+            if not chunk.empty:
+                frames.append(chunk)
+        if not frames:
+            return None
+        return pd.concat(frames, ignore_index=True, sort=False)
+
+    def _selected_source_dataframe(self, ctx: dict):
+        df = self.session.data
+        dataset_id = ctx.get("dataset_id")
+        active_id = self.session.metadata.get("active_dataset_id") if isinstance(self.session.metadata, dict) else None
+        if df is not None and not df.empty and (not dataset_id or not active_id or dataset_id == active_id):
+            return df
+        filepath = None
+        if dataset_id:
+            item = self._dataset_item_for_id(dataset_id)
+            filepath = item.get("filepath") if item else None
+        if not filepath and df is None:
+            filepath = self.session.data_filepath
+        if filepath:
+            path = Path(filepath)
+            if path.exists() and path.is_file():
+                try:
+                    return pd.read_csv(path)
+                except Exception:
+                    return None
+        if df is not None and not df.empty and not dataset_id:
+            return df
+        return None
+
+    def _dataset_item_for_id(self, dataset_id: str):
+        if not dataset_id or not isinstance(self.session.metadata, dict):
+            return None
+        datasets = self.session.metadata.get("datasets")
+        if not isinstance(datasets, list):
+            return None
+        for item in datasets:
+            if isinstance(item, dict) and item.get("id") == dataset_id:
+                return item
+        return None
+
+    def _selected_context_target_col(self, df: pd.DataFrame, ctx: dict = None) -> str:
+        ctx = ctx if isinstance(ctx, dict) else (self.selected_data_context if isinstance(self.selected_data_context, dict) else {})
+        if ctx.get("multi_dataset") is True:
+            target_col = _primary_column(ctx.get("target_col"))
+            return target_col if target_col and target_col in df.columns else ""
+        time_col = _primary_column(ctx.get("time_col")) or _primary_column(self.session.time_col)
+        selected_cols = [col for col in _as_columns(ctx.get("selected_columns")) if col in df.columns]
+        candidate_cols = [col for col in selected_cols if col != time_col]
+        if len(candidate_cols) == 1:
+            return candidate_cols[0]
+        target_col = _primary_column(ctx.get("target_col"))
+        if target_col and target_col in df.columns:
+            return target_col
+        return ""
+
+    @staticmethod
+    def _filter_dataframe_by_time(df: pd.DataFrame, time_col: str, time_start, time_end):
+        try:
+            values = pd.to_datetime(df[time_col], errors="coerce")
+            start = pd.to_datetime(time_start, errors="coerce")
+            end = pd.to_datetime(time_end, errors="coerce")
+        except Exception:
+            return None
+        if pd.isna(start) or pd.isna(end):
+            return None
+        if end < start:
+            start, end = end, start
+        mask = (values >= start) & (values <= end)
+        return df.loc[mask]
+
+    def _selected_scope_note(self, n_rows: int, ctx: dict = None) -> str:
+        ctx = ctx if isinstance(ctx, dict) else (self.selected_data_context if isinstance(self.selected_data_context, dict) else {})
+        pieces = [f"Confirmed selected data scope applied: computed on {n_rows} selected row(s), not the full dataset."]
+        if ctx.get("dataset_name"):
+            pieces.append(f"Dataset: {ctx.get('dataset_name')}.")
+        time_start = ctx.get("time_start")
+        time_end = ctx.get("time_end")
+        if time_start or time_end:
+            pieces.append(f"Selected time range: {time_start} → {time_end}.")
+        if ctx.get("target_col"):
+            pieces.append(f"Selected target column in preview: {_format_columns(ctx.get('target_col'))}.")
+        return " ".join(pieces)
 
     def _resolve_plot_path(self, save_path: str, default_name: str) -> str:
         if save_path:
@@ -98,6 +396,31 @@ class Executor:
     def _plot_result(self, save_path: str, label: str) -> str:
         filename = Path(save_path).name
         return f"[PLOT]{label} saved.{{{filename}}}[/PLOT]"
+
+    def _target_columns(self, columns=None) -> list:
+        cols = _as_columns(columns) or _as_columns(self.session.target_col)
+        return [c for c in cols if self.session.has_data() and c in self.session.data.columns]
+
+    def _numeric_columns(self, columns=None, include_target: bool = True) -> list:
+        if not self.session.has_data():
+            return []
+        if columns:
+            candidates = _as_columns(columns)
+        elif include_target:
+            candidates = _as_columns(self.session.target_col)
+        else:
+            candidates = [
+                c for c in self.session.data.select_dtypes(include=[np.number]).columns
+                if c not in {self.session.time_col, self.session.id_col}
+            ]
+        return [
+            c for c in candidates
+            if c in self.session.data.columns and pd.api.types.is_numeric_dtype(self.session.data[c])
+        ]
+
+    def _mark_data_changed(self, df: pd.DataFrame) -> None:
+        self.session.data = df
+        self.session.clear_model()
 
     # ------------------------------------------------------------------
     #  Data Loading
@@ -270,6 +593,322 @@ class Executor:
             return "No data loaded. Use load_csv or load_builtin_dataset first."
         return self.session.data_summary(n_rows=n_rows)
 
+    def _handle_get_data_context(
+        self,
+        scope: str = None,
+        columns: list = None,
+        max_rows: int = 40,
+        include_preview: bool = True,
+    ) -> str:
+        if not self.session.has_data() and not self.session.has_data_file():
+            return "No data loaded or uploaded. Use load_csv, load_builtin_dataset, or upload a CSV first."
+
+        ctx = self._selected_scope_context()
+        valid_scopes = {
+            "selected",
+            "same_day",
+            "full_dataset",
+            "selected_vs_same_day",
+            "selected_vs_full_dataset",
+        }
+        if not scope:
+            scope = "selected_vs_same_day" if ctx else "full_dataset"
+        if scope not in valid_scopes:
+            return f"Error: invalid scope '{scope}'. Options: {sorted(valid_scopes)}"
+
+        try:
+            max_rows = int(max_rows)
+        except (TypeError, ValueError):
+            max_rows = 40
+        max_rows = max(0, min(max_rows, 200))
+        include_preview = bool(include_preview)
+
+        source_ctx = ctx if ctx else {}
+        source_df = self._selected_source_dataframe(source_ctx)
+        if source_df is None or source_df.empty:
+            return "No source data available for the requested context."
+        source_df = source_df.copy()
+
+        time_col = _primary_column(source_ctx.get("time_col")) or _primary_column(self.session.time_col)
+        if time_col and time_col in source_df.columns:
+            source_df[time_col] = pd.to_datetime(source_df[time_col], errors="coerce")
+            source_df = source_df.sort_values(time_col).reset_index(drop=True)
+
+        selected_df = None
+        if ctx:
+            selected_df = self._selected_scope_dataframe(ctx)
+            if selected_df is not None and not selected_df.empty:
+                selected_df = selected_df.copy()
+                if time_col and time_col in selected_df.columns:
+                    selected_df[time_col] = pd.to_datetime(selected_df[time_col], errors="coerce")
+                    selected_df = selected_df.sort_values(time_col).reset_index(drop=True)
+
+        need_selection = scope in {"selected", "selected_vs_same_day", "selected_vs_full_dataset"}
+        if need_selection and (selected_df is None or selected_df.empty):
+            return "No confirmed selected data is available for the requested selected-data context."
+
+        numeric_columns = self._resolve_context_numeric_columns(source_df, selected_df, columns, source_ctx, time_col)
+        if not numeric_columns:
+            return "No numeric columns available for the requested data context."
+
+        lines = ["Data Context (actual dataset evidence):"]
+        lines.append(f"- Requested scope: {scope}")
+        lines.append(f"- Numeric column(s): {', '.join(numeric_columns)}")
+        if source_ctx.get("dataset_name"):
+            lines.append(f"- Dataset: {source_ctx.get('dataset_name')}")
+        if self.session.has_data():
+            lines.append("- Data source: in-memory session dataframe")
+        elif self.session.data_filepath:
+            lines.append(f"- Data source: uploaded CSV file at {self.session.data_filepath}")
+        lines.append("- Scope rule: this tool is not auto-limited to the confirmed selection; it reads the requested comparison scope from the actual data source.")
+
+        same_day_df = None
+        if scope in {"same_day", "selected_vs_same_day"}:
+            same_day_df = self._same_day_context_dataframe(source_df, selected_df, source_ctx, time_col)
+            if same_day_df is None or same_day_df.empty:
+                return "Could not derive same-day/all-day context from the selected time range and source data."
+
+        if scope in {"selected", "selected_vs_same_day", "selected_vs_full_dataset"}:
+            self._append_context_scope(lines, "Confirmed selected rows", selected_df, numeric_columns, time_col, max_rows, include_preview)
+
+        if scope in {"same_day", "selected_vs_same_day"}:
+            self._append_context_scope(lines, "Same-day/all-day rows from source data", same_day_df, numeric_columns, time_col, max_rows, include_preview)
+            self._append_context_comparison(lines, "Selected", selected_df, "Same-day/all-day", same_day_df, numeric_columns)
+            self._append_selected_day_segments(lines, same_day_df, selected_df, numeric_columns, time_col)
+
+        if scope in {"full_dataset", "selected_vs_full_dataset"}:
+            self._append_context_scope(lines, "Full dataset rows from source data", source_df, numeric_columns, time_col, max_rows, include_preview)
+            if scope == "selected_vs_full_dataset":
+                self._append_context_comparison(lines, "Selected", selected_df, "Full dataset", source_df, numeric_columns)
+
+        lines.append("Use only the figures above, the confirmed selection text, and other tool outputs as quantitative evidence. If a requested comparison is absent here, say it is not supported by the available data context.")
+        return "\n".join(lines)
+
+    def _resolve_context_numeric_columns(self, source_df, selected_df, columns, ctx, time_col) -> list:
+        requested = _as_columns(columns)
+        if not requested and isinstance(ctx, dict):
+            requested = [
+                col for col in _as_columns(ctx.get("selected_columns"))
+                if col != time_col and col in source_df.columns
+            ]
+        if not requested and isinstance(ctx, dict):
+            requested = _as_columns(ctx.get("target_col"))
+        if not requested:
+            requested = _as_columns(self.session.target_col)
+        if not requested:
+            requested = [
+                col for col in source_df.select_dtypes(include=[np.number]).columns
+                if col not in {time_col, self.session.id_col}
+            ]
+
+        out = []
+        for col in requested:
+            if col in out:
+                continue
+            if col in source_df.columns:
+                series = pd.to_numeric(source_df[col], errors="coerce")
+            elif selected_df is not None and col in selected_df.columns:
+                series = pd.to_numeric(selected_df[col], errors="coerce")
+            else:
+                continue
+            if series.notna().any():
+                out.append(col)
+        return out[:8]
+
+    def _same_day_context_dataframe(self, source_df, selected_df, ctx, time_col):
+        if not time_col or time_col not in source_df.columns:
+            return None
+        start = pd.to_datetime(ctx.get("time_start"), errors="coerce") if isinstance(ctx, dict) else pd.NaT
+        end = pd.to_datetime(ctx.get("time_end"), errors="coerce") if isinstance(ctx, dict) else pd.NaT
+        if (pd.isna(start) or pd.isna(end)) and selected_df is not None and time_col in selected_df.columns:
+            selected_times = pd.to_datetime(selected_df[time_col], errors="coerce").dropna()
+            if not selected_times.empty:
+                start = selected_times.min()
+                end = selected_times.max()
+        if pd.isna(start) or pd.isna(end):
+            return None
+        if end < start:
+            start, end = end, start
+        source_times = pd.to_datetime(source_df[time_col], errors="coerce")
+        start_day = start.normalize()
+        end_day = end.normalize()
+        mask = (source_times.dt.normalize() >= start_day) & (source_times.dt.normalize() <= end_day)
+        return source_df.loc[mask].reset_index(drop=True)
+
+    def _append_context_scope(self, lines, label, df, columns, time_col, max_rows, include_preview):
+        lines.append("")
+        lines.append(f"## {label}")
+        lines.append(f"- Rows: {len(df)}")
+        if time_col and time_col in df.columns:
+            times = pd.to_datetime(df[time_col], errors="coerce").dropna()
+            if not times.empty:
+                lines.append(f"- Time range: {times.min()} → {times.max()}")
+        lines.extend(self._numeric_summary_table(df, columns))
+        if include_preview and max_rows > 0:
+            lines.extend(self._preview_table(df, columns, time_col, max_rows))
+
+    def _numeric_summary_table(self, df, columns) -> list:
+        lines = []
+        lines.append("")
+        lines.append("| Column | Count | Mean | Std | Min | Max | First | Last | Change | Change % | Slope/step |")
+        lines.append("|--------|-------|------|-----|-----|-----|-------|------|--------|----------|------------|")
+        for col in columns:
+            stats = self._numeric_stats(df, col)
+            lines.append(
+                "| {col} | {count} | {mean} | {std} | {min} | {max} | {first} | {last} | {change} | {change_pct} | {slope} |".format(
+                    col=col,
+                    count=stats["count"],
+                    mean=self._format_context_value(stats["mean"]),
+                    std=self._format_context_value(stats["std"]),
+                    min=self._format_context_value(stats["min"]),
+                    max=self._format_context_value(stats["max"]),
+                    first=self._format_context_value(stats["first"]),
+                    last=self._format_context_value(stats["last"]),
+                    change=self._format_context_value(stats["change"]),
+                    change_pct=self._format_context_value(stats["change_pct"], suffix="%"),
+                    slope=self._format_context_value(stats["slope"]),
+                )
+            )
+        return lines
+
+    def _numeric_stats(self, df, col) -> dict:
+        values = pd.to_numeric(df[col], errors="coerce") if col in df.columns else pd.Series(dtype=float)
+        clean = values.dropna()
+        if clean.empty:
+            return {
+                "count": 0,
+                "mean": np.nan,
+                "std": np.nan,
+                "min": np.nan,
+                "max": np.nan,
+                "first": np.nan,
+                "last": np.nan,
+                "change": np.nan,
+                "change_pct": np.nan,
+                "slope": np.nan,
+            }
+        first = clean.iloc[0]
+        last = clean.iloc[-1]
+        change = last - first
+        change_pct = (change / first * 100) if first != 0 else np.nan
+        if len(clean) >= 2:
+            x = np.arange(len(clean), dtype=float)
+            slope = np.polyfit(x, clean.to_numpy(dtype=float), 1)[0]
+        else:
+            slope = np.nan
+        return {
+            "count": int(clean.size),
+            "mean": clean.mean(),
+            "std": clean.std(),
+            "min": clean.min(),
+            "max": clean.max(),
+            "first": first,
+            "last": last,
+            "change": change,
+            "change_pct": change_pct,
+            "slope": slope,
+        }
+
+    def _append_context_comparison(self, lines, left_label, left_df, right_label, right_df, columns):
+        lines.append("")
+        lines.append(f"## Comparison: {left_label} vs {right_label}")
+        lines.append("| Column | Selected mean | Reference mean | Mean diff | Selected change | Reference change | Selected slope | Reference slope |")
+        lines.append("|--------|---------------|----------------|-----------|-----------------|------------------|----------------|-----------------|")
+        for col in columns:
+            left = self._numeric_stats(left_df, col)
+            right = self._numeric_stats(right_df, col)
+            lines.append(
+                "| {col} | {left_mean} | {right_mean} | {mean_diff} | {left_change} | {right_change} | {left_slope} | {right_slope} |".format(
+                    col=col,
+                    left_mean=self._format_context_value(left["mean"]),
+                    right_mean=self._format_context_value(right["mean"]),
+                    mean_diff=self._format_context_value(left["mean"] - right["mean"]),
+                    left_change=self._format_context_value(left["change"]),
+                    right_change=self._format_context_value(right["change"]),
+                    left_slope=self._format_context_value(left["slope"]),
+                    right_slope=self._format_context_value(right["slope"]),
+                )
+            )
+
+    def _append_selected_day_segments(self, lines, day_df, selected_df, columns, time_col):
+        if not time_col or time_col not in day_df.columns or selected_df is None or time_col not in selected_df.columns:
+            return
+        day_times = pd.to_datetime(day_df[time_col], errors="coerce")
+        selected_times = pd.to_datetime(selected_df[time_col], errors="coerce").dropna()
+        if selected_times.empty:
+            return
+        start = selected_times.min()
+        end = selected_times.max()
+        segments = [
+            ("Before selected window", day_df.loc[day_times < start]),
+            ("Selected window", day_df.loc[(day_times >= start) & (day_times <= end)]),
+            ("After selected window", day_df.loc[day_times > end]),
+        ]
+        lines.append("")
+        lines.append("## Same-day segments around the selected window")
+        lines.append("| Segment | Rows | Time range | Column | Mean | First | Last | Change |")
+        lines.append("|---------|------|------------|--------|------|-------|------|--------|")
+        for segment_name, segment_df in segments:
+            time_range = ""
+            if not segment_df.empty:
+                segment_times = pd.to_datetime(segment_df[time_col], errors="coerce").dropna()
+                if not segment_times.empty:
+                    time_range = f"{segment_times.min()} → {segment_times.max()}"
+            for col in columns:
+                stats = self._numeric_stats(segment_df, col)
+                lines.append(
+                    "| {segment} | {rows} | {time_range} | {col} | {mean} | {first} | {last} | {change} |".format(
+                        segment=segment_name,
+                        rows=len(segment_df),
+                        time_range=time_range,
+                        col=col,
+                        mean=self._format_context_value(stats["mean"]),
+                        first=self._format_context_value(stats["first"]),
+                        last=self._format_context_value(stats["last"]),
+                        change=self._format_context_value(stats["change"]),
+                    )
+                )
+
+    def _preview_table(self, df, columns, time_col, max_rows) -> list:
+        preview_cols = []
+        if time_col and time_col in df.columns:
+            preview_cols.append(time_col)
+        for col in columns:
+            if col in df.columns and col not in preview_cols:
+                preview_cols.append(col)
+        if not preview_cols:
+            return []
+        if len(df) <= max_rows:
+            preview = df[preview_cols]
+            label = f"Row preview ({len(preview)} rows)"
+        else:
+            head_n = max_rows // 2
+            tail_n = max_rows - head_n
+            preview = pd.concat([df[preview_cols].head(head_n), df[preview_cols].tail(tail_n)])
+            label = f"Row preview (first {head_n} and last {tail_n} of {len(df)} rows)"
+        lines = ["", f"{label}:"]
+        lines.append("| Row | " + " | ".join(preview_cols) + " |")
+        lines.append("|-----|" + "|".join(["---"] * len(preview_cols)) + "|")
+        for idx, row in preview.iterrows():
+            values = [self._format_context_cell(row.get(col)) for col in preview_cols]
+            lines.append(f"| {idx} | " + " | ".join(values) + " |")
+        return lines
+
+    @staticmethod
+    def _format_context_value(value, suffix: str = "") -> str:
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            return f"{float(value):.6g}{suffix}"
+        return f"{value}{suffix}"
+
+    def _format_context_cell(self, value) -> str:
+        text = self._format_context_value(value)
+        return str(text).replace("|", "\\|").replace("\n", " ")
+
     def _handle_check_missing_values(self) -> str:
         if not self.session.has_data():
             return "No data loaded."
@@ -303,10 +942,18 @@ class Executor:
         except Exception as e:
             return f"Outlier detection failed: {e}"
 
-        n_outliers = int(mask.sum()) if hasattr(mask, "sum") else "N/A"
+        if isinstance(mask, (pd.DataFrame, pd.Series)):
+            mask_values = mask.to_numpy(dtype=bool)
+        elif hasattr(mask, "__array__"):
+            mask_values = np.asarray(mask, dtype=bool)
+        else:
+            mask_values = None
+
+        n_outliers = int(mask_values.sum()) if mask_values is not None else "N/A"
+        n_checked = int(mask_values.size) if mask_values is not None else len(mask)
         pct = (
-            f" ({100 * n_outliers / len(mask):.2f}%)"
-            if isinstance(n_outliers, int) and len(mask) > 0
+            f" ({100 * n_outliers / n_checked:.2f}%)"
+            if isinstance(n_outliers, int) and n_checked > 0
             else ""
         )
         return f"Outlier detection ({method}): {n_outliers} outliers found{pct}."
@@ -352,6 +999,214 @@ class Executor:
 
         return "Data quality report generated (see console output)."
 
+    def _handle_analyze_time_index(self) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.time_index_report(self.session.data, self.session.time_col)
+
+    def _handle_profile_series(self) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.series_profile(self.session.data, self.session.target_col)
+
+    def _handle_analyze_autocorrelation(self, max_lags: int = 40) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.autocorrelation_report(
+            self.session.data,
+            self.session.target_col,
+            max_lags=max_lags,
+        )
+
+    def _handle_detect_seasonality(self, period: int = None, top_k: int = 5) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.seasonality_report(
+            self.session.data,
+            self.session.target_col,
+            period=period,
+            top_k=top_k,
+        )
+
+    def _handle_analyze_trend(self, window: int = None) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.trend_report(
+            self.session.data,
+            self.session.time_col,
+            self.session.target_col,
+            window=window,
+        )
+
+    def _handle_detect_changepoints(
+        self,
+        method: str = "auto",
+        window: int = None,
+        top_k: int = 5,
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.changepoint_report(
+            self.session.data,
+            self.session.time_col,
+            self.session.target_col,
+            method=method,
+            window=window,
+            top_k=top_k,
+        )
+
+    def _handle_detect_distribution_shift(self, segments: int = 3) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.distribution_shift_report(
+            self.session.data,
+            self.session.target_col,
+            segments=segments,
+        )
+
+    def _handle_analyze_volatility(self, window: int = None) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.volatility_report(
+            self.session.data,
+            self.session.target_col,
+            window=window,
+        )
+
+    def _handle_suggest_lag_features(self, max_lags: int = 60, top_k: int = 10) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.lag_feature_report(
+            self.session.data,
+            self.session.target_col,
+            max_lags=max_lags,
+            top_k=top_k,
+        )
+
+    def _handle_detect_calendar_effects(
+        self,
+        granularity: str = "auto",
+        top_k: int = 10,
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.calendar_effect_report(
+            self.session.data,
+            self.session.time_col,
+            self.session.target_col,
+            granularity=granularity,
+            top_k=top_k,
+        )
+
+    def _handle_analyze_covariates(
+        self,
+        covariates: list = None,
+        max_lag: int = 12,
+        top_k: int = 10,
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.covariate_relationship_report(
+            self.session.data,
+            self.session.target_col,
+            time_col=self.session.time_col,
+            id_col=self.session.id_col,
+            covariates=covariates,
+            max_lag=max_lag,
+            top_k=top_k,
+        )
+
+    def _handle_analyze_intermittency(self) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.intermittency_report(self.session.data, self.session.target_col)
+
+    def _handle_decompose_components(self, period: int = None) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.decomposition_report(
+            self.session.data,
+            self.session.target_col,
+            period=period,
+        )
+
+    def _handle_recommend_timeseries_actions(self) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.recommendation_report(
+            self.session.data,
+            self.session.time_col,
+            self.session.target_col,
+            id_col=self.session.id_col,
+        )
+
+    def _handle_assess_forecastability(self, horizon: int = None, seasonal_period: int = None) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.forecastability_report(
+            self.session.data,
+            self.session.target_col,
+            horizon=horizon,
+            seasonal_period=seasonal_period,
+        )
+
+    def _handle_benchmark_baselines(
+        self,
+        horizon: int = None,
+        seasonal_period: int = None,
+        test_size: int = None,
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.baseline_forecast_report(
+            self.session.data,
+            self.session.time_col,
+            self.session.target_col,
+            id_col=self.session.id_col,
+            horizon=horizon,
+            seasonal_period=seasonal_period,
+            test_size=test_size,
+        )
+
+    def _handle_analyze_panel_structure(self) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.panel_structure_report(
+            self.session.data,
+            self.session.time_col,
+            self.session.target_col,
+            self.session.id_col,
+        )
+
+    def _handle_detect_leakage_risk(self, horizon: int = None, corr_threshold: float = 0.98) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.leakage_risk_report(
+            self.session.data,
+            self.session.time_col,
+            self.session.target_col,
+            id_col=self.session.id_col,
+            known_covariates=self.session.known_covariates,
+            past_covariates=self.session.past_covariates,
+            feature_cols=self.session.feature_cols,
+            horizon=horizon,
+            corr_threshold=corr_threshold,
+        )
+
+    def _handle_assess_modeling_readiness(self, horizon: int = None) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        return tsdiag.modeling_readiness_report(
+            self.session.data,
+            self.session.time_col,
+            self.session.target_col,
+            id_col=self.session.id_col,
+            horizon=horizon,
+            known_covariates=self.session.known_covariates,
+            past_covariates=self.session.past_covariates,
+            feature_cols=self.session.feature_cols,
+        )
+
     # ------------------------------------------------------------------
     #  Preprocessing
     # ------------------------------------------------------------------
@@ -364,12 +1219,13 @@ class Executor:
 
         handler = TimeSeriesMissingHandler(time_col=self.session.time_col)
         try:
-            self.session.data = handler.transform(
+            df = handler.transform(
                 self.session.data, method=method
             )
         except Exception as e:
             return f"Missing value filling failed: {e}"
 
+        self._mark_data_changed(df)
         return f"Missing values filled using '{method}' interpolation."
 
     def _handle_handle_outliers(self, strategy: str = "clip") -> str:
@@ -382,7 +1238,7 @@ class Executor:
             time_col=self.session.time_col, method="iqr"
         )
         try:
-            self.session.data = detector.transform(
+            df = detector.transform(
                 self.session.data,
                 target_col=self.session.target_col,
                 strategy=strategy,
@@ -390,7 +1246,222 @@ class Executor:
         except Exception as e:
             return f"Outlier handling failed: {e}"
 
+        self._mark_data_changed(df)
         return f"Outliers handled using '{strategy}' strategy."
+
+    def _handle_sort_and_deduplicate(
+        self,
+        duplicate_strategy: str = "mean",
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        if not self.session.time_col or self.session.time_col not in self.session.data.columns:
+            return "No valid time column configured."
+
+        before = len(self.session.data)
+        source = self.session.data.copy()
+        source[self.session.time_col] = pd.to_datetime(source[self.session.time_col], errors="coerce")
+        invalid_times = int(source[self.session.time_col].isna().sum())
+        valid_source = source.dropna(subset=[self.session.time_col])
+        keys = [self.session.time_col]
+        if self.session.id_col and self.session.id_col in valid_source.columns:
+            keys = [self.session.id_col, self.session.time_col]
+        duplicate_count = int(valid_source.duplicated(keys).sum())
+        df = tsprep.sort_and_deduplicate(
+            self.session.data,
+            time_col=self.session.time_col,
+            id_col=self.session.id_col,
+            duplicate_strategy=duplicate_strategy,
+        )
+        self._mark_data_changed(df)
+        return (
+            f"Data sorted and deduplicated. Rows: {before} → {len(df)}. "
+            f"Invalid timestamps removed: {invalid_times}. Duplicate key rows aggregated: {duplicate_count}."
+        )
+
+    def _handle_resample_time_series(
+        self,
+        freq: str = None,
+        agg: str = "mean",
+        fill_method: str = "linear",
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        if not self.session.time_col or self.session.time_col not in self.session.data.columns:
+            return "No valid time column configured."
+
+        before = len(self.session.data)
+        result = tsprep.resample_time_series(
+            self.session.data,
+            time_col=self.session.time_col,
+            freq=freq,
+            id_col=self.session.id_col,
+            agg=agg,
+            fill_method=fill_method,
+        )
+        self._mark_data_changed(result)
+        return (
+            f"Resampled time series with freq='{freq or 'auto'}', agg='{agg}', fill_method='{fill_method}'. "
+            f"Rows: {before} → {len(result)}. Models were cleared because data changed."
+        )
+
+    def _handle_transform_target(
+        self,
+        method: str,
+        columns: list = None,
+        suffix: str = None,
+        replace: bool = False,
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        cols = self._numeric_columns(columns)
+        if not cols:
+            return "No numeric target columns found."
+        method = (method or "").lower()
+        try:
+            df = tsprep.transform_target(
+                self.session.data,
+                target_col=self.session.target_col,
+                method=method,
+                columns=columns,
+                suffix=suffix,
+                replace=replace,
+            )
+        except Exception as e:
+            return f"Target transform failed: {e}"
+        created = cols if replace else [f"{col}_{suffix or method}" for col in cols]
+        self._mark_data_changed(df)
+        return f"Target transform '{method}' applied to {cols}. Output column(s): {created}. Models were cleared."
+
+    def _handle_difference_series(
+        self,
+        order: int = 1,
+        seasonal_period: int = None,
+        columns: list = None,
+        suffix: str = None,
+        drop_na: bool = False,
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        cols = self._numeric_columns(columns)
+        if not cols:
+            return "No numeric target columns found."
+        order = max(1, int(order or 1))
+        try:
+            df = tsprep.difference_series(
+                self.session.data,
+                target_col=self.session.target_col,
+                order=order,
+                seasonal_period=seasonal_period,
+                columns=columns,
+                suffix=suffix,
+                drop_na=drop_na,
+            )
+        except Exception as e:
+            return f"Differencing failed: {e}"
+        created = []
+        for col in cols:
+            name_parts = [col, suffix or f"diff{order}"]
+            if seasonal_period and seasonal_period > 1:
+                name_parts.append(f"s{seasonal_period}")
+            created.append("_".join(name_parts))
+        self._mark_data_changed(df)
+        return f"Differenced series created: {created}. drop_na={drop_na}. Models were cleared."
+
+    def _handle_smooth_series(
+        self,
+        method: str = "rolling_mean",
+        window: int = 7,
+        columns: list = None,
+        suffix: str = None,
+        replace: bool = False,
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        cols = self._numeric_columns(columns)
+        if not cols:
+            return "No numeric target columns found."
+        window = max(2, int(window or 7))
+        method = method or "rolling_mean"
+        try:
+            df = tsprep.smooth_series(
+                self.session.data,
+                target_col=self.session.target_col,
+                method=method,
+                window=window,
+                columns=columns,
+                suffix=suffix,
+                replace=replace,
+            )
+        except Exception as e:
+            return f"Smoothing failed: {e}"
+        created = cols if replace else [f"{col}_{suffix or method}_{window}" for col in cols]
+        self._mark_data_changed(df)
+        return f"Smoothing '{method}' applied with window={window}. Output column(s): {created}. Models were cleared."
+
+    def _handle_clip_or_winsorize(
+        self,
+        lower_q: float = 0.01,
+        upper_q: float = 0.99,
+        columns: list = None,
+        replace: bool = True,
+        suffix: str = "winsor",
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        cols = self._numeric_columns(columns)
+        if not cols:
+            return "No numeric target columns found."
+        summaries = []
+        source = self.session.data
+        for col in cols:
+            s = pd.to_numeric(source[col], errors="coerce")
+            lo, hi = s.quantile([lower_q, upper_q])
+            out_col = col if replace else f"{col}_{suffix}"
+            clipped = int(((s < lo) | (s > hi)).sum())
+            summaries.append(f"{out_col}: clipped {clipped} values to [{lo:.4g}, {hi:.4g}]")
+        try:
+            df = tsprep.clip_or_winsorize(
+                self.session.data,
+                target_col=self.session.target_col,
+                lower_q=lower_q,
+                upper_q=upper_q,
+                columns=columns,
+                replace=replace,
+                suffix=suffix,
+            )
+        except Exception as e:
+            return f"Winsorization failed: {e}"
+        self._mark_data_changed(df)
+        return "Winsorization complete. " + "; ".join(summaries) + ". Models were cleared."
+
+    def _handle_set_covariates(
+        self,
+        known_covariates: list = None,
+        past_covariates: list = None,
+        feature_cols: list = None,
+    ) -> str:
+        if not self.session.has_data():
+            return "No data loaded."
+        columns = set(self.session.data.columns)
+        known = [c for c in (known_covariates or []) if c in columns]
+        past = [c for c in (past_covariates or []) if c in columns]
+        features = [c for c in (feature_cols or []) if c in columns]
+        missing = [
+            c for c in (known_covariates or []) + (past_covariates or []) + (feature_cols or [])
+            if c not in columns
+        ]
+        self.session.known_covariates = known
+        self.session.past_covariates = past
+        self.session.feature_cols = features
+        self.session.clear_model()
+        msg = (
+            f"Covariate configuration updated. known_covariates={known}, "
+            f"past_covariates={past}, feature_cols={features}. Models were cleared."
+        )
+        if missing:
+            msg += f" Ignored missing columns: {missing}."
+        return msg
 
     # ------------------------------------------------------------------
     #  Visualization
@@ -506,10 +1577,11 @@ class Executor:
                 lag_window=lag_window,
                 lag_features=["mean", "std", "trend_slope", "ema"] if use_lags else None,
             )
-            self.session.data = engineer.fit_transform(self.session.data)
+            df = engineer.fit_transform(self.session.data)
         except Exception as e:
             return f"Feature engineering failed: {e}"
 
+        self._mark_data_changed(df)
         new_cols = [
             c
             for c in self.session.data.columns
@@ -587,6 +1659,13 @@ class Executor:
             lags = min(24, max(6, len(self.session.data) // 10))
 
         try:
+            self._emit_progress(
+                "prepare",
+                f"Preparing ModelPipeline (models={include_models}, lags={lags}, cv={cv})",
+                rows=len(self.session.data),
+                lags=lags,
+                cv=cv,
+            )
             pipeline = ModelPipeline(
                 time_col=self.session.time_col,
                 target_col=self.session.target_col,
@@ -599,7 +1678,14 @@ class Executor:
                 known_covariates=self.session.known_covariates or None,
                 past_covariates=self.session.past_covariates or None,
             )
+            pipeline._on_model_complete_callback = self._pipeline_progress_callback("model_complete")
+            self._emit_progress("fit_start", "ModelPipeline training started")
             leaderboard = pipeline.fit(self.session.data)
+            self._emit_progress(
+                "fit_complete",
+                f"ModelPipeline training finished with {len(leaderboard)} successful model(s)",
+                successful_models=len(leaderboard),
+            )
         except Exception as e:
             return f"Pipeline training failed: {e}"
 
@@ -637,6 +1723,13 @@ class Executor:
         from PipelineTS.pipeline import SmartRouter
 
         try:
+            self._emit_progress(
+                "prepare",
+                f"Preparing SmartRouter (preset={preset}, n_predict={n_predict})",
+                rows=len(self.session.data),
+                n_predict=n_predict,
+                preset=preset,
+            )
             router = SmartRouter(
                 time_col=self.session.time_col,
                 target_col=self.session.target_col,
@@ -649,7 +1742,17 @@ class Executor:
                 known_covariates=self.session.known_covariates or None,
                 past_covariates=self.session.past_covariates or None,
             )
+            original_on_model_trained = router._on_model_trained
+            progress_callback = self._pipeline_progress_callback("router_model_complete")
+
+            def on_model_trained(model_name, model, fit_info, idx, total):
+                original_on_model_trained(model_name, model, fit_info, idx, total)
+                progress_callback(model_name, model, fit_info, idx, total)
+
+            router._on_model_trained = on_model_trained
+            self._emit_progress("fit_start", "SmartRouter search and training started")
             router.fit(self.session.data)
+            self._emit_progress("fit_complete", "SmartRouter training finished")
         except Exception as e:
             return f"SmartRouter training failed: {e}"
 
@@ -703,13 +1806,22 @@ class Executor:
 
         model_cls = available[model_name]
         try:
+            self._emit_progress(
+                "prepare",
+                f"Preparing {model_name} (lags={lags})",
+                rows=len(self.session.data),
+                model=model_name,
+                lags=lags,
+            )
             model = model_cls(
                 time_col=self.session.time_col,
                 target_col=self.session.target_col,
                 lags=lags,
                 quantile=quantile,
             )
+            self._emit_progress("fit_start", f"Training {model_name}")
             model.fit(self.session.data)
+            self._emit_progress("fit_complete", f"Finished training {model_name}")
         except Exception as e:
             return f"Model training failed: {e}"
 
