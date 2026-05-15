@@ -451,6 +451,8 @@ class TorchModelMixin:
         self.model.eval()
         with torch.inference_mode():
             if isinstance(X, np.ndarray):
+                if not X.flags.writeable:
+                    X = X.copy()
                 X = torch.from_numpy(X).float()
             elif not isinstance(X, torch.Tensor):
                 X = torch.as_tensor(X).float()

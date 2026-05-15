@@ -1,7 +1,16 @@
 import numpy as np
 from sklearn.metrics import *
-from torch import nn
-import torch
+try:
+    from torch import nn
+    import torch
+except ImportError:
+    nn = None
+    torch = None
+
+
+class _TorchLossUnavailable:
+    def __init__(self, *args, **kwargs):
+        raise ImportError("The torch backend is not installed. Install it with `pip install PipelineTS[torch]`.")
 
 
 def wmape(y_true, y_pred):
@@ -20,7 +29,7 @@ def mse(*args, **kwargs):
     return mean_squared_error(*args, **kwargs)
 
 
-class WMAPELoss(nn.Module):
+class WMAPELoss(nn.Module if nn is not None else _TorchLossUnavailable):
     def __init__(self, weight=None, size_average=True):
         super(WMAPELoss, self).__init__()
 
@@ -28,7 +37,7 @@ class WMAPELoss(nn.Module):
         return torch.abs(inputs - targets).sum() / (torch.abs(targets).sum() + 1e-8)
 
 
-class CombinedQuantileLoss(nn.Module):
+class CombinedQuantileLoss(nn.Module if nn is not None else _TorchLossUnavailable):
     """Combined pinball (quantile) loss for Conformalized Quantile Regression.
 
     Expects predictions of shape (B, 3*F) where F = target features,
@@ -65,7 +74,7 @@ class CombinedQuantileLoss(nn.Module):
         return loss / 3.0
 
 
-class RMSELoss(nn.Module):
+class RMSELoss(nn.Module if nn is not None else _TorchLossUnavailable):
     def __init__(self, weight=None, size_average=True):
         super(RMSELoss, self).__init__()
         self.mse = nn.MSELoss()

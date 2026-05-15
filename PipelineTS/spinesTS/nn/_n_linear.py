@@ -14,11 +14,26 @@ Enhancements:
 
 from typing import Any, Union
 
-import torch
-import torch.nn as nn
+try:
+    import torch
+    import torch.nn as nn
+except ImportError:
+    torch = None
+
+    class _UnavailableNN:
+        class Module:
+            pass
+
+    nn = _UnavailableNN()
 
 from PipelineTS.spinesTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
+if torch is not None:
+    from PipelineTS.spinesTS.layers import MultivariateWrapper, GlobalTemporalBlock
+else:
+    MultivariateWrapper = None
+    GlobalTemporalBlock = None
+from PipelineTS.spinesTS.backends import resolve_nn_backend
+from PipelineTS.spinesTS.backends._linear_models import MLXLinearModel
 
 
 class NLinearBackbone(nn.Module):
@@ -93,7 +108,7 @@ class NLinearBackbone(nn.Module):
         return out
 
 
-class NLinear(TorchModelMixin, ForecastingMixin):
+class _TorchNLinear(TorchModelMixin, ForecastingMixin):
     """NLinear time series forecasting model for spinesTS.
 
     Args:
@@ -139,7 +154,10 @@ class NLinear(TorchModelMixin, ForecastingMixin):
         self.gtb_d_model = gtb_d_model
         self.routing_mode = routing_mode
 
-        super(NLinear, self).__init__(random_seed, device, loss_fn=loss_fn)
+        if torch is None:
+            raise ImportError("The torch backend is not installed. Install it with `pip install PipelineTS[torch]`.")
+
+        super(_TorchNLinear, self).__init__(random_seed, device, loss_fn=loss_fn)
 
     def call(self) -> tuple:
         backbone = NLinearBackbone(
@@ -186,3 +204,71 @@ class NLinear(TorchModelMixin, ForecastingMixin):
                            lr_factor=lr_factor,
                            min_delta=min_delta, patience=patience, restore_best_weights=restore_best_weights,
                            verbose=verbose, **kwargs)
+
+
+class NLinear(ForecastingMixin):
+    def __init__(self,
+                 in_features: int,
+                 out_features: int,
+                 n_vars: int = 1,
+                 use_revin: bool = True,
+                 dropout: float = 0.1,
+                 loss_fn='huber',
+                 learning_rate: float = 0.001,
+                 random_seed: int = 42,
+                 device='auto',
+                 weight_decay: float = 1e-4,
+                 channel_mixing: bool = True,
+                 use_gtb: bool = False,
+                 gtb_d_model: int = 64,
+                 routing_mode: str = 'static'
+                 ) -> None:
+        unsupported_accelerated = n_vars > 1 or use_gtb
+        resolved = resolve_nn_backend(device=device, prefer_torch=unsupported_accelerated)
+        if resolved != 'torch' and unsupported_accelerated:
+            raise NotImplementedError("NLinear MLX backend currently supports univariate models without GTB.")
+
+        common = dict(
+            in_features=in_features,
+            out_features=out_features,
+            n_vars=n_vars,
+            use_revin=use_revin,
+            dropout=dropout,
+            loss_fn=loss_fn,
+            learning_rate=learning_rate,
+            random_seed=random_seed,
+            device=device,
+            weight_decay=weight_decay,
+            channel_mixing=channel_mixing,
+            use_gtb=use_gtb,
+            gtb_d_model=gtb_d_model,
+            routing_mode=routing_mode,
+        )
+
+        if resolved == 'torch':
+            self._impl = _TorchNLinear(**common)
+        else:
+            self._impl = MLXLinearModel(
+                'nlinear', in_features=in_features, out_features=out_features,
+                use_revin=use_revin, loss_fn=loss_fn, learning_rate=learning_rate,
+                random_seed=random_seed, weight_decay=weight_decay
+            )
+        self.backend = resolved
+
+    def __getattr__(self, name):
+        if name != '_impl' and '_impl' in self.__dict__:
+            return getattr(self.__dict__['_impl'], name)
+        raise AttributeError(name)
+
+    def fit(self, *args, **kwargs):
+        self._impl.fit(*args, **kwargs)
+        return self
+
+    def predict(self, *args, **kwargs):
+        return self._impl.predict(*args, **kwargs)
+
+    def _enable_cqr(self, *args, **kwargs):
+        return self._impl._enable_cqr(*args, **kwargs)
+
+    def _enable_residual_gate(self, *args, **kwargs):
+        return self._impl._enable_residual_gate(*args, **kwargs)

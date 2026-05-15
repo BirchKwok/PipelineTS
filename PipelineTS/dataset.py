@@ -1,9 +1,9 @@
 from PipelineTS.spinesTS.data import (
     DataGenerator,
     RandomEventGenerator,
-    LoadElectricDataSets,
-    LoadMessagesSentHourDataSets,
-    LoadMessagesSentDataSets,
+    LoadElectric,
+    LoadMessagesSentHour,
+    LoadMessagesSent,
     LoadWebSales,
     LoadSupermarketIncoming,
     BuiltInSeriesData

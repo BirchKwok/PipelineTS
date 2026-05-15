@@ -16,14 +16,15 @@ class TransformerModel(SpinesNNModelMixin):
             dim_feedforward=256,
             dropout=0.1,
             use_revin=True,
+            output_strategy='flatten',
             quantile=0.9,
             random_state=None,
             learning_rate=0.001,
             accelerator='auto',
             verbose=False,
-            epochs=1000,
+            epochs=1500,
             batch_size='auto',
-            patience=20,
+            patience=80,
             min_delta=0,
             lr_scheduler='CosineAnnealingLR',
             lr_scheduler_patience=10,
@@ -39,7 +40,7 @@ class TransformerModel(SpinesNNModelMixin):
             use_swa=False,
             swa_start_frac=0.75,
             warmup_epochs=0,
-            use_residual_gate=False
+            use_residual_gate=False,
     ):
         """
         TransformerModel: A wrapper for the Transformer model from spinesTS.
@@ -74,11 +75,11 @@ class TransformerModel(SpinesNNModelMixin):
             Accelerator for training.
         verbose : bool, optional, default: False
             Whether to display verbose output.
-        epochs : int, optional, default: 1000
+        epochs : int, optional, default: 1500
             Number of training epochs.
         batch_size : int or 'auto', optional, default: 'auto'
             Batch size.
-        patience : int, optional, default: 20
+        patience : int, optional, default: 80
             Early stopping patience.
         min_delta : int, optional, default: 0
             Minimum improvement delta.
@@ -112,6 +113,7 @@ class TransformerModel(SpinesNNModelMixin):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             use_revin=use_revin,
+            output_strategy=output_strategy,
             loss_fn='huber',
             learning_rate=learning_rate,
             random_seed=random_state,
@@ -146,7 +148,7 @@ class TransformerModel(SpinesNNModelMixin):
                 'use_swa': use_swa,
                 'swa_start_frac': swa_start_frac,
                 'warmup_epochs': warmup_epochs,
-                'use_residual_gate': use_residual_gate
+                'use_residual_gate': use_residual_gate,
             }
         )
 

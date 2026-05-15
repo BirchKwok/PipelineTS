@@ -29,7 +29,8 @@ class GAUBlock(nn.Module):
 
 class GAUBase(nn.Module):
     def __init__(self, in_features, out_features, d_model=32, num_heads=4,
-                 level=2, dropout=0.1, use_gtb=False, gtb_d_model=64, routing_mode='static'):
+                 level=2, dropout=0.1, query_key_dim=512, expansion_factor=4.0,
+                 use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super(GAUBase, self).__init__()
         self.in_features = in_features   # lags (sequence length)
         self.out_features = out_features
@@ -43,7 +44,8 @@ class GAUBase(nn.Module):
         )
 
         # GAU blocks: temporal attention across lag time steps (GAU already has attention)
-        self.gau = GAUBlock(d_model, level=level, dropout=dropout)
+        self.gau = GAUBlock(d_model, level=level, query_key_dim=query_key_dim,
+                            expansion_factor=expansion_factor, dropout=dropout)
 
         # Temporal compression via learned weighted pooling
         self.temporal_weight = nn.Linear(d_model, 1)
@@ -130,6 +132,8 @@ class GAUNet(TorchModelMixin, ForecastingMixin):
         self.loss_fn_name = loss_fn
         self.dropout = dropout
         self.weight_decay = weight_decay
+        self.query_key_dim = query_key_dim
+        self.expansion_factor = expansion_factor
         self.channel_mixing = channel_mixing
         self.use_gtb = use_gtb
         self.gtb_d_model = gtb_d_model
@@ -146,6 +150,8 @@ class GAUNet(TorchModelMixin, ForecastingMixin):
             num_heads=self.num_heads,
             level=self.level,
             dropout=self.dropout,
+            query_key_dim=self.query_key_dim,
+            expansion_factor=self.expansion_factor,
             use_gtb=self.use_gtb, 
             gtb_d_model=self.gtb_d_model,
             routing_mode=self.routing_mode

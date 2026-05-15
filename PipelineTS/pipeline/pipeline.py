@@ -1,5 +1,4 @@
 from copy import deepcopy
-import gc
 import time
 import traceback
 
@@ -11,7 +10,6 @@ from frozendict import frozendict
 
 from PipelineTS.spinesTS.base import detect_available_device
 from PipelineTS.spinesTS.metrics import mae
-from spinesUtils.preprocessing import gc_collector
 from spinesUtils.asserts import (
     ParameterTypeAssert,
     ParameterValuesAssert,
@@ -159,7 +157,8 @@ class ModelPipeline:
             exclude_models = [exclude_models]
 
         if include_models == 'light':
-            include_models = ['d_linear', 'itransformer', 'multi_output_model', 'multi_step_model',
+            include_models = ['stat_ensemble', 'theta', 'ets', 'seasonal_naive',
+                              'd_linear', 'itransformer', 'multi_output_model', 'multi_step_model',
                               'n_hits', 'n_linear', 'patch_rnn', 'random_forest',
                               'regressor_chain', 'tide', 'transformer']
         elif include_models == 'all':
@@ -619,7 +618,6 @@ class ModelPipeline:
 
         return init_kwargs
 
-    @gc_collector(3)
     def _fit(self, model_name_after_rename, model, train_df, valid_df, res_df,
              use_scaler=True, scaler_override=_UNSET, panel_scalers_override=None):
         self._timer.start()
@@ -640,10 +638,6 @@ class ModelPipeline:
         train_cost = self._timer.last_timestamp_diff()
 
         self._timer.middle_point()
-        gc.collect()
-        gc.garbage.clear()
-
-        self._timer.sleep(0.1)
         # -------------------- predicting -------------------------
         if self.configs is not None:
             if self.configs.get_configs(model_name_after_rename):
@@ -657,13 +651,24 @@ class ModelPipeline:
         _is_panel = self.id_col is not None and self.id_col in valid_df.columns
         if _is_panel:
             n_predict = int(valid_df.groupby(self.id_col).size().min())
+            eval_target_df = (
+                valid_df.groupby(self.id_col, sort=False)
+                .head(n_predict)
+                .reset_index(drop=True)
+            )
         else:
             n_predict = valid_df.shape[0]
+            eval_target_df = valid_df.iloc[:n_predict].reset_index(drop=True)
 
+        eval_context_df = train_df
+        eval_predict_kwargs = {'n': n_predict}
+        if check_has_param(model.predict, 'data'):
+            eval_predict_kwargs['data'] = eval_context_df
         if check_has_param(model.predict, 'predict_kwargs'):
-            eval_res = model.predict(n_predict, data=valid_df, predict_kwargs=predict_kwargs)
-        else:
-            eval_res = model.predict(n_predict)
+            eval_predict_kwargs['predict_kwargs'] = predict_kwargs
+        if check_has_param(model.predict, 'future_covariates') and self.known_covariates:
+            eval_predict_kwargs['future_covariates'] = eval_target_df
+        eval_res = model.predict(**eval_predict_kwargs)
 
         # Determine the correct scaler and panel_scalers for inverse transform
         if scaler_override is not _UNSET:
@@ -676,7 +681,7 @@ class ModelPipeline:
             scaler = self._temp_scaler
             _panel_scalers_for_inv = self._temp_panel_scalers
 
-        yt = valid_df[self.target_col].values
+        yt = eval_target_df[self.target_col].values
         yp = eval_res[self.target_col].values
 
         res_quantile_acc = None
@@ -693,8 +698,8 @@ class ModelPipeline:
                     s = _panel_scalers_for_inv.get(sid)
                     if s is None:
                         continue
-                    v_mask = valid_df[self.id_col] == sid
-                    yt_s = valid_df.loc[v_mask, self.target_col].values
+                    v_mask = eval_target_df[self.id_col] == sid
+                    yt_s = eval_target_df.loc[v_mask, self.target_col].values
                     yt_inv.append(s.inverse_transform(yt_s.reshape(-1, 1)).squeeze())
 
                     if self.id_col in eval_res.columns:
@@ -737,9 +742,6 @@ class ModelPipeline:
         eval_cost = self._timer.last_timestamp_diff()
 
         del eval_res
-
-        gc.collect()
-        self._timer.sleep(0.1)
 
         self._timer.clear()  # 重置计时器
 
@@ -999,10 +1001,6 @@ class ModelPipeline:
         )
 
         self._training_data = data if hasattr(data, 'copy') else None
-
-        del valid_data, df, valid_df, res
-        gc.collect()
-        gc.garbage.clear()
 
         return self.leader_board_
 

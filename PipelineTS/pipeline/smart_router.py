@@ -22,9 +22,9 @@ from PipelineTS.pipeline.pipeline import ModelPipeline
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
 from PipelineTS.spinesTS.metrics import mae
 from PipelineTS.dataset import (
-    LoadElectricDataSets,
-    LoadMessagesSentHourDataSets,
-    LoadMessagesSentDataSets,
+    LoadElectric,
+    LoadMessagesSentHour,
+    LoadMessagesSent,
     LoadWebSales,
     LoadSupermarketIncoming,
 )
@@ -33,6 +33,10 @@ from PipelineTS.preprocessing import (
     TimeSeriesOutlierDetector,
     FrequencyDetector,
     StationarityTest,
+)
+from PipelineTS.preprocessing.time_series_diagnostics import (
+    hurst_exponent,
+    spectral_entropy,
 )
 
 
@@ -98,6 +102,47 @@ class DataProfile:
 
     def __repr__(self):
         lines = ["DataProfile("]
+        for k, v in self.summary().items():
+            if isinstance(v, float):
+                lines.append(f"  {k}={v:.4g},")
+            else:
+                lines.append(f"  {k}={v!r},")
+        lines.append(")")
+        return "\n".join(lines)
+
+
+class DataInsightProfile:
+    def __init__(self):
+        self.n_rows_total = 0
+        self.n_columns = 0
+        self.memory_mb = 0.0
+        self.duplicate_timestamp_ratio = 0.0
+        self.regularity_ratio = 1.0
+        self.implicit_gap_ratio = 0.0
+        self.completeness_ratio = 1.0
+        self.explicit_nan_ratio = 0.0
+        self.inf_ratio = 0.0
+        self.zero_ratio = 0.0
+        self.negative_ratio = 0.0
+        self.intermittent_ratio = 0.0
+        self.spectral_entropy = None
+        self.hurst_exponent = None
+        self.long_memory = False
+        self.high_entropy = False
+        self.low_completeness = False
+        self.has_time_duplicates = False
+        self.panel_min_length = 0
+        self.panel_median_length = 0.0
+        self.panel_max_length = 0
+        self.panel_length_cv = 0.0
+        self.panel_irregular_ratio = 0.0
+        self.risk_flags = []
+
+    def summary(self) -> dict:
+        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+
+    def __repr__(self):
+        lines = ["DataInsightProfile("]
         for k, v in self.summary().items():
             if isinstance(v, float):
                 lines.append(f"  {k}={v:.4g},")
@@ -332,6 +377,7 @@ class SmartRouter:
             'search_strategy': 'basic',
             'ensemble_strategy': 'none',
             'ensemble_top_k': 1,
+            'hpo_strategy': 'none',
         },
         'medium_quality': {
             'max_models': 5,
@@ -339,6 +385,7 @@ class SmartRouter:
             'search_strategy': 'auto',
             'ensemble_strategy': 'auto',
             'ensemble_top_k': 3,
+            'hpo_strategy': 'auto',
         },
         'high_quality': {
             'max_models': 8,
@@ -346,6 +393,7 @@ class SmartRouter:
             'search_strategy': 'thorough',
             'ensemble_strategy': 'weighted_avg',
             'ensemble_top_k': 3,
+            'hpo_strategy': 'auto',
         },
         'best_quality': {
             'max_models': 15,
@@ -353,8 +401,38 @@ class SmartRouter:
             'search_strategy': 'thorough',
             'ensemble_strategy': 'weighted_avg',
             'ensemble_top_k': 5,
+            'hpo_strategy': 'auto',
         },
     }
+
+    _CATEGORIES = {
+        'statistic': {'auto_arima', 'prophet', 'naive', 'seasonal_naive',
+                      'theta', 'ets', 'short_trend_slot_blend',
+                      'long_slot_trend_blend', 'stat_ensemble'},
+        'ml': {'catboost', 'xgboost', 'random_forest', 'extra_forest',
+               'gc_forest', 'wide_gbrt', 'multi_output_model',
+               'multi_step_model', 'regressor_chain'},
+        'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
+        'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
+                      'time2vec', 'gau'},
+        'nn_heavy': {'transformer', 'tft', 'itransformer', 'srs_net',
+                     'deepar', 'chronos_2', 'chronos_2_synth',
+                     'chronos_2_small'},
+    }
+
+    _SAFE_PORTFOLIO = (
+        'stat_ensemble', 'short_trend_slot_blend', 'long_slot_trend_blend',
+        'theta', 'ets', 'seasonal_naive',
+        'auto_arima', 'prophet', 'multi_output_model', 'random_forest',
+        'extra_forest', 'catboost', 'd_linear', 'n_linear', 'tide', 'tcn',
+    )
+
+    _BASELINE_GUARDRAIL_MODELS = (
+        'stat_ensemble', 'short_trend_slot_blend', 'long_slot_trend_blend',
+        'theta', 'ets', 'seasonal_naive',
+        'random_forest', 'multi_step_model', 'multi_output_model',
+        'regressor_chain', 'extra_forest',
+    )
 
     @ParameterTypeAssert({
         'time_col': str,
@@ -462,8 +540,8 @@ class SmartRouter:
         self.hpo_timeout_per_model = hpo_timeout_per_model
 
         raise_if(ValueError,
-                 self.hpo_strategy not in ('none', 'quick', 'full'),
-                 f"hpo_strategy must be 'none', 'quick', or 'full', "
+                 self.hpo_strategy not in ('none', 'quick', 'full', 'auto'),
+                 f"hpo_strategy must be 'none', 'quick', 'full', or 'auto', "
                  f"got '{self.hpo_strategy}'")
 
         raise_if(ValueError,
@@ -489,6 +567,8 @@ class SmartRouter:
 
         # Filled after fit()
         self.profile_ = None
+        self.insights_ = None
+        self._insights_cache_key = None
         self.strategy_ = None
         self.pipeline_ = None
         self.leader_board_ = None
@@ -503,8 +583,14 @@ class SmartRouter:
         self._per_model_lags = None
         self._calibration_rho = None
         self._hpo_results = None
+        self._active_hpo_strategy_ = None
         self._ensemble_eval = None
         self._fusion_scores = None
+        self._feasibility_report = None
+        self._fallback_used = False
+        self._baseline_guardrail = None
+        self._baseline_guardrail_cache = None
+        self.autonomy_summary_ = None
         self.dataset_benchmark_ = None
 
     # ------------------------------------------------------------------
@@ -537,6 +623,20 @@ class SmartRouter:
         self
         """
         t0 = time.time()
+        self._model_results = []
+        self._screening_results = None
+        self._lag_exploration_results = None
+        self._per_model_lags = None
+        self._calibration_rho = None
+        self._hpo_results = None
+        self._active_hpo_strategy_ = None
+        self._ensemble_eval = None
+        self._fusion_scores = None
+        self._feasibility_report = None
+        self._fallback_used = False
+        self._baseline_guardrail = None
+        self._baseline_guardrail_cache = None
+        self.autonomy_summary_ = None
 
         # Print device info once at the very beginning
         if self.verbose:
@@ -552,12 +652,14 @@ class SmartRouter:
 
         # ── Analyze & plan ────────────────────────────────────
         self.profile_ = self._profile_data(data)
+        self.insights_ = self._get_data_insights(data, self.profile_)
         self.strategy_ = self._build_strategy(self.profile_)
+        self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
 
         # Compute pipeline stages for progress tracking
         _will_screen = self._should_screen()
         _will_explore = self._should_explore_lags()
-        _will_hpo = self.hpo_strategy != 'none'
+        _will_hpo = self._should_hpo()
 
         _stages = [('📊', 'Data Profiling'),
                    ('🎯', 'Strategy & Model Selection')]
@@ -607,6 +709,12 @@ class SmartRouter:
         self._preprocessed_data = full_processed
         self._valid_data = processed_valid
 
+        if self._should_run_baseline_preflight():
+            self._run_baseline_preflight(t0)
+            self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+            if self._accept_baseline_preflight_if_tight_budget():
+                return self
+
         # Quick screening (eliminate weak candidates with holdout)
         if _will_screen:
             _cur += 1
@@ -615,8 +723,8 @@ class SmartRouter:
             # Wide screening: evaluate many more candidates than max_models
             # so we don't miss good models that heuristic scoring ranks low.
             pool_size = self._get_screen_pool_size()
-            broad_candidates = self._select_models(
-                self.profile_, n_candidates=pool_size
+            broad_candidates = self._build_adaptive_candidate_pool(
+                self.profile_, pool_size
             )
             # ε-greedy injection: replace bottom heuristic picks with
             # unexplored models (categories absent from the pool first,
@@ -698,36 +806,20 @@ class SmartRouter:
 
         remaining_time = self._get_remaining_time(t0)
 
-        # Time-aware epoch capping: reduce NN epochs when time budget is tight
-        # so individual models don't consume the entire budget.
+        per_model_budget = None
         if remaining_time is not None and len(models) > 0:
             per_model_budget = remaining_time / len(models)
-            nn_models_set = {
-                'd_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
-                'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',
-                'patch_rnn', 'itransformer', 'srs_net', 'deepar',
-            }
-            if per_model_budget < 30:
-                epoch_cap = 100
-            elif per_model_budget < 60:
-                epoch_cap = 300
-            elif per_model_budget < 120:
-                epoch_cap = 500
-            else:
-                epoch_cap = None  # no cap needed
-
-            if epoch_cap is not None:
-                for m in models:
-                    if m in nn_models_set:
-                        key = f'{m}__epochs'
-                        current = hyperparams.get(key, 1000)
-                        if current > epoch_cap:
-                            hyperparams[key] = epoch_cap
-                if self.verbose:
-                    self.logger.info(
-                        f"  Time-aware epoch cap: {epoch_cap} epochs "
-                        f"(per-model budget ~{per_model_budget:.0f}s)"
-                    )
+        hyperparams, budget_caps = self._apply_training_budget_caps(
+            hyperparams, models, per_model_budget=per_model_budget,
+            profile=self.profile_
+        )
+        self.strategy_['model_hyperparams'] = hyperparams
+        self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+        if self.verbose and budget_caps:
+            self.logger.info(
+                "  Training budget caps: " +
+                ", ".join(f"{k}={v}" for k, v in budget_caps.items())
+            )
 
         if self.verbose:
             self._log_stage_banner(_cur, _n_stages, *_stages[_cur - 1], t0)
@@ -769,8 +861,13 @@ class SmartRouter:
         )
 
         if self.leader_board_.empty:
-            self.logger.error("No models completed. Cannot build ensemble.")
-            return self
+            if self._fit_fallback_safe_models(t0):
+                self.leader_board_ = self.pipeline_.leader_board_
+            else:
+                self.logger.error("No models completed. Cannot build ensemble.")
+                return self
+
+        self._run_baseline_guardrail(t0)
 
         self.best_model_ = self.pipeline_.best_model_
 
@@ -784,7 +881,10 @@ class SmartRouter:
             self.ensemble_ = self._evaluate_ensemble(self.ensemble_)
 
         self._compute_calibration()
-        self.dataset_benchmark_ = self._benchmark_on_builtin_datasets()
+        self.dataset_benchmark_ = (
+            self._benchmark_on_builtin_datasets()
+            if self.verbose and self.preset != 'fast' else None
+        )
         total_time = time.time() - t0
         if self.verbose:
             self._log_calibration()
@@ -809,6 +909,424 @@ class SmartRouter:
             'train_cost': fit_info['train_cost'],
             'eval_cost': fit_info['eval_cost'],
         })
+
+    def _build_autonomy_summary(self, strategy):
+        strategy = strategy or {}
+        hp = strategy.get('model_hyperparams', {}) or {}
+        active_hpo_strategy = (
+            self._active_hpo_strategy_
+            if self._active_hpo_strategy_ is not None
+            else self._active_hpo_strategy()
+        )
+        nn_models = set().union(
+            self._CATEGORIES['nn_light'],
+            self._CATEGORIES['nn_medium'],
+            self._CATEGORIES['nn_heavy'],
+        )
+        nn_keys = {
+            'routing_mode', 'use_gtb', 'use_ema', 'ema_decay',
+            'use_swa', 'swa_start_frac', 'warmup_epochs',
+            'use_residual_gate', 'd_model', 'nhead',
+            'num_encoder_layers', 'dim_feedforward', 'level',
+            'num_stacks', 'num_blocks', 'num_layers', 'layer_widths',
+            'num_levels', 'hidden_channels', 'hidden_size',
+            'decoder_output_dim', 'temporal_decoder_hidden',
+            'num_decoder_layers',
+        }
+        nn_enhancements = {}
+        for key, value in hp.items():
+            if '__' not in key:
+                continue
+            model_name, param_name = key.split('__', 1)
+            if model_name in nn_models and param_name in nn_keys:
+                nn_enhancements.setdefault(model_name, {})[param_name] = value
+
+        scaler = strategy.get('scaler')
+        scaler_name = None if scaler is None else scaler.__class__.__name__
+        return {
+            'model_selection': list(strategy.get('models', []) or []),
+            'lag_selection': strategy.get('lags'),
+            'preprocessing': list(strategy.get('preprocessing', []) or []),
+            'scaler': scaler_name,
+            'feature_engineering': deepcopy(strategy.get('feature_engineering', {}) or {}),
+            'adaptive_hyperparams_count': len(hp),
+            'adaptive_hyperparams_enabled': len(hp) > 0,
+            'hpo_requested_strategy': self.hpo_strategy,
+            'hpo_strategy': active_hpo_strategy,
+            'hpo_enabled': active_hpo_strategy != 'none',
+            'hpo_tuned_models': sorted((self._hpo_results or {}).keys()),
+            'nn_enhancements_enabled': len(nn_enhancements) > 0,
+            'nn_enhancements': nn_enhancements,
+            'ensemble_strategy': self.ensemble_strategy,
+            'baseline_guardrail': deepcopy(self._baseline_guardrail),
+        }
+
+    def _baseline_guardrail_lags(self):
+        n = max(1, int(getattr(self.profile_, 'n_rows', 0) or 0))
+        horizon = int(self.n_predict or min(12, max(1, n // 10)))
+        max_lags = max(4, n // 4)
+        target = max(4, 12, horizon)
+        if target * 2 >= n:
+            target = max(4, min(max_lags, n // 3))
+        return int(max(4, min(target, max_lags)))
+
+    def _baseline_guardrail_candidates(self, lags):
+        available = set(get_all_available_models().keys())
+        candidates = [
+            m for m in self._BASELINE_GUARDRAIL_MODELS
+            if m in available
+        ]
+        if not candidates:
+            return []
+        feasible = self._filter_feasible_models(
+            candidates, self.profile_, lags=lags,
+            keep_at_least=min(2, len(candidates))
+        )
+        feasible = set(feasible)
+        return [
+            m for m in candidates if m in feasible
+        ][:min(8, len(candidates))]
+
+    def _fit_baseline_guardrail_pipeline(self, t0, reason_prefix='baseline'):
+        if self._baseline_guardrail_cache is not None:
+            return self._baseline_guardrail_cache
+
+        baseline_lags = self._baseline_guardrail_lags()
+        candidates = self._baseline_guardrail_candidates(baseline_lags)
+        result = {
+            'lags': baseline_lags,
+            'candidate_models': candidates,
+            'pipeline': None,
+            'leaderboard': None,
+            'reason': None,
+        }
+        if not candidates:
+            result['reason'] = 'no_feasible_baseline_models'
+            self._baseline_guardrail_cache = result
+            return result
+
+        remaining_time = None
+        if self.time_limit is not None:
+            raw_remaining = self.time_limit - (time.time() - t0)
+            if raw_remaining <= 5:
+                result['reason'] = 'time_budget_exhausted'
+                self._baseline_guardrail_cache = result
+                return result
+            budget_cap = max(10.0, min(30.0, self.time_limit * 0.35))
+            remaining_time = max(1.0, min(raw_remaining, budget_cap))
+
+        if self.verbose:
+            self.logger.info(
+                f"  {reason_prefix}: testing {candidates} with lags={baseline_lags}"
+            )
+
+        baseline_pipeline = ModelPipeline(
+            time_col=self.time_col,
+            target_col=self.target_col,
+            lags=baseline_lags,
+            quantile=self.quantile,
+            id_col=self.id_col,
+            known_covariates=self.known_covariates or None,
+            past_covariates=self.past_covariates or None,
+            include_models=candidates,
+            scaler=True,
+            accelerator=self.accelerator,
+            random_state=self.random_state,
+            cv=min(self.cv, 3),
+            gbdt_differential_n=0,
+            time_limit=remaining_time,
+        )
+        baseline_pipeline._device_info_logged = True
+        baseline_lb = baseline_pipeline.fit(
+            self._preprocessed_data, valid_data=self._valid_data
+        )
+        result.update({
+            'pipeline': baseline_pipeline,
+            'leaderboard': baseline_lb,
+        })
+        self._baseline_guardrail_cache = result
+        return result
+
+    def _should_run_baseline_preflight(self):
+        if self.include_models is not None:
+            return False
+        if self._valid_data is None or len(self._valid_data) < 2:
+            return False
+        if self.search_strategy in ('auto', 'thorough'):
+            return True
+        if self.preset in ('high_quality', 'best_quality'):
+            return True
+        if self.time_limit is not None and self.max_models >= 5:
+            return True
+        return False
+
+    def _run_baseline_preflight(self, t0):
+        try:
+            result = self._fit_baseline_guardrail_pipeline(
+                t0, reason_prefix='Baseline champion preflight'
+            )
+        except Exception as e:
+            self._baseline_guardrail_cache = {
+                'reason': f'baseline_failed:{type(e).__name__}',
+                'error': str(e),
+                'pipeline': None,
+                'leaderboard': None,
+            }
+            return
+        lb = result.get('leaderboard')
+        if lb is None or lb.empty:
+            return
+        preflight_slots = min(self.max_models, len(lb))
+        if self.preset in ('high_quality', 'best_quality'):
+            preflight_slots = min(2, preflight_slots)
+        top_models = lb.head(preflight_slots)['model'].tolist()
+        for m in reversed(top_models):
+            if m not in self.strategy_['models']:
+                self.strategy_['models'].insert(0, m)
+        self.strategy_['models'] = self.strategy_['models'][:max(self.max_models, len(top_models))]
+
+    def _accept_baseline_preflight_if_tight_budget(self):
+        if self.time_limit is None or self.time_limit > 45:
+            return False
+        if self.preset in ('high_quality', 'best_quality'):
+            return False
+        freq = str(getattr(self.profile_, 'freq', '') or '').upper()
+        n_rows = int(getattr(self.profile_, 'n_rows', 0) or 0)
+        if n_rows <= 180 and freq.startswith(('M', 'Q', 'A', 'Y')):
+            return False
+        result = self._baseline_guardrail_cache
+        if not result:
+            return False
+        baseline_pipeline = result.get('pipeline')
+        baseline_lb = result.get('leaderboard')
+        if baseline_pipeline is None or baseline_lb is None or baseline_lb.empty:
+            return False
+        baseline_lb = baseline_lb.head(self.max_models).reset_index(drop=True)
+        self.pipeline_ = baseline_pipeline
+        self.leader_board_ = baseline_lb
+        self.best_model_ = baseline_pipeline.best_model_
+        self.strategy_['models'] = baseline_lb['model'].tolist()
+        self.strategy_['lags'] = result.get('lags', self.strategy_['lags'])
+        self.strategy_['scaler'] = baseline_pipeline.scaler
+        self.strategy_['gbdt_differential_n'] = 0
+        self.strategy_['model_hyperparams'] = {}
+        self.strategy_.pop('per_model_lags', None)
+        current = {
+            'checked': True,
+            'switched': True,
+            'reason': 'baseline_preflight_accepted',
+            'lags': self.strategy_['lags'],
+            'candidate_models': result.get('candidate_models') or [],
+            'primary_model': None,
+            'primary_metric': None,
+            'baseline_model': str(baseline_lb.iloc[0]['model']),
+            'baseline_metric': float(baseline_lb.iloc[0]['metric']),
+            'baseline_trained_models': baseline_lb['model'].tolist(),
+            'failed_models': len(getattr(baseline_pipeline, 'failed_models', []) or []),
+            'skipped_models': len(getattr(baseline_pipeline, 'skipped_models', []) or []),
+        }
+        self._baseline_guardrail = current
+        self.strategy_.setdefault('guardrails', {})['baseline'] = deepcopy(current)
+        self._model_results = [
+            {
+                'model_name': row['model'],
+                'metric': row['metric'],
+                'train_cost': row.get('train_cost(s)', 0.0),
+                'eval_cost': row.get('eval_cost(s)', 0.0),
+            }
+            for _, row in baseline_lb.iterrows()
+        ]
+        self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+        return True
+
+    def _run_baseline_guardrail(self, t0):
+        current = {
+            'checked': False,
+            'switched': False,
+            'reason': None,
+        }
+        self._baseline_guardrail = current
+
+        if self.include_models is not None:
+            current['reason'] = 'pinned_models'
+            self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+            return False
+        if self.leader_board_ is None or self.leader_board_.empty:
+            current['reason'] = 'no_primary_leaderboard'
+            self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+            return False
+        if self._valid_data is None or len(self._valid_data) < 2:
+            current['reason'] = 'no_validation_data'
+            self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+            return False
+
+        primary_model_results = list(getattr(self, '_model_results', []) or [])
+        try:
+            baseline_result = self._fit_baseline_guardrail_pipeline(
+                t0, reason_prefix='Baseline guardrail'
+            )
+        except Exception as e:
+            current['reason'] = f'baseline_failed:{type(e).__name__}'
+            current['error'] = str(e)
+            self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+            return False
+
+        baseline_lags = baseline_result.get('lags', self._baseline_guardrail_lags())
+        candidates = baseline_result.get('candidate_models') or []
+        current.update({
+            'checked': True,
+            'lags': baseline_lags,
+            'candidate_models': candidates,
+            'primary_model': str(self.leader_board_.iloc[0]['model']),
+            'primary_metric': float(self.leader_board_.iloc[0]['metric']),
+        })
+        if not candidates:
+            current['reason'] = baseline_result.get('reason') or 'no_feasible_baseline_models'
+            self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+            return False
+
+        baseline_pipeline = baseline_result.get('pipeline')
+        baseline_lb = baseline_result.get('leaderboard')
+
+        if baseline_lb is None or baseline_lb.empty:
+            current['reason'] = 'baseline_empty'
+            current['failed_models'] = len(getattr(baseline_pipeline, 'failed_models', []) or [])
+            current['skipped_models'] = len(getattr(baseline_pipeline, 'skipped_models', []) or [])
+            self._model_results = primary_model_results
+            self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+            return False
+
+        baseline_lb = baseline_lb.head(self.max_models).reset_index(drop=True)
+        baseline_metric = float(baseline_lb.iloc[0]['metric'])
+        baseline_model = str(baseline_lb.iloc[0]['model'])
+        primary_metric = current['primary_metric']
+        less_is_better = (
+            self.pipeline_.metric_less_is_better
+            if self.pipeline_ is not None else True
+        )
+        improved = (
+            baseline_metric < primary_metric
+            if less_is_better else baseline_metric > primary_metric
+        )
+        current.update({
+            'baseline_model': baseline_model,
+            'baseline_metric': baseline_metric,
+            'baseline_trained_models': baseline_lb['model'].tolist(),
+            'failed_models': len(getattr(baseline_pipeline, 'failed_models', []) or []),
+            'skipped_models': len(getattr(baseline_pipeline, 'skipped_models', []) or []),
+            'relative_delta': (
+                (baseline_metric - primary_metric) /
+                (abs(primary_metric) + 1e-12)
+            ),
+        })
+
+        if improved:
+            self.pipeline_ = baseline_pipeline
+            self.leader_board_ = baseline_lb
+            self.strategy_['models'] = baseline_lb['model'].tolist()
+            self.strategy_['lags'] = baseline_lags
+            self.strategy_['scaler'] = baseline_pipeline.scaler
+            self.strategy_['gbdt_differential_n'] = 0
+            self.strategy_['model_hyperparams'] = {}
+            self.strategy_.pop('per_model_lags', None)
+            current['switched'] = True
+            current['reason'] = 'baseline_won'
+            self.strategy_.setdefault('guardrails', {})['baseline'] = deepcopy(current)
+            self._model_results = [
+                {
+                    'model_name': row['model'],
+                    'metric': row['metric'],
+                    'train_cost': row.get('train_cost(s)', 0.0),
+                    'eval_cost': row.get('eval_cost(s)', 0.0),
+                }
+                for _, row in baseline_lb.iterrows()
+            ]
+            if self.verbose:
+                self.logger.warning(
+                    f"  Baseline guardrail switched winner: {baseline_model} "
+                    f"({baseline_metric:.4f}) beat {current['primary_model']} "
+                    f"({primary_metric:.4f})"
+                )
+        else:
+            current['reason'] = 'primary_won'
+            self.strategy_.setdefault('guardrails', {})['baseline'] = deepcopy(current)
+            self._model_results = primary_model_results
+            if self.verbose:
+                self.logger.info(
+                    f"  Baseline guardrail kept primary: {current['primary_model']} "
+                    f"({primary_metric:.4f}) vs {baseline_model} "
+                    f"({baseline_metric:.4f})"
+                )
+
+        self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
+        return bool(current['switched'])
+
+    def _fit_fallback_safe_models(self, t0):
+        candidates = [
+            m for m in self._SAFE_PORTFOLIO
+            if m in get_all_available_models()
+        ]
+        candidates = self._filter_feasible_models(
+            candidates, self.profile_, lags=self.strategy_['lags'],
+            keep_at_least=min(3, len(candidates))
+        )
+        candidates = sorted(
+            candidates,
+            key=lambda m: (
+                -(self.model_scores_ or {}).get(m, {}).get('total', 0.0),
+                self._speed_tier_for_model(m),
+            )
+        )[:max(1, min(3, self.max_models, len(candidates)))]
+        if not candidates:
+            return False
+        fallback_lags = min(
+            self.strategy_['lags'],
+            max(4, max(1, self.profile_.n_rows // 4))
+        )
+        remaining_time = self._get_remaining_time(t0)
+        params = self._get_screening_hyperparams(candidates, self.strategy_)
+        params, _ = self._apply_training_budget_caps(
+            params, candidates,
+            per_model_budget=(remaining_time / len(candidates)) if remaining_time else None,
+            profile=self.profile_
+        )
+        if self.verbose:
+            self.logger.warning(
+                f"  Fallback: retrying safe portfolio {candidates} with lags={fallback_lags}"
+            )
+        try:
+            self.pipeline_ = ModelPipeline(
+                time_col=self.time_col,
+                target_col=self.target_col,
+                lags=fallback_lags,
+                quantile=self.quantile,
+                id_col=self.id_col,
+                known_covariates=self.known_covariates or None,
+                past_covariates=self.past_covariates or None,
+                include_models=candidates,
+                scaler=deepcopy(self.strategy_['scaler']),
+                accelerator=self.accelerator,
+                random_state=self.random_state,
+                cv=min(self.cv, 3),
+                gbdt_differential_n=self.strategy_['gbdt_differential_n'],
+                time_limit=remaining_time,
+                **params,
+            )
+            self.pipeline_._device_info_logged = True
+            self.pipeline_._on_model_complete_callback = self._on_model_trained
+            self.leader_board_ = self.pipeline_.fit(
+                self._preprocessed_data, valid_data=self._valid_data
+            )
+            if self.leader_board_ is None or self.leader_board_.empty:
+                return False
+            self._fallback_used = True
+            self.strategy_['models'] = candidates
+            self.strategy_['lags'] = fallback_lags
+            return True
+        except Exception as e:
+            if self.verbose:
+                self.logger.error(f"  Fallback failed: {type(e).__name__}: {e}")
+            return False
 
     def predict(self, n=None, data=None, model_name=None, use_ensemble=True,
                 future_covariates=None):
@@ -1124,6 +1642,178 @@ class SmartRouter:
 
         return profile
 
+    def _insight_cache_key(self, data):
+        time_start = None
+        time_end = None
+        target_mean = None
+        target_std = None
+        target_nan = None
+        if self.time_col in data.columns:
+            ts = pd.to_datetime(data[self.time_col], errors='coerce')
+            if len(ts) > 0:
+                time_start = str(ts.min())
+                time_end = str(ts.max())
+        if self.target_col in data.columns:
+            numeric = pd.to_numeric(data[self.target_col], errors='coerce')
+            arr = numeric.to_numpy(dtype=np.float64)
+            finite = arr[np.isfinite(arr)]
+            target_nan = int(np.isnan(arr).sum())
+            if len(finite) > 0:
+                target_mean = round(float(np.mean(finite)), 8)
+                target_std = round(float(np.std(finite)), 8)
+        return (
+            len(data),
+            tuple(str(c) for c in data.columns),
+            str(self.time_col),
+            str(self.target_col),
+            str(self.id_col),
+            time_start,
+            time_end,
+            target_nan,
+            target_mean,
+            target_std,
+        )
+
+    @staticmethod
+    def _time_regularity_stats(frame, time_col):
+        if time_col not in frame.columns or len(frame) <= 1:
+            return 1.0, 0, 0
+        ts = pd.to_datetime(frame[time_col], errors='coerce').dropna()
+        if len(ts) <= 1:
+            return 1.0, 0, int(len(ts))
+        unique_ts = ts.drop_duplicates().sort_values()
+        if len(unique_ts) <= 1:
+            return 1.0, 0, int(len(unique_ts))
+        diffs = unique_ts.diff().dropna()
+        if diffs.empty:
+            return 1.0, 0, int(len(unique_ts))
+        mode_delta = diffs.mode().iloc[0]
+        regularity = float((diffs == mode_delta).mean())
+        implicit = 0
+        try:
+            if mode_delta > pd.Timedelta(0):
+                expected = int(round((unique_ts.iloc[-1] - unique_ts.iloc[0]) / mode_delta)) + 1
+                implicit = max(0, expected - len(unique_ts))
+        except Exception:
+            implicit = 0
+        return regularity, int(implicit), int(len(unique_ts))
+
+    def _build_data_insights(self, data, profile):
+        insights = DataInsightProfile()
+        insights.n_rows_total = int(len(data))
+        insights.n_columns = int(len(data.columns))
+        insights.memory_mb = float(data.memory_usage(deep=True).sum() / 1024 / 1024)
+
+        if self.time_col in data.columns:
+            if self.id_col is not None and self.id_col in data.columns:
+                dup_cols = [self.id_col, self.time_col]
+            else:
+                dup_cols = [self.time_col]
+            insights.duplicate_timestamp_ratio = float(data.duplicated(dup_cols).mean()) if len(data) else 0.0
+            insights.has_time_duplicates = insights.duplicate_timestamp_ratio > 0
+
+        if self.id_col is not None and self.id_col in data.columns:
+            lengths = data.groupby(self.id_col).size()
+            if len(lengths) > 0:
+                length_values = lengths.to_numpy(dtype=np.float64)
+                insights.panel_min_length = int(np.min(length_values))
+                insights.panel_median_length = float(np.median(length_values))
+                insights.panel_max_length = int(np.max(length_values))
+                mean_len = float(np.mean(length_values))
+                insights.panel_length_cv = float(np.std(length_values) / (mean_len + 1e-12))
+            weighted_reg = []
+            implicit_total = 0
+            unique_total = 0
+            for _, sdf in data.groupby(self.id_col, sort=False):
+                reg, implicit, unique_count = self._time_regularity_stats(sdf, self.time_col)
+                weighted_reg.append(reg * max(unique_count - 1, 1))
+                implicit_total += implicit
+                unique_total += unique_count
+            denom = sum(max(int(v), 1) for v in lengths.values) if len(lengths) else 1
+            insights.regularity_ratio = float(sum(weighted_reg) / max(denom, 1))
+            insights.panel_irregular_ratio = float(max(0.0, 1.0 - insights.regularity_ratio))
+            insights.implicit_gap_ratio = float(implicit_total / max(unique_total + implicit_total, 1))
+        else:
+            reg, implicit, unique_count = self._time_regularity_stats(data, self.time_col)
+            insights.regularity_ratio = reg
+            insights.implicit_gap_ratio = float(implicit / max(unique_count + implicit, 1))
+
+        insights.completeness_ratio = float(max(0.0, min(1.0, 1.0 - insights.implicit_gap_ratio)))
+        insights.low_completeness = insights.completeness_ratio < 0.95
+
+        if self.target_col in data.columns and len(data) > 0:
+            numeric = pd.to_numeric(data[self.target_col], errors='coerce')
+            values = numeric.to_numpy(dtype=np.float64)
+            finite = values[np.isfinite(values)]
+            insights.explicit_nan_ratio = float(np.isnan(values).mean())
+            insights.inf_ratio = float(np.isinf(values).mean())
+            if len(finite) > 0:
+                insights.zero_ratio = float(np.mean(finite == 0))
+                insights.negative_ratio = float(np.mean(finite < 0))
+                insights.intermittent_ratio = insights.zero_ratio
+
+                diag_values = finite
+                if self.id_col is not None and self.id_col in data.columns:
+                    lengths = data.groupby(self.id_col).size()
+                    if len(lengths) > 0:
+                        longest_sid = lengths.idxmax()
+                        sdf = data[data[self.id_col] == longest_sid].sort_values(self.time_col)
+                        diag_series = pd.to_numeric(sdf[self.target_col], errors='coerce')
+                        diag_arr = diag_series.to_numpy(dtype=np.float64)
+                        diag_values = diag_arr[np.isfinite(diag_arr)]
+                else:
+                    if self.time_col in data.columns:
+                        sdf = data.sort_values(self.time_col)
+                        diag_series = pd.to_numeric(sdf[self.target_col], errors='coerce')
+                        diag_arr = diag_series.to_numpy(dtype=np.float64)
+                        diag_values = diag_arr[np.isfinite(diag_arr)]
+                try:
+                    insights.spectral_entropy = spectral_entropy(diag_values)
+                except Exception:
+                    insights.spectral_entropy = None
+                try:
+                    insights.hurst_exponent = hurst_exponent(diag_values)
+                except Exception:
+                    insights.hurst_exponent = None
+
+        insights.high_entropy = (
+            insights.spectral_entropy is not None and
+            insights.spectral_entropy > 0.75
+        )
+        insights.long_memory = (
+            insights.hurst_exponent is not None and
+            insights.hurst_exponent > 0.6
+        )
+
+        flags = []
+        if insights.has_time_duplicates:
+            flags.append('duplicate_timestamps')
+        if insights.low_completeness:
+            flags.append('low_completeness')
+        if insights.explicit_nan_ratio > 0.05:
+            flags.append('explicit_missing')
+        if insights.inf_ratio > 0:
+            flags.append('infinite_values')
+        if insights.intermittent_ratio > 0.3:
+            flags.append('intermittent_series')
+        if insights.high_entropy:
+            flags.append('high_entropy')
+        if insights.long_memory:
+            flags.append('long_memory')
+        if insights.panel_length_cv > 0.5:
+            flags.append('panel_length_imbalance')
+        insights.risk_flags = flags
+        return insights
+
+    def _get_data_insights(self, data, profile=None):
+        cache_key = self._insight_cache_key(data)
+        if self.insights_ is not None and self._insights_cache_key == cache_key:
+            return self.insights_
+        insights = self._build_data_insights(data, profile)
+        self._insights_cache_key = cache_key
+        self.insights_ = insights
+        return insights
+
     # ------------------------------------------------------------------
     #  Strategy Builder
     # ------------------------------------------------------------------
@@ -1167,20 +1857,248 @@ class SmartRouter:
         """
         all_models = list(get_all_available_models().keys())
         scores = {}
+        suggested_lags = self._suggest_lags(p)
         for m in all_models:
             total, reasons = self._score_model(m, p)
+            feasibility = self._model_feasibility(m, p, lags=suggested_lags)
+            if feasibility['penalty'] > 0:
+                total -= feasibility['penalty']
+                reasons = list(reasons)
+                reasons.append(('feasibility_risk:' + '|'.join(feasibility['reasons']), -feasibility['penalty']))
             scores[m] = {'total': total, 'reasons': reasons}
         return scores
+
+    @classmethod
+    def _category_for_model(cls, model_name):
+        for category, models in cls._CATEGORIES.items():
+            if model_name in models:
+                return category
+        return 'unknown'
+
+    @classmethod
+    def _speed_tier_for_model(cls, model_name):
+        category = cls._category_for_model(model_name)
+        if category in ('statistic', 'ml'):
+            return 0
+        if category == 'nn_light':
+            return 1
+        if category == 'nn_medium':
+            return 2
+        return 3
+
+    def _model_feasibility(self, model_name, p, lags=None):
+        n = max(0, int(getattr(p, 'n_rows', 0)))
+        lags = int(lags if lags is not None else max(4, min(max(4, int(np.sqrt(max(n, 1)))), max(4, n // 4))))
+        horizon = int(self.n_predict or min(12, max(1, n // 10)))
+        horizon = max(1, horizon)
+        category = self._category_for_model(model_name)
+        tier = self._speed_tier_for_model(model_name)
+        available_windows = n - lags - horizon + 1
+        risk = 0.0
+        hard_block = False
+        reasons = []
+        insights = self.insights_
+
+        if n <= max(lags + horizon + 2, lags * 2):
+            hard_block = True
+            risk += 1.0
+            reasons.append('insufficient_windows')
+        elif available_windows < max(3, min(10, horizon)):
+            risk += 0.45
+            reasons.append('few_windows')
+
+        if category == 'nn_heavy':
+            if n < max(80, horizon * 6):
+                hard_block = True
+                risk += 0.9
+                reasons.append('heavy_nn_too_little_data')
+            elif n < max(160, horizon * 10):
+                risk += 0.45
+                reasons.append('heavy_nn_data_risk')
+        elif category == 'nn_medium':
+            if n < max(50, horizon * 4):
+                risk += 0.35
+                reasons.append('medium_nn_data_risk')
+        elif model_name == 'gc_forest' and n < 80:
+            risk += 0.35
+            reasons.append('cascade_small_data_risk')
+        elif model_name == 'wide_gbrt' and n < 60:
+            risk += 0.25
+            reasons.append('wide_gbrt_small_data_risk')
+
+        if self.quantile is not None and category.startswith('nn') and n < 120:
+            risk += 0.35
+            reasons.append('nn_quantile_small_data_risk')
+
+        if getattr(p, 'pct_missing', 0.0) > 0.08 and category.startswith('nn'):
+            risk += 0.2
+            reasons.append('nn_missing_data_risk')
+
+        if insights is not None:
+            if insights.low_completeness and category.startswith('nn'):
+                risk += 0.25
+                reasons.append('nn_low_completeness_risk')
+            if insights.has_time_duplicates and category.startswith('nn'):
+                risk += 0.15
+                reasons.append('nn_duplicate_time_risk')
+            if insights.intermittent_ratio > 0.3:
+                if category.startswith('nn'):
+                    risk += 0.25
+                    reasons.append('nn_intermittent_series_risk')
+                elif model_name in ('auto_arima', 'prophet'):
+                    risk += 0.15
+                    reasons.append('stat_intermittent_series_risk')
+            if insights.high_entropy and tier >= 2:
+                risk += 0.15
+                reasons.append('high_entropy_complex_model_risk')
+            if insights.panel_length_cv > 0.5 and category.startswith('nn'):
+                risk += 0.2
+                reasons.append('nn_panel_imbalance_risk')
+
+        if self.time_limit is not None:
+            budget_per_model = self.time_limit / max(1, self.max_models)
+            if tier >= 3 and budget_per_model < 45:
+                risk += 0.35
+                reasons.append('heavy_model_time_risk')
+            elif tier >= 2 and budget_per_model < 20:
+                risk += 0.25
+                reasons.append('medium_model_time_risk')
+
+        if model_name in ('chronos_2', 'chronos_2_synth') and self.time_limit is not None:
+            if self.time_limit / max(1, self.max_models) < 30:
+                risk += 0.25
+                reasons.append('foundation_model_time_risk')
+
+        risk = min(1.0, float(risk))
+        penalty = 100.0 if hard_block else risk * 24.0
+        return {
+            'hard_block': bool(hard_block),
+            'risk': risk,
+            'penalty': penalty,
+            'reasons': reasons,
+            'category': category,
+            'speed_tier': tier,
+            'available_windows': int(available_windows),
+        }
+
+    def _filter_feasible_models(self, models, p, lags=None, keep_at_least=1):
+        report = {}
+        feasible = []
+        for m in models:
+            info = self._model_feasibility(m, p, lags=lags)
+            report[m] = info
+            if not info['hard_block']:
+                feasible.append(m)
+        if len(feasible) < min(keep_at_least, len(models)):
+            ranked = sorted(
+                models,
+                key=lambda m: (
+                    report[m]['hard_block'],
+                    report[m]['risk'],
+                    self._speed_tier_for_model(m),
+                )
+            )
+            needed = min(keep_at_least, len(models))
+            feasible = []
+            for m in ranked:
+                if m not in feasible:
+                    feasible.append(m)
+                if len(feasible) >= needed:
+                    break
+        if self._feasibility_report is None:
+            self._feasibility_report = {}
+        self._feasibility_report.update(report)
+        return feasible
+
+    def _expected_speed_score(self, model_name, p=None):
+        tier_score = {0: 1.0, 1: 0.78, 2: 0.48, 3: 0.25}
+        score = tier_score.get(self._speed_tier_for_model(model_name), 0.35)
+        n = getattr(p, 'n_rows', 0) if p is not None else 0
+        if n >= 800 and self._category_for_model(model_name).startswith('nn'):
+            score += 0.08
+        if self.quantile is not None and self._category_for_model(model_name).startswith('nn'):
+            score -= 0.08
+        return float(max(0.05, min(1.0, score)))
+
+    def _build_adaptive_candidate_pool(self, p, pool_size):
+        all_models = list(get_all_available_models().keys())
+        active_strategy = self.strategy_ or {}
+        lags = active_strategy.get('lags', self._suggest_lags(p))
+        feasible = self._filter_feasible_models(
+            all_models, p, lags=lags,
+            keep_at_least=min(pool_size, len(all_models))
+        )
+        if self.search_strategy == 'thorough':
+            return feasible
+
+        score_map = self.model_scores_ or {}
+        scored = []
+        for m in feasible:
+            info = self._model_feasibility(m, p, lags=lags)
+            prior = score_map.get(m, {}).get('total', 50.0)
+            safe_bonus = 4.0 if m in self._SAFE_PORTFOLIO else 0.0
+            speed_bonus = self._expected_speed_score(m, p) * 5.0
+            scored.append((m, prior - info['penalty'] + safe_bonus + speed_bonus))
+        ranked = [m for m, _ in sorted(scored, key=lambda x: x[1], reverse=True)]
+        pool = []
+
+        for m in active_strategy.get('models', []):
+            if m in feasible and m not in pool:
+                pool.append(m)
+
+        for category, category_models in self._CATEGORIES.items():
+            best = [m for m in ranked if m in category_models]
+            if best and best[0] not in pool:
+                pool.append(best[0])
+
+        for m in self._SAFE_PORTFOLIO:
+            if m in feasible and m not in pool:
+                pool.append(m)
+            if len(pool) >= pool_size:
+                break
+
+        for m in ranked:
+            if len(pool) >= pool_size:
+                break
+            if m not in pool:
+                pool.append(m)
+
+        freq = str(getattr(p, 'freq', '') or '').upper()
+        horizon = int(self.n_predict or min(12, max(1, p.n_rows // 10)))
+        keep_chronos_small = (
+            'chronos_2_small' in feasible and p.n_rows <= 180 and horizon <= 12 and
+            p.is_regular and freq.startswith(('M', 'Q', 'A', 'Y')) and
+            (p.seasonality_strength > 0.25 or p.n_seasonalities >= 2) and
+            p.trend_strength > 0.4
+        )
+        if keep_chronos_small and 'chronos_2_small' not in pool:
+            if len(pool) >= pool_size:
+                protected = set(active_strategy.get('models', []))
+                replace_idx = next(
+                    (i for i in range(len(pool) - 1, -1, -1) if pool[i] not in protected),
+                    len(pool) - 1,
+                )
+                pool[replace_idx] = 'chronos_2_small'
+            else:
+                pool.append('chronos_2_small')
+
+        return pool[:pool_size]
 
     def _select_preprocessing(self, p):
         """Determine which preprocessing steps to apply."""
         steps = []
+        insights = self.insights_
+        missing_ratio = p.pct_missing
+        gap_ratio = 0.0
+        if insights is not None:
+            missing_ratio = max(missing_ratio, insights.explicit_nan_ratio, insights.inf_ratio)
+            gap_ratio = insights.implicit_gap_ratio
 
         # Missing value handling
-        if p.pct_missing > 0.001:
-            if p.pct_missing < 0.05:
+        if missing_ratio > 0.001:
+            if missing_ratio < 0.05:
                 steps.append({'step': 'fill_missing', 'method': 'linear'})
-            elif p.pct_missing < 0.15:
+            elif missing_ratio < 0.15:
                 steps.append({'step': 'fill_missing', 'method': 'ffill'})
             else:
                 steps.append({'step': 'fill_missing', 'method': 'linear'})
@@ -1188,6 +2106,10 @@ class SmartRouter:
         # Implicit gap filling — only for truly irregular data
         # Skip for monthly/quarterly which appear irregular at day level
         if not p.is_regular and p.freq not in (
+            'MS', 'ME', 'QS', 'QE', 'YS', 'YE', None
+        ):
+            steps.append({'step': 'reindex_gaps', 'method': 'linear'})
+        elif gap_ratio > 0.02 and p.freq not in (
             'MS', 'ME', 'QS', 'QE', 'YS', 'YE', None
         ):
             steps.append({'step': 'reindex_gaps', 'method': 'linear'})
@@ -1231,9 +2153,14 @@ class SmartRouter:
         translated into model_init_kwargs.
         """
         fe = {}
+        insights = self.insights_
+        avoid_adaptive = (
+            insights is not None and
+            (insights.high_entropy or insights.low_completeness or insights.panel_length_cv > 0.7)
+        )
 
         # NN routing_mode: adaptive MoE for larger datasets with patterns
-        if p.n_rows >= 200 and (
+        if (not avoid_adaptive) and p.n_rows >= 200 and (
             p.seasonality_strength > 0.1 or p.trend_strength > 0.3
         ):
             fe['routing_mode'] = 'adaptive'
@@ -1241,7 +2168,10 @@ class SmartRouter:
             fe['routing_mode'] = 'static'
 
         # Prophet lag features: useful when strong autocorrelation
-        if p.autocorr_lag1 > 0.5 and p.n_rows >= 50:
+        if (
+            p.autocorr_lag1 > 0.5 or
+            (insights is not None and insights.long_memory)
+        ) and p.n_rows >= 50:
             fe['prophet_use_lag_features'] = True
         else:
             fe['prophet_use_lag_features'] = False
@@ -1253,6 +2183,75 @@ class SmartRouter:
             fe['prophet_seasonality_mode'] = 'auto'
 
         return fe
+
+    def _nn_architecture_profile(self, p):
+        horizon = self.n_predict or min(12, max(1, p.n_rows // 10))
+        horizon = max(1, int(horizon))
+        n = max(1, int(p.n_rows))
+        long_horizon = horizon >= 24 or horizon / n > 0.15
+        insights = self.insights_
+        complex_pattern = (
+            n >= 500 or
+            getattr(p, 'n_series', 1) > 1 or
+            long_horizon or
+            p.pct_outlier > 0.02 or
+            p.kurtosis > 5.0 or
+            p.cv > 0.5 or
+            p.noise_ratio > 0.9 or
+            (n >= 300 and p.trend_strength > 0.55) or
+            (n >= 300 and p.n_seasonalities >= 2) or
+            p.regime_changes > max(20, n // 5) or
+            (
+                insights is not None and
+                (insights.high_entropy or insights.low_completeness or insights.panel_length_cv > 0.7)
+            )
+        )
+        light_ok = (
+            n <= 300 and
+            horizon <= 12 and
+            n >= max(60, horizon * 5) and
+            p.is_regular and
+            not complex_pattern
+        )
+        return {
+            'horizon': horizon,
+            'light_ok': bool(light_ok),
+            'capacity_needed': bool(complex_pattern),
+        }
+
+    def _suggest_nn_architecture_params(self, p):
+        arch = self._nn_architecture_profile(p)
+        if not arch['light_ok'] or (self.preset != 'fast' and p.n_rows > 180):
+            return {}
+        return {
+            'n_beats__generic_architecture': False,
+            'n_beats__num_stacks': 2,
+            'n_beats__num_blocks': 1,
+            'n_beats__num_layers': 2,
+            'n_beats__layer_widths': 96,
+            'n_beats__dropout': 0.05,
+            'n_hits__num_stacks': 2,
+            'n_hits__num_blocks': 1,
+            'n_hits__num_layers': 2,
+            'n_hits__layer_widths': 96,
+            'n_hits__dropout': 0.05,
+            'transformer__d_model': 32,
+            'transformer__nhead': 2,
+            'transformer__num_encoder_layers': 1,
+            'transformer__dim_feedforward': 64,
+            'transformer__dropout': 0.05,
+            'gau__level': 1,
+            'gau__dropout': 0.05,
+            'tcn__num_levels': 2,
+            'tcn__hidden_channels': 16,
+            'tcn__dropout': 0.1,
+            'tide__hidden_size': 64,
+            'tide__decoder_output_dim': 16,
+            'tide__temporal_decoder_hidden': 16,
+            'tide__num_encoder_layers': 1,
+            'tide__num_decoder_layers': 1,
+            'tide__dropout': 0.05,
+        }
 
     def _suggest_hyperparams(self, p):
         """Suggest model-specific hyperparameters based on data profile.
@@ -1358,8 +2357,10 @@ class SmartRouter:
         # training tends to oscillate
         if n >= 150 and (p.noise_ratio > 0.4 or
                          p.stationarity in ('non_stationary', 'difference_stationary')):
-            for m in nn_all:
+            for m in [model for model in nn_all if model not in {'d_linear', 'n_linear'}]:
                 params[f'{m}__use_residual_gate'] = True
+
+        params.update(self._suggest_nn_architecture_params(p))
 
         # --- Prophet ---
         if fe.get('prophet_use_lag_features'):
@@ -1394,6 +2395,144 @@ class SmartRouter:
 
         return params
 
+    def _apply_training_budget_caps(self, hyperparams, models=None, per_model_budget=None, profile=None):
+        params = dict(hyperparams or {})
+        caps = {}
+        arch = (
+            self._nn_architecture_profile(profile)
+            if profile is not None else {'light_ok': True, 'capacity_needed': False}
+        )
+        if models is None:
+            models = list(get_all_available_models().keys())
+        models = list(models)
+
+        nn_models = {
+            'd_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
+            'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',
+            'patch_rnn', 'itransformer', 'srs_net', 'deepar',
+        }
+        tree_n_estimators = {
+            'xgboost', 'random_forest', 'extra_forest',
+            'multi_output_model', 'multi_step_model', 'wide_gbrt',
+            'regressor_chain',
+        }
+
+        if self.preset == 'fast':
+            epoch_cap = 25
+            patience_cap = 8
+            tree_cap = 40
+            cat_cap = 40
+            gc_layer_est_cap = 30
+        elif self.preset == 'medium_quality' or self.preset is None:
+            epoch_cap = 800
+            patience_cap = 80
+            tree_cap = 200
+            cat_cap = 200
+            gc_layer_est_cap = 80
+        elif self.preset == 'high_quality':
+            epoch_cap = 1500
+            patience_cap = 120
+            tree_cap = 500
+            cat_cap = 500
+            gc_layer_est_cap = 120
+        else:
+            epoch_cap = None
+            patience_cap = None
+            tree_cap = None
+            cat_cap = None
+            gc_layer_est_cap = None
+
+        if per_model_budget is not None:
+            if per_model_budget < 15:
+                time_epoch_cap, time_patience_cap, time_tree_cap, time_cat_cap = 30, 8, 30, 30
+            elif per_model_budget < 30:
+                time_epoch_cap, time_patience_cap, time_tree_cap, time_cat_cap = 100, 15, 60, 60
+            elif per_model_budget < 60:
+                time_epoch_cap, time_patience_cap, time_tree_cap, time_cat_cap = 300, 40, 120, 120
+            elif per_model_budget < 120:
+                time_epoch_cap, time_patience_cap, time_tree_cap, time_cat_cap = 500, 60, 200, 200
+            else:
+                time_epoch_cap = time_patience_cap = time_tree_cap = time_cat_cap = None
+
+            if time_epoch_cap is not None:
+                epoch_cap = min(epoch_cap, time_epoch_cap) if epoch_cap is not None else time_epoch_cap
+            if time_patience_cap is not None:
+                patience_cap = min(patience_cap, time_patience_cap) if patience_cap is not None else time_patience_cap
+            if time_tree_cap is not None:
+                tree_cap = min(tree_cap, time_tree_cap) if tree_cap is not None else time_tree_cap
+            if time_cat_cap is not None:
+                cat_cap = min(cat_cap, time_cat_cap) if cat_cap is not None else time_cat_cap
+
+        def _cap(key, cap):
+            if cap is None:
+                return
+            current = params.get(key)
+            if current is None or current > cap:
+                params[key] = cap
+                caps[key] = cap
+
+        for m in models:
+            if m in nn_models:
+                _cap(f'{m}__epochs', epoch_cap)
+                _cap(f'{m}__patience', patience_cap)
+                if self.preset == 'fast':
+                    params[f'{m}__batch_size'] = 512
+                    params[f'{m}__lr_scheduler'] = None
+                    params[f'{m}__restore_best_weights'] = False
+                    params[f'{m}__use_gtb'] = False
+                    params[f'{m}__routing_mode'] = 'static'
+                    params[f'{m}__use_residual_gate'] = False
+                    params[f'{m}__use_ema'] = False
+                    params[f'{m}__use_swa'] = False
+                    params[f'{m}__warmup_epochs'] = 0
+                if m == 'tcn' and self.preset == 'fast' and arch['light_ok']:
+                    params.setdefault('tcn__num_levels', 2)
+                    params.setdefault('tcn__hidden_channels', 16)
+                    params.setdefault('tcn__dropout', 0.1)
+                elif m == 'gau' and self.preset == 'fast' and arch['light_ok']:
+                    params.setdefault('gau__level', 1)
+                    params.setdefault('gau__dropout', 0.05)
+                elif m == 'transformer' and self.preset == 'fast':
+                    if arch['light_ok']:
+                        params.setdefault('transformer__d_model', 32)
+                        params.setdefault('transformer__nhead', 2)
+                        params.setdefault('transformer__num_encoder_layers', 1)
+                        params.setdefault('transformer__dim_feedforward', 64)
+                    params.setdefault('transformer__dropout', 0.05)
+                elif m == 'n_hits' and self.preset == 'fast':
+                    if arch['light_ok']:
+                        params.setdefault('n_hits__num_stacks', 2)
+                        params.setdefault('n_hits__num_blocks', 1)
+                        params.setdefault('n_hits__num_layers', 2)
+                        params.setdefault('n_hits__layer_widths', 96)
+                    params.setdefault('n_hits__dropout', 0.05)
+                elif m == 'n_beats' and self.preset == 'fast':
+                    if arch['light_ok']:
+                        params.setdefault('n_beats__generic_architecture', False)
+                        params.setdefault('n_beats__num_stacks', 2)
+                        params.setdefault('n_beats__num_blocks', 1)
+                        params.setdefault('n_beats__num_layers', 2)
+                        params.setdefault('n_beats__layer_widths', 96)
+                    params.setdefault('n_beats__dropout', 0.05)
+                elif m == 'tide' and self.preset == 'fast':
+                    if arch['light_ok']:
+                        params.setdefault('tide__hidden_size', 64)
+                        params.setdefault('tide__decoder_output_dim', 16)
+                        params.setdefault('tide__temporal_decoder_hidden', 16)
+                        params.setdefault('tide__num_encoder_layers', 1)
+                        params.setdefault('tide__num_decoder_layers', 1)
+                    params.setdefault('tide__dropout', 0.05)
+            elif m == 'catboost':
+                _cap('catboost__iterations', cat_cap)
+            elif m in tree_n_estimators:
+                _cap(f'{m}__n_estimators', tree_cap)
+            elif m == 'gc_forest':
+                _cap('gc_forest__n_estimators_per_layer', gc_layer_est_cap)
+                if self.preset == 'fast' or (per_model_budget is not None and per_model_budget < 60):
+                    _cap('gc_forest__n_layers', 2)
+
+        return params, caps
+
     def _suggest_lags(self, p):
         """Suggest optimal lags based on data characteristics."""
         n = p.n_rows
@@ -1419,6 +2558,13 @@ class SmartRouter:
 
         # Ensure lags cover at least n_predict
         base_lags = max(base_lags, min_lags)
+
+        insights = self.insights_
+        if insights is not None:
+            if insights.long_memory and n >= min_lags * 6:
+                base_lags = max(base_lags, min(n // 5, max(min_lags, int(np.sqrt(n) * 2))))
+            if insights.high_entropy and not p.dominant_periods:
+                base_lags = min(base_lags, max(min_lags, int(np.sqrt(n))))
 
         # Ensure lags are reasonable relative to data length
         max_lags = max(min_lags, n // 4)
@@ -1460,6 +2606,10 @@ class SmartRouter:
 
         scores = self.model_scores_
         all_models = list(get_all_available_models().keys())
+        all_models = self._filter_feasible_models(
+            all_models, p, lags=self._suggest_lags(p),
+            keep_at_least=min(n_candidates, len(all_models))
+        )
 
         # Sort by total score descending
         ranked = sorted(
@@ -1468,18 +2618,7 @@ class SmartRouter:
         )
 
         # 5-category diversity system
-        categories = {
-            'statistic': {'auto_arima', 'prophet'},
-            'ml': {'catboost', 'xgboost', 'random_forest', 'extra_forest',
-                   'gc_forest', 'wide_gbrt', 'multi_output_model',
-                   'multi_step_model', 'regressor_chain'},
-            'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
-            'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
-                          'time2vec', 'gau'},
-            'nn_heavy': {'transformer', 'tft', 'itransformer', 'srs_net',
-                         'deepar', 'chronos_2', 'chronos_2_synth',
-                         'chronos_2_small'},
-        }
+        categories = self._CATEGORIES
 
         # Find the best model from each category
         category_best = {}
@@ -1494,6 +2633,15 @@ class SmartRouter:
         # First pass: guarantee one from each category (priority order)
         # Prioritize NN categories to break the ML dominance
         diversity_order = ['ml', 'nn_light', 'nn_medium', 'nn_heavy', 'statistic']
+        freq = str(getattr(p, 'freq', '') or '').upper()
+        horizon = int(self.n_predict or min(12, max(1, p.n_rows // 10)))
+        if (
+            self.preset == 'fast' and p.n_rows <= 180 and horizon <= 12 and
+            p.is_regular and freq.startswith(('M', 'Q', 'A', 'Y')) and
+            (p.seasonality_strength > 0.25 or p.n_seasonalities >= 2) and
+            p.trend_strength > 0.4
+        ):
+            diversity_order = ['ml', 'nn_medium', 'nn_heavy', 'statistic', 'nn_light']
         for cat_name in diversity_order:
             if cat_name in category_best and remaining_budget > 0:
                 m = category_best[cat_name]
@@ -1555,7 +2703,9 @@ class SmartRouter:
             reasons.append((reason, delta))
 
         # ---- Model category classification ----
-        statistic_models = {'auto_arima', 'prophet'}
+        statistic_models = {'auto_arima', 'prophet', 'naive', 'seasonal_naive',
+                            'theta', 'ets', 'short_trend_slot_blend',
+                            'long_slot_trend_blend', 'stat_ensemble'}
         ml_models = {'catboost', 'xgboost', 'random_forest', 'extra_forest',
                       'gc_forest', 'wide_gbrt', 'multi_output_model',
                       'multi_step_model', 'regressor_chain'}
@@ -1614,7 +2764,7 @@ class SmartRouter:
 
         # ---- Stationarity (pattern bonus, capped) ----
         if p.stationarity in ('non_stationary', 'difference_stationary'):
-            if model_name in ('auto_arima', 'd_linear'):
+            if model_name in ('auto_arima', 'theta', 'ets', 'stat_ensemble', 'd_linear'):
                 _add(8, 'non_stationary: handles trends', is_pattern=True)
             elif model_name == 'prophet':
                 _add(6, 'non_stationary: trend decomposition', is_pattern=True)
@@ -1627,7 +2777,8 @@ class SmartRouter:
         if p.seasonality_strength > 0.15:
             if model_name in ('n_beats', 'n_hits', 'tft', 'deepar'):
                 _add(10, f'strong_seasonality({p.seasonality_strength:.2f}): seasonal specialist', is_pattern=True)
-            elif model_name in ('prophet', 'auto_arima'):
+            elif model_name in ('prophet', 'auto_arima', 'seasonal_naive', 'theta',
+                                'ets', 'stat_ensemble'):
                 _add(8, 'strong_seasonality: seasonal decomposition', is_pattern=True)
             elif model_name in ('stacking_rnn', 'patch_rnn', 'tcn'):
                 _add(6, 'strong_seasonality: handles seasonal', is_pattern=True)
@@ -1638,7 +2789,7 @@ class SmartRouter:
         if p.trend_strength > 0.5:
             if model_name in ('d_linear', 'n_linear', 'tide'):
                 _add(8, f'strong_trend({p.trend_strength:.2f}): linear trend specialist', is_pattern=True)
-            elif model_name in ('prophet', 'auto_arima'):
+            elif model_name in ('prophet', 'auto_arima', 'theta', 'ets', 'stat_ensemble'):
                 _add(6, 'strong_trend: trend handling', is_pattern=True)
 
         # ---- Noise level ----
@@ -1657,7 +2808,8 @@ class SmartRouter:
 
         # ---- Autocorrelation structure (pattern bonus, capped) ----
         if p.autocorr_lag1 > 0.7:
-            if model_name in ('auto_arima', 'stacking_rnn', 'patch_rnn', 'tcn'):
+            if model_name in ('auto_arima', 'theta', 'ets', 'stat_ensemble',
+                              'stacking_rnn', 'patch_rnn', 'tcn'):
                 _add(8, f'strong_autocorr({p.autocorr_lag1:.2f}): sequential model', is_pattern=True)
             elif model_name in ('gau', 'time2vec', 'tft', 'deepar'):
                 _add(5, 'strong_autocorr: attention/temporal', is_pattern=True)
@@ -1673,7 +2825,7 @@ class SmartRouter:
         if p.n_seasonalities >= 2:
             if model_name in ('tft', 'n_beats', 'deepar'):
                 _add(8, f'multi_seasonal(n={p.n_seasonalities}): complex pattern', is_pattern=True)
-            elif model_name in ('prophet', 'n_hits', 'itransformer', 'stacking_rnn'):
+            elif model_name in ('prophet', 'stat_ensemble', 'n_hits', 'itransformer', 'stacking_rnn'):
                 _add(5, 'multi_seasonal: multi-scale model', is_pattern=True)
             if model_name in ('d_linear', 'n_linear'):
                 _add(-3, 'multi_seasonal: too simple')
@@ -1682,7 +2834,7 @@ class SmartRouter:
         if self.n_predict and p.n_rows > 0:
             ratio = self.n_predict / p.n_rows
             if ratio > 0.2:
-                if model_name in ('prophet', 'auto_arima'):
+                if model_name in ('prophet', 'auto_arima', 'theta', 'ets', 'stat_ensemble'):
                     _add(5, f'long_horizon(ratio={ratio:.2f}): extrapolation model')
                 elif model_name in ('d_linear', 'n_linear', 'tide'):
                     _add(3, 'long_horizon: linear extrapolation')
@@ -1722,6 +2874,50 @@ class SmartRouter:
             _add(2, 'speed: fast (statistic)')
         elif model_name in ml_models:
             _add(3, 'speed: fast native tree')
+
+        insights = self.insights_
+        if insights is not None:
+            if insights.intermittent_ratio > 0.3:
+                if model_name in ml_models:
+                    _add(6, f'intermittent_series({insights.intermittent_ratio:.1%}): tree robust')
+                elif model_name in nn_medium or model_name in nn_heavy:
+                    _add(-5, 'intermittent_series: complex NN risk')
+            if insights.long_memory:
+                if model_name in ('tcn', 'n_hits', 'n_beats', 'patch_rnn', 'stacking_rnn'):
+                    _add(5, 'long_memory: longer temporal receptive field', is_pattern=True)
+                elif model_name in ('d_linear', 'n_linear'):
+                    _add(-3, 'long_memory: linear window may underfit')
+            if insights.high_entropy:
+                if model_name in ml_models:
+                    _add(4, 'high_entropy: robust non-parametric baseline')
+                elif model_name in nn_heavy:
+                    _add(-4, 'high_entropy: heavy NN overfit risk')
+            if insights.low_completeness:
+                if model_name in statistic_models or model_name in ml_models:
+                    _add(3, 'low_completeness: robust to irregular history')
+                elif model_name in nn_medium or model_name in nn_heavy:
+                    _add(-4, 'low_completeness: NN window instability')
+            if insights.panel_length_cv > 0.5:
+                if model_name in ml_models:
+                    _add(4, 'panel_length_imbalance: tree baseline robust')
+                elif model_name in nn_heavy:
+                    _add(-4, 'panel_length_imbalance: heavy NN risk')
+
+        if self.preset == 'fast':
+            if model_name in ('multi_output_model', 'multi_step_model'):
+                _add(14, 'fast preset: ultra-low-latency ML model')
+            elif model_name in ('prophet', 'auto_arima', 'stat_ensemble', 'theta', 'ets', 'seasonal_naive'):
+                _add(10, 'fast preset: low-latency statistic model')
+            elif model_name in ('random_forest', 'extra_forest'):
+                _add(8, 'fast preset: low-latency model')
+            elif model_name in ('d_linear', 'n_linear'):
+                _add(6, 'fast preset: low-latency linear NN')
+            elif model_name == 'tcn':
+                _add(-25, 'fast preset: convolutional NN avoided')
+            elif model_name in ('tide', 'n_hits'):
+                _add(-12, 'fast preset: slower NN avoided')
+            elif model_name in nn_medium or model_name in nn_heavy:
+                _add(-15, 'fast preset: heavy NN avoided')
 
         # ---- Specific model strengths (conditional) ----
         if model_name == 'catboost':
@@ -1785,6 +2981,12 @@ class SmartRouter:
                 _add(3, f'{model_name}: pretrained robustness to missing data ({p.pct_missing:.1%})')
             if p.n_seasonalities >= 2:
                 _add(5, f'{model_name}: pretrained handles complex seasonality')
+            if (
+                model_name == 'chronos_2_small' and n <= 180 and p.is_regular and
+                (p.seasonality_strength > 0.25 or p.n_seasonalities >= 2) and
+                p.trend_strength > 0.4
+            ):
+                _add(42, f'{model_name}: lightweight zero-shot for small regular seasonal trend')
             # Differentiate: chronos_2_small is lighter, give slight bonus for speed
             if model_name == 'chronos_2_small' and n >= 200:
                 _add(2, 'chronos_2_small: lightweight variant for larger data')
@@ -1805,6 +3007,11 @@ class SmartRouter:
 
         df = self._ensure_datetime(data.copy())
         steps = self.strategy_['preprocessing']
+        if self.target_col in df.columns:
+            numeric_target = pd.to_numeric(df[self.target_col], errors='coerce')
+            arr = numeric_target.to_numpy(dtype=np.float64)
+            if np.isinf(arr).any():
+                df[self.target_col] = numeric_target.replace([np.inf, -np.inf], np.nan)
 
         for step_cfg in steps:
             step = step_cfg['step']
@@ -1888,7 +3095,20 @@ class SmartRouter:
             return total_models
         else:
             # Auto: screen a wide pool but not everything
-            return min(total_models, max(self.max_models * 3, 12))
+            base = max(self.max_models * 3, 12)
+            if self.profile_ is not None and self.profile_.n_rows >= 500:
+                base = max(base, self.max_models * 4)
+            if (
+                self.insights_ is not None and self.insights_.risk_flags and
+                (self.time_limit is None or self.time_limit >= 120)
+            ):
+                base = max(base, self.max_models * 4)
+            if self.time_limit is not None:
+                if self.time_limit < 60:
+                    base = max(self.max_models * 2, 8)
+                elif self.time_limit >= 240:
+                    base = max(base, self.max_models * 4)
+            return min(total_models, base)
 
     def _inject_exploration_candidates(self, candidates, p):
         """Inject ε-greedy exploration candidates into the screening pool.
@@ -1920,7 +3140,12 @@ class SmartRouter:
         if self.search_strategy != 'auto':
             return candidates
 
-        all_models = list(get_all_available_models().keys())
+        all_models = self._filter_feasible_models(
+            list(get_all_available_models().keys()),
+            p,
+            lags=self.strategy_['lags'] if self.strategy_ else None,
+            keep_at_least=self.max_models
+        )
         excluded = [m for m in all_models if m not in set(candidates)]
         if not excluded:
             return candidates  # pool already covers every registered model
@@ -1929,18 +3154,7 @@ class SmartRouter:
         n_inject = min(n_inject, len(excluded))
 
         # Category mapping (mirrors _select_models / _fusion_select)
-        _categories = {
-            'statistic': {'auto_arima', 'prophet'},
-            'ml': {'catboost', 'xgboost', 'random_forest', 'extra_forest',
-                   'gc_forest', 'wide_gbrt', 'multi_output_model',
-                   'multi_step_model', 'regressor_chain'},
-            'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
-            'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
-                          'time2vec', 'gau'},
-            'nn_heavy': {'transformer', 'tft', 'itransformer', 'srs_net',
-                         'deepar', 'chronos_2', 'chronos_2_synth',
-                         'chronos_2_small'},
-        }
+        _categories = self._CATEGORIES
         model_cat = {}
         for cat_name, cat_models in _categories.items():
             for m in cat_models:
@@ -1960,12 +3174,20 @@ class SmartRouter:
             if model_cat.get(m, 'unknown') in covered_cats
         ]
 
-        rng = np.random.RandomState(
-            self.random_state if self.random_state is not None else 0
-        )
+        def _explore_score(m):
+            score_info = (self.model_scores_ or {}).get(m, {})
+            prior = score_info.get('total', 50.0)
+            feasibility = self._model_feasibility(
+                m, p, lags=self.strategy_['lags'] if self.strategy_ else None
+            )
+            cat = model_cat.get(m, 'unknown')
+            cat_bonus = 8.0 if cat not in covered_cats else 0.0
+            safe_bonus = 4.0 if m in self._SAFE_PORTFOLIO else 0.0
+            speed_bonus = self._expected_speed_score(m, p) * 3.0
+            return prior + cat_bonus + safe_bonus + speed_bonus - feasibility['penalty']
 
         injections = []
-        for m in new_cat_excluded:
+        for m in sorted(new_cat_excluded, key=_explore_score, reverse=True):
             if len(injections) >= n_inject:
                 break
             injections.append(m)
@@ -1977,8 +3199,7 @@ class SmartRouter:
             preferred = [m for m in same_cat_excluded if model_cat.get(m) == 'nn_heavy']
             if not preferred:
                 preferred = [m for m in same_cat_excluded if model_cat.get(m) in {'nn_medium', 'ml'}]
-            rng.shuffle(preferred)
-            for m in preferred:
+            for m in sorted(preferred, key=_explore_score, reverse=True):
                 if len(injections) >= n_inject:
                     break
                 injections.append(m)
@@ -1986,17 +3207,22 @@ class SmartRouter:
         # Final fill: random excluded models
         if len(injections) < n_inject:
             remaining = [m for m in excluded if m not in injections]
-            rng.shuffle(remaining)
+            remaining = sorted(remaining, key=_explore_score, reverse=True)
             injections.extend(remaining[: n_inject - len(injections)])
 
         # Drop bottom n_inject heuristic-ranked models from the current pool
         scores = self.model_scores_ or {}
+        protected = set((self.strategy_ or {}).get('models', []))
+        drop_candidates = [m for m in candidates if m not in protected]
+        if len(drop_candidates) < len(injections):
+            drop_candidates = list(candidates)
         candidates_by_score = sorted(
-            candidates,
+            drop_candidates,
             key=lambda m: scores.get(m, {}).get('total', 0.0),
             reverse=True,
         )
-        survivors = candidates_by_score[: len(candidates) - len(injections)]
+        drop_set = set(candidates_by_score[-len(injections):]) if injections else set()
+        survivors = [m for m in candidates if m not in drop_set]
         new_pool = survivors + injections
 
         if self.verbose:
@@ -2017,6 +3243,43 @@ class SmartRouter:
         return (self.profile_ is not None and
                 self.profile_.n_rows >= 100)
 
+    def _active_hpo_strategy(self):
+        if self.hpo_strategy in ('none', 'quick', 'full'):
+            return self.hpo_strategy
+        if self.profile_ is None or self.strategy_ is None:
+            return 'none'
+        if self.search_strategy == 'basic' and self.include_models is None:
+            return 'none'
+        if self.profile_.n_rows < 120:
+            return 'none'
+        if self.insights_ is not None and (
+            self.insights_.low_completeness or
+            self.insights_.high_entropy or
+            self.insights_.panel_length_cv > 0.7
+        ):
+            return 'none'
+        if self.time_limit is None:
+            return 'none'
+        if self.time_limit < 180:
+            return 'none'
+        return 'quick'
+
+    def _should_hpo(self):
+        self._active_hpo_strategy_ = self._active_hpo_strategy()
+        return self._active_hpo_strategy_ != 'none'
+
+    def _hpo_models_for_strategy(self, models):
+        models = list(models or [])
+        if self.hpo_strategy != 'auto':
+            return models
+        prioritized = [
+            m for m in models
+            if self._speed_tier_for_model(m) == 0
+        ]
+        if not prioritized:
+            prioritized = models[:]
+        return prioritized[:2]
+
     def _run_hpo(self, train_data, valid_data, base_hyperparams):
         """Run Optuna HPO for selected models.
 
@@ -2034,17 +3297,35 @@ class SmartRouter:
         """
         from PipelineTS.pipeline.hpo import OptunaHPO
 
-        models = self.strategy_['models']
+        active_strategy = self._active_hpo_strategy_
+        if active_strategy is None:
+            active_strategy = self._active_hpo_strategy()
+            self._active_hpo_strategy_ = active_strategy
+        if active_strategy == 'none':
+            self._hpo_results = {}
+            return dict(base_hyperparams or {})
+
+        models = self._hpo_models_for_strategy(self.strategy_['models'])
+        if not models:
+            self._hpo_results = {}
+            return dict(base_hyperparams or {})
         lags = self.strategy_['lags']
         scaler = self.strategy_['scaler']
 
         n_trials = self.hpo_n_trials
-        if self.hpo_strategy == 'quick':
+        if active_strategy == 'quick':
             n_trials = min(n_trials, 5)
+        if self.hpo_strategy == 'auto':
+            n_trials = min(n_trials, 3)
+
+        timeout_per_model = self.hpo_timeout_per_model
+        if self.hpo_strategy == 'auto' and timeout_per_model is None:
+            timeout_per_model = max(15.0, min(45.0, self.time_limit / max(8, len(models) * 4)))
 
         if self.verbose:
             self.logger.info(
-                f"  Strategy: {self.hpo_strategy}, {n_trials} trials/model"
+                f"  Strategy: {self.hpo_strategy}->{active_strategy}, "
+                f"{n_trials} trials/model, models={models}"
             )
 
         hpo = OptunaHPO(
@@ -2054,7 +3335,7 @@ class SmartRouter:
             metric=mae,
             metric_less_is_better=True,
             n_trials=n_trials,
-            timeout_per_model=self.hpo_timeout_per_model,
+            timeout_per_model=timeout_per_model,
             verbose=self.verbose,
             random_state=self.random_state,
         )
@@ -2062,6 +3343,9 @@ class SmartRouter:
         pipeline_kwargs = {
             'scaler': scaler,
             'accelerator': self.accelerator,
+            'id_col': self.id_col,
+            'known_covariates': self.known_covariates or None,
+            'past_covariates': self.past_covariates or None,
             'gbdt_differential_n': self.strategy_.get('gbdt_differential_n', 0),
         }
 
@@ -2107,15 +3391,40 @@ class SmartRouter:
             Full screening leaderboard (sorted by metric), or None if
             screening failed entirely.
         """
+        candidates = self._filter_feasible_models(
+            list(candidates),
+            self.profile_,
+            lags=strategy['lags'],
+            keep_at_least=min(self.max_models, len(candidates))
+        )
         if len(candidates) <= self.max_models:
             return None  # no screening needed
 
         n = len(train_data)
+        if self.id_col is not None and self.id_col in train_data.columns:
+            n_effective = int(train_data.groupby(self.id_col).size().min())
+        else:
+            n_effective = n
 
-        # Use data subset for speed (last 70%, or all if small)
-        if n > 100:
+        min_screen_rows = max(
+            strategy['lags'] * 3,
+            strategy['lags'] + (self.n_predict or strategy['lags']) + 4
+        )
+        if self.id_col is not None and self.id_col in train_data.columns:
+            if n_effective > max(100, min_screen_rows * 2):
+                parts = []
+                for _, sdf in train_data.groupby(self.id_col, sort=False):
+                    sdf = sdf.sort_values(self.time_col)
+                    keep = min(len(sdf), max(min_screen_rows, int(len(sdf) * 0.7)))
+                    parts.append(sdf.tail(keep))
+                screen_train = pd.concat(parts, ignore_index=True)
+            else:
+                screen_train = train_data
+        elif n_effective > max(100, min_screen_rows * 2):
             subset_start = int(n * 0.3)
             screen_train = train_data.iloc[subset_start:].reset_index(drop=True)
+            if len(screen_train) < min_screen_rows:
+                screen_train = train_data
         else:
             screen_train = train_data
 
@@ -2149,6 +3458,9 @@ class SmartRouter:
                 accelerator=self.accelerator,
                 random_state=self.random_state,
                 cv=min(self.cv, 2),  # fewer CV folds for speed
+                id_col=self.id_col,
+                known_covariates=self.known_covariates or None,
+                past_covariates=self.past_covariates or None,
                 gbdt_differential_n=strategy['gbdt_differential_n'],
                 time_limit=screen_time,
                 **screen_params,
@@ -2208,7 +3520,16 @@ class SmartRouter:
         if screen_lb is None or screen_lb.empty:
             if self.verbose:
                 self.logger.info("  Fusion: no screening data, using heuristic selection")
-            return self.strategy_['models'][:self.max_models]
+            heuristic_models = (self.strategy_ or {}).get('models', [])[:self.max_models]
+            if self.profile_ is None:
+                return heuristic_models
+            lags = (self.strategy_ or {}).get('lags', self._suggest_lags(self.profile_))
+            fallback = self._filter_feasible_models(
+                heuristic_models, self.profile_,
+                lags=lags,
+                keep_at_least=min(self.max_models, len(heuristic_models))
+            )
+            return fallback[:self.max_models]
 
         # --- Build normalized heuristic ranks ---
         # All candidates ranked by heuristic score (higher = better)
@@ -2235,7 +3556,21 @@ class SmartRouter:
         n_s = len(screen_models)
         screening_norm = {}
         for i, m in enumerate(screen_models):
-            screening_norm[m] = 1.0 - (i / max(n_s - 1, 1))
+            screening_norm[m] = 1.0 - ((i + 1) / max(n_s + 1, 1))
+
+        speed_norm = {}
+        if 'train_cost(s)' in screen_lb.columns:
+            costs = {}
+            for _, row in screen_lb.iterrows():
+                cost = float(row.get('train_cost(s)', 0.0) or 0.0)
+                cost += float(row.get('eval_cost(s)', 0.0) or 0.0)
+                costs[row['model']] = max(cost, 1e-6)
+            if costs:
+                log_costs = {m: np.log1p(c) for m, c in costs.items()}
+                c_min = min(log_costs.values())
+                c_max = max(log_costs.values())
+                for m, c in log_costs.items():
+                    speed_norm[m] = 1.0 - ((c - c_min) / max(c_max - c_min, 1e-9))
 
         # Models that were candidates but didn't complete screening
         # (timed out or failed) get a penalty: worst screening rank - 0.1
@@ -2247,13 +3582,24 @@ class SmartRouter:
         # --- Fusion scoring ---
         # α controls screening vs heuristic weight.
         # Screening is primary signal (α=0.7); heuristic is prior.
-        alpha = 0.7
+        alpha = 0.65
+        speed_weight = 0.15 if self.time_limit is not None else 0.08
+        heuristic_weight = max(0.0, 1.0 - alpha - speed_weight)
 
         fusion_scores = {}
         for m in broad_candidates:
             s_norm = screening_norm.get(m, -0.1)
             h_norm = heuristic_norm.get(m, 0.0)
-            fusion_scores[m] = alpha * s_norm + (1 - alpha) * h_norm
+            v_norm = speed_norm.get(m, self._expected_speed_score(m, self.profile_))
+            risk = 0.0
+            if self._feasibility_report and m in self._feasibility_report:
+                risk = self._feasibility_report[m].get('risk', 0.0)
+            fusion_scores[m] = (
+                alpha * s_norm +
+                heuristic_weight * h_norm +
+                speed_weight * v_norm -
+                0.12 * risk
+            )
 
         # Store fusion details for logging
         self._fusion_scores = fusion_scores
@@ -2264,18 +3610,7 @@ class SmartRouter:
         # models from already-covered categories are deferred to phase 2.
         # This ensures the strongest fusion performers are always
         # considered while diversity emerges naturally.
-        categories = {
-            'statistic': {'auto_arima', 'prophet'},
-            'ml': {'catboost', 'xgboost', 'random_forest', 'extra_forest',
-                   'gc_forest', 'wide_gbrt', 'multi_output_model',
-                   'multi_step_model', 'regressor_chain'},
-            'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
-            'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
-                          'time2vec', 'gau'},
-            'nn_heavy': {'transformer', 'tft', 'itransformer', 'srs_net',
-                         'deepar', 'chronos_2', 'chronos_2_synth',
-                         'chronos_2_small'},
-        }
+        categories = self._CATEGORIES
 
         # Build model → category mapping
         model_cat = {}
@@ -2350,28 +3685,8 @@ class SmartRouter:
         - 2: medium NN (n_beats, n_hits, stacking_rnn, patch_rnn, time2vec, gau)
         - 3: heavy NN (tft, transformer, itransformer, deepar, srs_net, chronos*)
         """
-        _speed_tier = {}
-        _fast = {
-            'auto_arima', 'prophet',
-            'catboost', 'xgboost', 'random_forest', 'extra_forest',
-            'gc_forest', 'wide_gbrt', 'multi_output_model',
-            'multi_step_model', 'regressor_chain',
-        }
-        _light = {'d_linear', 'n_linear', 'tide', 'tcn'}
-        _medium = {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
-                   'time2vec', 'gau'}
-        # Everything else is heavy (tier 3)
-        for m in candidates:
-            if m in _fast:
-                _speed_tier[m] = 0
-            elif m in _light:
-                _speed_tier[m] = 1
-            elif m in _medium:
-                _speed_tier[m] = 2
-            else:
-                _speed_tier[m] = 3
         # Stable sort preserves original (heuristic-score) order within tier
-        return sorted(candidates, key=lambda m: _speed_tier[m])
+        return sorted(candidates, key=SmartRouter._speed_tier_for_model)
 
     def _get_screening_hyperparams(self, candidates, strategy):
         """Build lightweight hyperparams for quick screening.
@@ -2441,6 +3756,10 @@ class SmartRouter:
         """
         base_lag = strategy['lags']
         n = len(full_data)
+        models = self._filter_feasible_models(
+            list(models), self.profile_, lags=base_lag,
+            keep_at_least=min(len(models), self.max_models)
+        )
 
         candidates = self._generate_lag_candidates(base_lag, n)
         if len(candidates) <= 1:
@@ -2485,7 +3804,11 @@ class SmartRouter:
                     accelerator=self.accelerator,
                     random_state=self.random_state,
                     cv=min(self.cv, 2),
+                    id_col=self.id_col,
+                    known_covariates=self.known_covariates or None,
+                    past_covariates=self.past_covariates or None,
                     gbdt_differential_n=strategy['gbdt_differential_n'],
+                    time_limit=lag_time_limit,
                     **fast_params,
                 )
                 eval_pipeline._device_info_logged = True
@@ -2539,6 +3862,7 @@ class SmartRouter:
     def _pick_fast_eval_model(self, models):
         """Pick the fastest model from the list for lag evaluation."""
         fast_preference = [
+            'stat_ensemble', 'theta', 'ets', 'seasonal_naive',
             'catboost', 'xgboost', 'random_forest', 'extra_forest',
             'multi_output_model', 'multi_step_model',
             'prophet', 'auto_arima',
@@ -2766,7 +4090,7 @@ class SmartRouter:
             for name in model_names:
                 try:
                     pred_df = self.pipeline_.predict(
-                        n=n_valid, data=valid_data, model_name=name
+                        n=n_valid, model_name=name
                     )
                     pred_matrix.append(pred_df[self.target_col].values)
                 except Exception:
@@ -2815,7 +4139,7 @@ class SmartRouter:
             for name in model_names:
                 try:
                     pred_df = self.pipeline_.predict(
-                        n=n_valid, data=valid_data, model_name=name
+                        n=n_valid, model_name=name
                     )
                     pred_matrix.append(pred_df[self.target_col].values)
                 except Exception:
@@ -2917,6 +4241,15 @@ class SmartRouter:
             f"  Missing: {p.pct_missing:.1%}  |  Outliers: {p.pct_outlier:.1%}  |  Has negative: {p.has_negative}"
             f"{periods_str}"
         )
+        if self.insights_ is not None:
+            i = self.insights_
+            flags = ', '.join(i.risk_flags) if i.risk_flags else 'none'
+            self.logger.info(
+                f"  Data insights: completeness={i.completeness_ratio:.1%}, "
+                f"regularity={i.regularity_ratio:.1%}, duplicate_ts={i.duplicate_timestamp_ratio:.1%}, "
+                f"zeros={i.zero_ratio:.1%}, entropy={i.spectral_entropy}, hurst={i.hurst_exponent}\n"
+                f"  Insight risk flags: {flags}"
+            )
 
     def _log_strategy(self):
         s = self.strategy_
@@ -3078,9 +4411,9 @@ class SmartRouter:
         heuristic candidate together with the selected lag and model diversity.
         """
         datasets = {
-            'electric': LoadElectricDataSets,
-            'messages_hour': LoadMessagesSentHourDataSets,
-            'messages': LoadMessagesSentDataSets,
+            'electric': LoadElectric,
+            'messages_hour': LoadMessagesSentHour,
+            'messages': LoadMessagesSent,
             'web_sales': LoadWebSales,
             'supermarket': LoadSupermarketIncoming,
         }
@@ -3227,6 +4560,21 @@ class SmartRouter:
             self.logger.info(f"  Calibration ρ: {self._calibration_rho:.3f}")
         if self._screening_results is not None:
             self.logger.info(f"  Screening: {len(self._screening_results)} candidates evaluated")
+        if self._baseline_guardrail is not None:
+            bg = self._baseline_guardrail
+            if bg.get('checked'):
+                status = 'switched' if bg.get('switched') else 'kept primary'
+                self.logger.info(
+                    f"  Baseline guardrail: {status} "
+                    f"(primary={bg.get('primary_model')}:{bg.get('primary_metric')}, "
+                    f"baseline={bg.get('baseline_model')}:{bg.get('baseline_metric')})"
+                )
+            else:
+                self.logger.info(
+                    f"  Baseline guardrail: skipped ({bg.get('reason')})"
+                )
+        if self._fallback_used:
+            self.logger.warning("  Fallback safe portfolio was used after initial model failures")
         if self._lag_exploration_results:
             per_model_lags = self.strategy_.get('per_model_lags', None)
             if per_model_lags:

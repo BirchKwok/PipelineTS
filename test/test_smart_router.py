@@ -17,12 +17,12 @@ import pytest
 
 import pandas as pd
 import numpy as np
-from PipelineTS.pipeline.smart_router import SmartRouter, DataProfile, EnsemblePredictor
+from PipelineTS.pipeline.smart_router import SmartRouter, DataProfile, DataInsightProfile, EnsemblePredictor
 from PipelineTS.pipeline.pipeline import ModelPipeline
 from PipelineTS.dataset import (
-    LoadElectricDataSets,
-    LoadMessagesSentHourDataSets,
-    LoadMessagesSentDataSets,
+    LoadElectric,
+    LoadMessagesSentHour,
+    LoadMessagesSent,
     LoadWebSales,
     LoadSupermarketIncoming,
 )
@@ -32,7 +32,7 @@ from PipelineTS.dataset import (
 
 def test_data_profile():
     """Test that DataProfile is populated correctly, including new fields."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(time_col='date', target_col='value', verbose=False)
     df_dt = router._ensure_datetime(df)
     profile = router._profile_data(df_dt)
@@ -63,7 +63,7 @@ def test_data_profile():
 
 def test_strategy_selection():
     """Test that strategy is built correctly from profile, including new fields."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(time_col='date', target_col='value', verbose=False,
                          max_models=5, n_predict=12)
     df_dt = router._ensure_datetime(df)
@@ -107,7 +107,7 @@ def test_strategy_selection():
 
 def test_model_scoring_explanation():
     """Test that model scores include detailed reasons."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(time_col='date', target_col='value', verbose=False,
                          max_models=5, n_predict=12)
     df_dt = router._ensure_datetime(df)
@@ -141,7 +141,7 @@ def test_model_scoring_explanation():
 
 def test_priority_ordering():
     """Test that selected models are sorted by score (highest first)."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(time_col='date', target_col='value', verbose=False,
                          max_models=5, n_predict=12)
     df_dt = router._ensure_datetime(df)
@@ -278,7 +278,7 @@ def test_ensemble_predictor_median():
 
 def test_ensemble_strategy_none():
     """Test that ensemble_strategy='none' skips ensemble."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value',
         verbose=False, max_models=3, ensemble_strategy='none',
@@ -306,7 +306,7 @@ def test_ensemble_strategy_validation():
 
 def test_feature_engineering_routing():
     """Test feature engineering decisions for Electric_Production data."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value',
         verbose=False, n_predict=12,
@@ -323,7 +323,7 @@ def test_feature_engineering_routing():
 
 def test_adaptive_hyperparams():
     """Test that hyperparams are suggested based on data profile."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value',
         verbose=False, n_predict=12,
@@ -408,7 +408,7 @@ def test_pipeline_failed_skipped_properties():
 
 def test_smart_router_fit_predict():
     """Test full SmartRouter fit and predict workflow with ensemble."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date',
         target_col='value',
@@ -469,7 +469,7 @@ def test_smart_router_fit_predict():
 
 def test_smart_router_forced_ensemble():
     """Test SmartRouter with ensemble_strategy='weighted_avg' (always ensemble)."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date',
         target_col='value',
@@ -506,7 +506,7 @@ def test_smart_router_forced_ensemble():
 
 def test_smart_router_median_ensemble():
     """Test SmartRouter with ensemble_strategy='median'."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date',
         target_col='value',
@@ -536,7 +536,7 @@ def test_smart_router_median_ensemble():
 
 def test_smart_router_stacking_ensemble():
     """Test SmartRouter with ensemble_strategy='stacking'."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date',
         target_col='value',
@@ -566,7 +566,7 @@ def test_smart_router_stacking_ensemble():
 
 def test_smart_router_time_limit():
     """Test SmartRouter with time_limit parameter."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date',
         target_col='value',
@@ -590,7 +590,7 @@ def test_smart_router_time_limit():
 
 def test_smart_router_callback_integration():
     """Test that SmartRouter receives callbacks from Pipeline."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date',
         target_col='value',
@@ -633,7 +633,7 @@ def test_search_strategy_param():
 
 def test_should_screen_logic():
     """Test _should_screen conditions for different search strategies."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
 
     # basic: never screens
     r = SmartRouter(time_col='date', target_col='value',
@@ -670,7 +670,7 @@ def test_should_screen_logic():
 
 def test_should_explore_lags_logic():
     """Test _should_explore_lags conditions."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
 
     r = SmartRouter(time_col='date', target_col='value', search_strategy='basic')
     r.profile_ = r._profile_data(r._ensure_datetime(df))
@@ -726,7 +726,7 @@ def test_pick_fast_eval_model():
 
 def test_select_models_n_candidates():
     """Test _select_models with n_candidates override."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     r = SmartRouter(time_col='date', target_col='value',
                     verbose=False, max_models=5, n_predict=12)
     profile = r._profile_data(r._ensure_datetime(df))
@@ -747,7 +747,7 @@ def test_inject_exploration_new_category():
     """Injection adds models from categories absent in the heuristic pool."""
     from PipelineTS.pipeline.pipeline_models import get_all_available_models
 
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     r = SmartRouter(
         time_col='date', target_col='value',
         n_predict=12, verbose=False, max_models=5,
@@ -783,7 +783,7 @@ def test_inject_exploration_respects_strategy():
     """Injection is a no-op for 'basic' and 'thorough' strategies."""
     from PipelineTS.pipeline.pipeline_models import get_all_available_models
 
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     all_models = list(get_all_available_models().keys())
     fake_pool = all_models[:12]
 
@@ -818,6 +818,337 @@ def _make_profile(**kwargs):
     for k, v in kwargs.items():
         setattr(p, k, v)
     return p
+
+
+def test_data_insight_profile_and_cache():
+    dates = pd.date_range('2023-01-01', periods=80, freq='D').delete([10, 20, 21])
+    df = pd.DataFrame({
+        'date': dates,
+        'value': np.where(np.arange(len(dates)) % 5 == 0, 0.0, np.arange(len(dates), dtype=float)),
+    })
+    df = pd.concat([df, df.iloc[[5]]], ignore_index=True)
+    r = SmartRouter(time_col='date', target_col='value', verbose=False)
+    df = r._ensure_datetime(df)
+    p = r._profile_data(df)
+    insights = r._get_data_insights(df, p)
+    cached = r._get_data_insights(df, p)
+
+    assert isinstance(insights, DataInsightProfile)
+    assert cached is insights
+    assert insights.has_time_duplicates is True
+    assert insights.implicit_gap_ratio > 0
+    assert insights.completeness_ratio < 1
+    assert insights.zero_ratio > 0
+    assert 'duplicate_timestamps' in insights.risk_flags
+    print("[PASS] test_data_insight_profile_and_cache")
+
+
+def test_data_insights_drive_preprocessing_lags_and_fe():
+    p = _make_profile(
+        n_rows=240, freq='D', is_regular=True, stationarity='stationary',
+        trend_strength=0.5, seasonality_strength=0.2,
+        noise_ratio=0.4, skewness=0.0, kurtosis=0.0, cv=0.2,
+        autocorr_lag1=0.2, n_seasonalities=1,
+        pct_missing=0.0, pct_outlier=0.0, regime_changes=1,
+        dominant_periods=[], suggested_d=0,
+    )
+    insights = DataInsightProfile()
+    insights.implicit_gap_ratio = 0.05
+    insights.low_completeness = True
+    insights.completeness_ratio = 0.95
+    insights.long_memory = True
+    insights.hurst_exponent = 0.7
+    insights.risk_flags = ['low_completeness', 'long_memory']
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    verbose=False, max_models=5)
+    r.insights_ = insights
+
+    preprocessing = r._select_preprocessing(p)
+    lags = r._suggest_lags(p)
+    fe = r._select_feature_engineering(p)
+
+    assert {'step': 'reindex_gaps', 'method': 'linear'} in preprocessing
+    assert lags > int(np.sqrt(p.n_rows))
+    assert fe['routing_mode'] == 'static'
+    assert fe['prophet_use_lag_features'] is True
+    print("[PASS] test_data_insights_drive_preprocessing_lags_and_fe")
+
+
+def test_data_insights_affect_scoring_and_feasibility():
+    p = _make_profile(
+        n_rows=220, freq='D', is_regular=True, stationarity='stationary',
+        trend_strength=0.2, seasonality_strength=0.1,
+        noise_ratio=0.5, skewness=0.0, kurtosis=0.0, cv=0.2,
+        autocorr_lag1=0.3, n_seasonalities=1,
+        pct_missing=0.0, pct_outlier=0.0, regime_changes=1,
+        dominant_periods=[], suggested_d=0,
+    )
+    insights = DataInsightProfile()
+    insights.intermittent_ratio = 0.45
+    insights.high_entropy = True
+    insights.spectral_entropy = 0.9
+    insights.risk_flags = ['intermittent_series', 'high_entropy']
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    verbose=False, max_models=5)
+    r.insights_ = insights
+
+    rf_score, _ = r._score_model('random_forest', p)
+    transformer_score, _ = r._score_model('transformer', p)
+    feasibility = r._model_feasibility('transformer', p, lags=12)
+
+    assert rf_score > transformer_score
+    assert feasibility['risk'] > 0
+    assert 'nn_intermittent_series_risk' in feasibility['reasons']
+    assert 'high_entropy_complex_model_risk' in feasibility['reasons']
+    print("[PASS] test_data_insights_affect_scoring_and_feasibility")
+
+
+def test_baseline_guardrail_switches_to_stronger_baseline(monkeypatch):
+    import PipelineTS.pipeline.smart_router as smart_router_module
+
+    captured = {}
+
+    class PrimaryPipeline:
+        metric_less_is_better = True
+        best_model_ = object()
+        failed_models = []
+        skipped_models = []
+
+    class FakeBaselinePipeline:
+        def __init__(self, **kwargs):
+            captured['init_kwargs'] = kwargs
+            self._device_info_logged = False
+            self._on_model_complete_callback = None
+            self.metric_less_is_better = True
+            self.scaler = 'baseline_scaler'
+            self.best_model_ = 'baseline_best_model'
+            self._failed_models = []
+            self._skipped_models = []
+
+        @property
+        def failed_models(self):
+            return self._failed_models
+
+        @property
+        def skipped_models(self):
+            return self._skipped_models
+
+        def fit(self, data, valid_data=None):
+            self.leader_board_ = pd.DataFrame({
+                'model': ['random_forest', 'multi_step_model'],
+                'train_cost(s)': [0.1, 0.1],
+                'eval_cost(s)': [0.01, 0.01],
+                'metric': [0.5, 0.8],
+            })
+            return self.leader_board_
+
+    monkeypatch.setattr(smart_router_module, 'ModelPipeline', FakeBaselinePipeline)
+
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    verbose=False, max_models=5)
+    p = _make_profile(
+        n_rows=240, freq='D', is_regular=True, stationarity='stationary',
+        trend_strength=0.2, seasonality_strength=0.2,
+        noise_ratio=0.3, skewness=0.0, kurtosis=0.0, cv=0.2,
+        autocorr_lag1=0.5, n_seasonalities=1,
+        pct_missing=0.0, pct_outlier=0.0, regime_changes=1,
+        dominant_periods=[], suggested_d=0,
+    )
+    r.profile_ = p
+    r.strategy_ = {
+        'models': ['tft', 'transformer'],
+        'lags': 96,
+        'scaler': None,
+        'gbdt_differential_n': 1,
+        'preprocessing': [],
+        'feature_engineering': {'routing_mode': 'adaptive'},
+        'model_hyperparams': {'tft__epochs': 300},
+    }
+    r.pipeline_ = PrimaryPipeline()
+    r.leader_board_ = pd.DataFrame({
+        'model': ['tft'],
+        'train_cost(s)': [1.0],
+        'eval_cost(s)': [0.1],
+        'metric': [1.0],
+    })
+    r._preprocessed_data = pd.DataFrame({
+        'd': pd.date_range('2020-01-01', periods=240, freq='D'),
+        'v': np.arange(240, dtype=float),
+    })
+    r._valid_data = r._preprocessed_data.tail(12).reset_index(drop=True)
+    r.model_scores_ = {'random_forest': {'total': 70.0, 'reasons': []}}
+
+    switched = r._run_baseline_guardrail(t0=0.0)
+
+    assert switched is True
+    assert r._baseline_guardrail['switched'] is True
+    assert r._baseline_guardrail['reason'] == 'baseline_won'
+    assert r.leader_board_.iloc[0]['model'] == 'random_forest'
+    assert r.strategy_['lags'] == 12
+    assert r.strategy_['model_hyperparams'] == {}
+    assert captured['init_kwargs']['include_models'][0] == 'random_forest'
+    assert captured['init_kwargs']['scaler'] is True
+    assert r.autonomy_summary_['baseline_guardrail']['switched'] is True
+
+    print("[PASS] test_baseline_guardrail_switches_to_stronger_baseline")
+
+
+def test_autonomy_summary_tracks_hpo_nn_and_preprocessing():
+    p = _make_profile(
+        n_rows=400, freq='D', is_regular=True, stationarity='non_stationary',
+        trend_strength=0.7, seasonality_strength=0.5,
+        noise_ratio=0.5, skewness=0.0, kurtosis=0.0, cv=0.2,
+        autocorr_lag1=0.8, n_seasonalities=2,
+        pct_missing=0.02, pct_outlier=0.04, regime_changes=5,
+        dominant_periods=[24], suggested_d=1,
+    )
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    verbose=False, max_models=5,
+                    hpo_strategy='auto', time_limit=240)
+    r.profile_ = p
+    r.insights_ = DataInsightProfile()
+    r.strategy_ = r._build_strategy(p)
+    r._active_hpo_strategy_ = r._active_hpo_strategy()
+    summary = r._build_autonomy_summary(r.strategy_)
+
+    assert r._should_hpo() is True
+    assert summary['hpo_requested_strategy'] == 'auto'
+    assert summary['hpo_strategy'] == 'quick'
+    assert summary['hpo_enabled'] is True
+    assert summary['adaptive_hyperparams_enabled'] is True
+    assert summary['nn_enhancements_enabled'] is True
+    assert summary['feature_engineering']['routing_mode'] == 'adaptive'
+    assert any(s['step'] == 'fill_missing' for s in summary['preprocessing'])
+    assert any(s['step'] == 'clip_outliers' for s in summary['preprocessing'])
+    assert summary['scaler'] is not None
+
+    print("[PASS] test_autonomy_summary_tracks_hpo_nn_and_preprocessing")
+
+
+def test_model_feasibility_blocks_heavy_nn_tiny_data():
+    p = _make_profile(
+        n_rows=36, freq='D', is_regular=True, stationarity='stationary',
+        trend_strength=0.1, seasonality_strength=0.0,
+        noise_ratio=0.5, skewness=0.0, kurtosis=0.0, cv=0.1,
+        autocorr_lag1=0.2, n_seasonalities=0,
+        pct_missing=0.0, pct_outlier=0.0, regime_changes=0,
+        dominant_periods=[], suggested_d=0,
+    )
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    verbose=False, max_models=5)
+    info = r._model_feasibility('transformer', p, lags=12)
+    assert info['hard_block'] is True
+    assert 'heavy_nn_too_little_data' in info['reasons']
+    assert info['penalty'] >= 100
+    print("[PASS] test_model_feasibility_blocks_heavy_nn_tiny_data")
+
+
+def test_adaptive_candidate_pool_includes_safe_feasible_models():
+    df = LoadElectricProduction()
+    r = SmartRouter(time_col='date', target_col='value', n_predict=12,
+                    verbose=False, max_models=5, search_strategy='auto')
+    p = r._profile_data(r._ensure_datetime(df))
+    r.strategy_ = r._build_strategy(p)
+    pool = r._build_adaptive_candidate_pool(p, pool_size=12)
+    assert len(pool) <= 12
+    assert len(pool) >= r.max_models
+    assert any(m in pool for m in ('auto_arima', 'prophet', 'multi_output_model',
+                                   'random_forest', 'extra_forest', 'catboost'))
+    assert all(not r._model_feasibility(m, p, lags=r.strategy_['lags'])['hard_block']
+               for m in pool)
+    print(f"[PASS] test_adaptive_candidate_pool_includes_safe_feasible_models: {pool}")
+
+
+def test_fusion_select_uses_screening_speed_and_risk():
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    verbose=False, max_models=2, time_limit=60)
+    p = _make_profile(
+        n_rows=240, freq='D', is_regular=True, stationarity='stationary',
+        trend_strength=0.2, seasonality_strength=0.2,
+        noise_ratio=0.4, skewness=0.0, kurtosis=0.0, cv=0.2,
+        autocorr_lag1=0.5, n_seasonalities=1,
+        pct_missing=0.0, pct_outlier=0.0, regime_changes=1,
+        dominant_periods=[], suggested_d=0,
+    )
+    r.profile_ = p
+    r.model_scores_ = {
+        'transformer': {'total': 95.0, 'reasons': [('base', 50.0)]},
+        'prophet': {'total': 70.0, 'reasons': [('base', 50.0)]},
+        'catboost': {'total': 68.0, 'reasons': [('base', 50.0)]},
+    }
+    r.strategy_ = {'models': ['transformer', 'prophet'], 'lags': 12}
+    r._feasibility_report = {
+        'transformer': {'risk': 0.8},
+        'prophet': {'risk': 0.0},
+        'catboost': {'risk': 0.0},
+    }
+    screen_lb = pd.DataFrame({
+        'model': ['prophet', 'catboost'],
+        'train_cost(s)': [0.05, 0.2],
+        'eval_cost(s)': [0.01, 0.01],
+        'metric': [1.0, 1.2],
+    })
+    selected = r._fusion_select(screen_lb, ['transformer', 'prophet', 'catboost'])
+    assert selected[0] == 'prophet'
+    assert 'transformer' not in selected
+    print(f"[PASS] test_fusion_select_uses_screening_speed_and_risk: {selected}")
+
+
+def test_quick_screen_panel_subset_keeps_each_series_tail(monkeypatch):
+    import PipelineTS.pipeline.smart_router as smart_router_module
+
+    captured = {}
+
+    class FakePipeline:
+        def __init__(self, **kwargs):
+            captured['init_kwargs'] = kwargs
+            self._device_info_logged = False
+
+        def fit(self, train_data, valid_data=None):
+            captured['group_sizes'] = train_data.groupby('id').size().to_dict()
+            captured['starts'] = train_data.groupby('id')['date'].min().to_dict()
+            return pd.DataFrame({
+                'model': ['prophet', 'catboost', 'd_linear'],
+                'train_cost(s)': [0.1, 0.2, 0.3],
+                'eval_cost(s)': [0.01, 0.01, 0.01],
+                'metric': [1.0, 1.1, 1.2],
+            })
+
+    monkeypatch.setattr(smart_router_module, 'ModelPipeline', FakePipeline)
+
+    dates = pd.date_range('2022-01-01', periods=160, freq='D')
+    train = pd.concat(
+        [
+            pd.DataFrame({'id': sid, 'date': dates, 'value': np.arange(160) + offset})
+            for sid, offset in [('a', 0), ('b', 1000), ('c', 2000)]
+        ],
+        ignore_index=True
+    )
+    valid = train.groupby('id', group_keys=False).tail(6).reset_index(drop=True)
+    p = _make_profile(
+        n_rows=160, freq='D', is_regular=True, stationarity='stationary',
+        trend_strength=0.2, seasonality_strength=0.2,
+        noise_ratio=0.4, skewness=0.0, kurtosis=0.0, cv=0.2,
+        autocorr_lag1=0.5, n_seasonalities=1,
+        pct_missing=0.0, pct_outlier=0.0, regime_changes=1,
+        dominant_periods=[], suggested_d=0,
+    )
+    r = SmartRouter(time_col='date', target_col='value', id_col='id',
+                    n_predict=6, verbose=False, max_models=1)
+    r.profile_ = p
+    strategy = {
+        'models': ['prophet', 'catboost', 'd_linear'],
+        'lags': 12,
+        'scaler': None,
+        'model_hyperparams': {},
+        'gbdt_differential_n': 0,
+    }
+    result = r._quick_screen(train, valid, ['prophet', 'catboost', 'd_linear'], strategy)
+
+    assert result is not None
+    assert captured['group_sizes'] == {'a': 112, 'b': 112, 'c': 112}
+    assert captured['init_kwargs']['id_col'] == 'id'
+    print("[PASS] test_quick_screen_panel_subset_keeps_each_series_tail")
 
 
 def test_scoring_pattern_bonus_cap():
@@ -860,7 +1191,7 @@ def test_scoring_pattern_bonus_cap():
 
 def test_scoring_model_diversity():
     """Test that model selection produces diverse candidates, not just prophet/lgbm/tft."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     r = SmartRouter(time_col='date', target_col='value', n_predict=12,
                     verbose=False, max_models=5, random_state=42)
     r._ensure_datetime(df)
@@ -958,6 +1289,65 @@ def test_hyperparams_adaptive_lr():
     print(f"[PASS] test_hyperparams_adaptive_lr: "
           f"large={hp.get('tft__learning_rate')}, "
           f"small={hp_small.get('tft__learning_rate')}")
+
+
+def test_nn_architecture_profile_light_short_horizon():
+    p = _make_profile(
+        n_rows=240, freq='D', is_regular=True, stationarity='stationary',
+        trend_strength=0.25, seasonality_strength=0.65,
+        noise_ratio=0.85, skewness=0.4, kurtosis=0.0, cv=0.2,
+        autocorr_lag1=0.9, n_seasonalities=3,
+        pct_missing=0.0, pct_outlier=0.0, regime_changes=15
+    )
+    r = SmartRouter(time_col='d', target_col='v', n_predict=12,
+                    preset='fast', verbose=False, max_models=5)
+    arch = r._nn_architecture_profile(p)
+    hp = r._suggest_hyperparams(p)
+
+    assert arch['light_ok'] is True
+    assert arch['capacity_needed'] is False
+    assert hp.get('n_beats__generic_architecture') == False
+    assert hp.get('n_hits__num_stacks') == 2
+    assert hp.get('transformer__d_model') == 32
+    assert hp.get('gau__level') == 1
+    assert hp.get('tide__hidden_size') == 64
+    assert hp.get('tide__num_encoder_layers') == 1
+    assert hp.get('tide__num_decoder_layers') == 1
+    capped, _ = r._apply_training_budget_caps({}, models=['tide'], profile=p)
+    assert capped.get('tide__hidden_size') == 64
+    assert capped.get('tide__num_encoder_layers') == 1
+    assert capped.get('tide__num_decoder_layers') == 1
+
+    print("[PASS] test_nn_architecture_profile_light_short_horizon")
+
+
+def test_nn_architecture_profile_preserves_capacity():
+    p = _make_profile(
+        n_rows=420, freq='MS', is_regular=True, stationarity='non_stationary',
+        trend_strength=0.7, seasonality_strength=0.7,
+        noise_ratio=0.55, skewness=0.0, kurtosis=0.0, cv=0.2,
+        autocorr_lag1=0.85, n_seasonalities=2,
+        pct_missing=0.0, pct_outlier=0.0, regime_changes=120
+    )
+    r = SmartRouter(time_col='d', target_col='v', n_predict=24,
+                    preset='fast', verbose=False, max_models=5)
+    arch = r._nn_architecture_profile(p)
+    hp = r._suggest_hyperparams(p)
+    capped, _ = r._apply_training_budget_caps(
+        hp, models=['gau', 'n_beats', 'n_hits', 'transformer', 'tcn', 'tide'],
+        profile=p
+    )
+
+    assert arch['light_ok'] is False
+    assert arch['capacity_needed'] is True
+    assert 'gau__level' not in capped
+    assert 'tcn__num_levels' not in capped
+    assert 'n_beats__num_stacks' not in capped
+    assert 'n_hits__num_stacks' not in capped
+    assert 'transformer__d_model' not in capped
+    assert 'tide__hidden_size' not in capped
+
+    print("[PASS] test_nn_architecture_profile_preserves_capacity")
 
 
 def test_stability_params_in_model_wrapper():
@@ -1060,7 +1450,8 @@ def test_hyperparams_residual_gate():
     )
     hp = r._suggest_hyperparams(p)
     assert hp.get('tft__use_residual_gate') == True
-    assert hp.get('d_linear__use_residual_gate') == True
+    assert hp.get('d_linear__use_residual_gate') is None
+    assert hp.get('n_linear__use_residual_gate') is None
     assert hp.get('n_beats__use_residual_gate') == True
 
     # Small stationary data → gate should NOT be enabled
@@ -1084,7 +1475,7 @@ def test_5category_diversity():
     r = SmartRouter(time_col='date', target_col='value', n_predict=12,
                     verbose=False, max_models=8, random_state=42,
                     search_strategy='basic')
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     r._ensure_datetime(df)
     p = r._profile_data(df)
     r._build_strategy(p)
@@ -1172,7 +1563,7 @@ def test_include_models_empty_list():
 
 def test_include_models_bypasses_selection():
     """Test that include_models bypasses heuristic model selection."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     pinned = ['prophet', 'catboost', 'tide']
     r = SmartRouter(time_col='date', target_col='value',
                     include_models=pinned, verbose=False, n_predict=12)
@@ -1195,7 +1586,7 @@ def test_include_models_bypasses_selection():
 
 def test_include_models_skips_screening():
     """Test that screening is skipped when include_models is set."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     r = SmartRouter(time_col='date', target_col='value',
                     include_models=['prophet', 'catboost'],
                     search_strategy='thorough', verbose=False)
@@ -1323,49 +1714,31 @@ def test_time_aware_epoch_capping():
                     verbose=False, max_models=3, time_limit=60,
                     search_strategy='basic')
 
-    # Simulate the hyperparams that _suggest_hyperparams would produce
     hyperparams = {
         'n_beats__epochs': 2000,
+        'n_beats__patience': 100,
         'tide__epochs': 1500,
-        'catboost__iterations': 150,  # not NN, should not be capped
+        'tide__patience': 80,
+        'catboost__iterations': 150,
     }
     models = ['n_beats', 'tide', 'catboost']
 
-    # Simulate epoch capping logic (per_model_budget = 60/3 = 20s → cap=100)
-    remaining_time = 60.0
-    per_model_budget = remaining_time / len(models)
-    nn_models_set = {
-        'd_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
-        'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',
-        'patch_rnn', 'itransformer', 'srs_net', 'deepar',
-    }
-
-    if per_model_budget < 30:
-        epoch_cap = 100
-    elif per_model_budget < 60:
-        epoch_cap = 300
-    elif per_model_budget < 120:
-        epoch_cap = 500
-    else:
-        epoch_cap = None
-
-    assert epoch_cap == 100, f"Wrong cap for budget={per_model_budget:.0f}s: {epoch_cap}"
-
-    if epoch_cap is not None:
-        for m in models:
-            if m in nn_models_set:
-                key = f'{m}__epochs'
-                current = hyperparams.get(key, 1000)
-                if current > epoch_cap:
-                    hyperparams[key] = epoch_cap
-
+    hyperparams, caps = r._apply_training_budget_caps(
+        hyperparams, models=models, per_model_budget=20.0
+    )
     assert hyperparams['n_beats__epochs'] == 100, \
         f"n_beats epochs not capped: {hyperparams['n_beats__epochs']}"
     assert hyperparams['tide__epochs'] == 100, \
         f"tide epochs not capped: {hyperparams['tide__epochs']}"
-    # Non-NN model should NOT be affected
-    assert hyperparams['catboost__iterations'] == 150, \
+    assert hyperparams['n_beats__patience'] == 15, \
+        f"n_beats patience not capped: {hyperparams['n_beats__patience']}"
+    assert hyperparams['tide__patience'] == 15, \
+        f"tide patience not capped: {hyperparams['tide__patience']}"
+    assert hyperparams['catboost__iterations'] == 60, \
         f"tree iterations wrongly capped: {hyperparams['catboost__iterations']}"
+    assert caps['n_beats__epochs'] == 100
+    assert caps['n_beats__patience'] == 15
+    assert caps['catboost__iterations'] == 60
 
     print(f"[PASS] test_time_aware_epoch_capping: caps={hyperparams}")
 
@@ -1518,7 +1891,7 @@ def test_fusion_select_ml_cap():
 @pytest.mark.timeout(600)
 def test_smart_router_search_auto():
     """Test search_strategy='auto' with screening + lag exploration."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value', n_predict=12,
         verbose=True, max_models=5, random_state=42,
@@ -1550,7 +1923,7 @@ def test_smart_router_search_auto():
 
 def test_smart_router_multi_stack_ensemble():
     """Test multi_stack ensemble with diverse meta-learners."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value', n_predict=12,
         verbose=False, max_models=3, random_state=42,
@@ -1586,7 +1959,7 @@ def test_smart_router_multi_stack_ensemble():
 def test_hpo_strategy_param():
     """Test hpo_strategy parameter validation."""
     # Valid values
-    for strat in ('none', 'quick', 'full'):
+    for strat in ('none', 'quick', 'full', 'auto'):
         r = SmartRouter(
             time_col='date', target_col='value', n_predict=12,
             hpo_strategy=strat,
@@ -1600,10 +1973,12 @@ def test_hpo_strategy_param():
     except ValueError:
         pass
 
-    # Default is 'none'
     r = SmartRouter(time_col='date', target_col='value')
-    assert r.hpo_strategy == 'none'
+    assert r.hpo_strategy == 'auto'
     assert r._hpo_results is None
+
+    r_fast = SmartRouter(time_col='date', target_col='value', preset='fast')
+    assert r_fast.hpo_strategy == 'none'
 
     print("[PASS] test_hpo_strategy_param")
 
@@ -1639,7 +2014,7 @@ def test_hpo_search_space():
 
 def test_smart_router_hpo_quick():
     """Test SmartRouter with hpo_strategy='quick'."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value', n_predict=12,
         verbose=False, max_models=2, random_state=42,
@@ -1671,7 +2046,7 @@ def test_smart_router_hpo_quick():
 
 def test_smart_router_search_basic():
     """Test search_strategy='basic' skips screening and exploration."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value', n_predict=12,
         verbose=False, max_models=3, random_state=42,
@@ -1697,7 +2072,7 @@ def test_smart_router_search_basic():
 
 def test_builtin_dataset_benchmark_selection():
     """Test that SmartRouter exposes built-in dataset benchmark results."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(time_col='date', target_col='value', verbose=False,
                          max_models=3, search_strategy='basic',
                          ensemble_strategy='none')
@@ -1718,7 +2093,7 @@ def test_builtin_dataset_benchmark_selection():
 
 def test_multi_quantile_pipeline():
     """Test predict_quantiles on ModelPipeline with GBDT model."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     df['date'] = pd.to_datetime(df['date'])
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
@@ -1758,7 +2133,7 @@ def test_multi_quantile_pipeline():
 @pytest.mark.timeout(600)
 def test_multi_quantile_smart_router():
     """Test predict_quantiles on SmartRouter."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value', n_predict=12,
         verbose=False, max_models=2, random_state=42,
@@ -1780,7 +2155,7 @@ def test_multi_quantile_smart_router():
 
 def test_multi_quantile_monotonicity():
     """Verify interval widths are monotonically increasing with coverage level."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     df['date'] = pd.to_datetime(df['date'])
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
@@ -1807,7 +2182,7 @@ def test_multi_quantile_monotonicity():
 
 def test_multi_quantile_no_quantile():
     """Test predict_quantiles works even when model trained without quantile."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     df['date'] = pd.to_datetime(df['date'])
     pipe = ModelPipeline(
         time_col='date', target_col='value', lags=12,
@@ -1829,7 +2204,7 @@ def test_multi_quantile_no_quantile():
 
 def test_incremental_pipeline_update():
     """Test Pipeline.update() with GBDT model."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     df['date'] = pd.to_datetime(df['date'])
     initial = df.iloc[:350].copy()
     new_data = df.iloc[350:].copy()
@@ -1863,7 +2238,7 @@ def test_incremental_pipeline_update():
 
 def test_incremental_smart_router_update():
     """Test SmartRouter.update()."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     initial = df.iloc[:350].copy()
     new_data = df.iloc[350:].copy()
 
@@ -1889,7 +2264,7 @@ def test_incremental_smart_router_update():
 
 def test_incremental_update_not_fitted():
     """Test that update() raises if not fitted."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     df['date'] = pd.to_datetime(df['date'])
 
     pipe = ModelPipeline(
@@ -1916,7 +2291,7 @@ def test_incremental_update_not_fitted():
 
 def test_per_model_lags_pipeline():
     """Test ModelPipeline with per_model_lags parameter."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     df['date'] = pd.to_datetime(df['date'])
 
     # Test 1: per_model_lags overrides global lag for specific models
@@ -1941,7 +2316,7 @@ def test_per_model_lags_pipeline():
 
 def test_per_model_lags_default_fallback():
     """Test that models not in per_model_lags use global lag."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     df['date'] = pd.to_datetime(df['date'])
 
     pipe = ModelPipeline(
@@ -1963,7 +2338,7 @@ def test_per_model_lags_default_fallback():
 
 def test_per_model_lags_empty_dict():
     """Test that empty per_model_lags behaves like no override."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     df['date'] = pd.to_datetime(df['date'])
 
     pipe = ModelPipeline(
@@ -1982,7 +2357,7 @@ def test_per_model_lags_empty_dict():
 @pytest.mark.timeout(600)
 def test_explore_lags_per_model():
     """Test _explore_lags returns per-model lag dict."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     r = SmartRouter(
         time_col='date', target_col='value',
         search_strategy='auto', max_models=3, random_state=42,
@@ -2015,7 +2390,7 @@ def test_explore_lags_per_model():
 
 def test_include_models_fit_predict():
     """Test full SmartRouter fit/predict with include_models (multi-model)."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value', n_predict=12,
         verbose=True,
@@ -2059,7 +2434,7 @@ def test_include_models_fit_predict():
 
 def test_include_models_single_model_optimization():
     """Test SmartRouter with a single pinned model — full optimization."""
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(
         time_col='date', target_col='value', n_predict=12,
         verbose=True,

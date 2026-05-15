@@ -112,8 +112,14 @@ class BuiltInSeriesData:
         return self.__str__()
 
 
-LoadElectricDataSets = _call_name(BuiltInSeriesData(print_file_list=False), 'Electric_Production')
-LoadMessagesSentDataSets = _call_name(BuiltInSeriesData(print_file_list=False), 'Messages_Sent')
-LoadMessagesSentHourDataSets = _call_name(BuiltInSeriesData(print_file_list=False), 'Messages_Sent_Hour')
-LoadWebSales = _call_name(BuiltInSeriesData(print_file_list=False), 'Web_Sales')
+LoadAirPassengers = _call_name(BuiltInSeriesData(print_file_list=False), 'AirPassengers')
+LoadElectricProduction = _call_name(BuiltInSeriesData(print_file_list=False), 'Electric_Production')
+LoadETTh1 = _call_name(BuiltInSeriesData(print_file_list=False), 'ETTh1')
+LoadETTh2 = _call_name(BuiltInSeriesData(print_file_list=False), 'ETTh2')
+LoadETTm1 = _call_name(BuiltInSeriesData(print_file_list=False), 'ETTm1')
+LoadETTm2 = _call_name(BuiltInSeriesData(print_file_list=False), 'ETTm2')
+LoadInventory = _call_name(BuiltInSeriesData(print_file_list=False), 'Inventory')
+LoadMessagesSentHour = _call_name(BuiltInSeriesData(print_file_list=False), 'Messages_Sent_Hour')
+LoadMessagesSent = _call_name(BuiltInSeriesData(print_file_list=False), 'Messages_Sent')
 LoadSupermarketIncoming = _call_name(BuiltInSeriesData(print_file_list=False), 'Supermarket_Incoming')
+LoadWebSales = _call_name(BuiltInSeriesData(print_file_list=False), 'Web_Sales')

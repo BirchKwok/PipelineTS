@@ -17,9 +17,9 @@ class NLinearModel(SpinesNNModelMixin):
             learning_rate=0.001,
             accelerator='auto',
             verbose=False,
-            epochs=1000,
+            epochs=1500,
             batch_size='auto',
-            patience=20,
+            patience=80,
             min_delta=0,
             lr_scheduler='CosineAnnealingLR',
             lr_scheduler_patience=10,
@@ -35,7 +35,7 @@ class NLinearModel(SpinesNNModelMixin):
             use_swa=False,
             swa_start_frac=0.75,
             warmup_epochs=0,
-            use_residual_gate=False
+            use_residual_gate=False,
     ):
         """
         NLinearModel: A wrapper for the NLinear model from spinesTS with additional features.
@@ -62,11 +62,11 @@ class NLinearModel(SpinesNNModelMixin):
             The accelerator to use during training.
         verbose : bool, optional, default: False
             Whether to display verbose output during training.
-        epochs : int, optional, default: 1000
+        epochs : int, optional, default: 1500
             The number of epochs for training.
         batch_size : int or 'auto', optional, default: 'auto'
             The batch size used during training.
-        patience : int, optional, default: 20
+        patience : int, optional, default: 80
             The patience for early stopping.
         min_delta : int, optional, default: 0
             Minimum change to qualify as an improvement.
@@ -103,7 +103,7 @@ class NLinearModel(SpinesNNModelMixin):
             weight_decay=weight_decay,
             use_gtb=use_gtb,
             gtb_d_model=gtb_d_model,
-            routing_mode=routing_mode
+            routing_mode=routing_mode,
         )
 
         self.last_dt = None
@@ -130,7 +130,7 @@ class NLinearModel(SpinesNNModelMixin):
                 'use_swa': use_swa,
                 'swa_start_frac': swa_start_frac,
                 'warmup_epochs': warmup_epochs,
-                'use_residual_gate': use_residual_gate
+                'use_residual_gate': use_residual_gate,
             }
         )
 

@@ -93,10 +93,10 @@ class TestTutorial01QuickStart:
 
     def test_load_datasets(self):
         from PipelineTS.dataset import (
-            LoadElectricDataSets, LoadMessagesSentDataSets,
+            LoadElectric, LoadMessagesSent,
             LoadWebSales, LoadSupermarketIncoming
         )
-        for loader in [LoadElectricDataSets, LoadMessagesSentDataSets,
+        for loader in [LoadElectric, LoadMessagesSent,
                        LoadWebSales, LoadSupermarketIncoming]:
             df = loader()
             assert df.shape[0] > 0
@@ -389,11 +389,11 @@ class TestTutorial05Preprocessing:
 
     def test_builtin_datasets(self):
         from PipelineTS.dataset import (
-            LoadElectricDataSets, LoadMessagesSentHourDataSets,
-            LoadMessagesSentDataSets, LoadWebSales, LoadSupermarketIncoming,
+            LoadElectric, LoadMessagesSentHour,
+            LoadMessagesSent, LoadWebSales, LoadSupermarketIncoming,
         )
-        for loader in [LoadElectricDataSets, LoadMessagesSentHourDataSets,
-                       LoadMessagesSentDataSets, LoadWebSales,
+        for loader in [LoadElectric, LoadMessagesSentHour,
+                       LoadMessagesSent, LoadWebSales,
                        LoadSupermarketIncoming]:
             df = loader()
             assert df.shape[0] > 0
@@ -464,12 +464,12 @@ class TestTutorial06HyperparameterTuning:
 
     def test_optuna_ml(self):
         optuna = pytest.importorskip('optuna')
-        from PipelineTS.dataset import LoadMessagesSentDataSets
+        from PipelineTS.dataset import LoadMessagesSent
         from PipelineTS.pipeline import ModelPipeline
         from PipelineTS.ml_model import WideGBRTModel
         from sklearn.metrics import mean_absolute_error
 
-        init_data = LoadMessagesSentDataSets()
+        init_data = LoadMessagesSent()
         init_data = init_data[['date', 'ta']]
         init_data['date'] = pd.to_datetime(init_data['date'])
         n = 30
@@ -494,11 +494,11 @@ class TestTutorial06HyperparameterTuning:
 
     def test_optuna_nn(self):
         optuna = pytest.importorskip('optuna')
-        from PipelineTS.dataset import LoadMessagesSentDataSets
+        from PipelineTS.dataset import LoadMessagesSent
         from PipelineTS.nn_model import TCNModel
         from sklearn.metrics import mean_absolute_error
 
-        init_data = LoadMessagesSentDataSets()
+        init_data = LoadMessagesSent()
         init_data = init_data[['date', 'ta']]
         init_data['date'] = pd.to_datetime(init_data['date'])
         n = 30
@@ -527,12 +527,12 @@ class TestTutorial06HyperparameterTuning:
 class TestTutorial07Benchmarks:
 
     def test_multi_dataset_benchmark(self):
-        from PipelineTS.dataset import LoadElectricDataSets, LoadWebSales
+        from PipelineTS.dataset import LoadElectric, LoadWebSales
         from PipelineTS.pipeline import ModelPipeline
         from sklearn.metrics import mean_absolute_error
 
         datasets = {
-            'Electric': (LoadElectricDataSets, 'date', 'value'),
+            'Electric': (LoadElectric, 'date', 'value'),
             'WebSales': (LoadWebSales, 'date', 'type_a'),
         }
         for name, (loader, tc, tgt) in datasets.items():
@@ -549,11 +549,11 @@ class TestTutorial07Benchmarks:
             assert len(lb) > 0
 
     def test_benchmark_with_quantile(self):
-        from PipelineTS.dataset import LoadElectricDataSets
+        from PipelineTS.dataset import LoadElectric
         from PipelineTS.pipeline import ModelPipeline
         from sklearn.metrics import mean_absolute_error
 
-        df = LoadElectricDataSets()
+        df = LoadElectricProduction()
         df['date'] = pd.to_datetime(df['date'])
         pipe = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
@@ -1103,9 +1103,9 @@ class TestTutorial12SmartRouterPipeline:
 
     def test_smartrouter_production(self):
         from PipelineTS.pipeline import SmartRouter
-        from PipelineTS.dataset import LoadElectricDataSets
+        from PipelineTS.dataset import LoadElectric
 
-        electric = LoadElectricDataSets()
+        electric = LoadElectricProduction()
         electric['date'] = pd.to_datetime(electric['date'])
 
         router = SmartRouter(

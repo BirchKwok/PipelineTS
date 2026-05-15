@@ -65,12 +65,14 @@ class TransformerBackbone(nn.Module):
 
     def __init__(self, in_features, out_features, d_model=64, nhead=4,
                  num_encoder_layers=3, dim_feedforward=256, dropout=0.1,
-                 use_revin=True, use_gtb=False, gtb_d_model=64, routing_mode='static'):
+                 use_revin=True, output_strategy='flatten',
+                 use_gtb=False, gtb_d_model=64, routing_mode='static'):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.d_model = d_model
         self.use_revin = use_revin
+        self.output_strategy = output_strategy
         self.eps = 1e-5
 
         # Ensure nhead divides d_model
@@ -99,13 +101,22 @@ class TransformerBackbone(nn.Module):
         if use_gtb:
             self.gtb = GlobalTemporalBlock(in_features, d_model=gtb_d_model, dropout=dropout, routing_mode=routing_mode)
 
-        # Output head: flatten and project
-        self.output_head = nn.Sequential(
-            nn.Linear(in_features * d_model, d_model * 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * 2, out_features)
-        )
+        if output_strategy == 'pooled':
+            self.temporal_weight = nn.Linear(d_model, 1)
+            self.output_head = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_model, out_features)
+            )
+            self.residual_proj = nn.Linear(in_features, out_features)
+        else:
+            self.output_head = nn.Sequential(
+                nn.Linear(in_features * d_model, d_model * 2),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_model * 2, out_features)
+            )
 
     def forward(self, x):
         # x: (B, L) for univariate
@@ -132,9 +143,13 @@ class TransformerBackbone(nn.Module):
             h = layer(h)
         h = self.final_norm(h)
 
-        # Flatten and project to output
-        h = h.reshape(B, -1)  # (B, L * d_model)
-        out = self.output_head(h)  # (B, out_features)
+        if self.output_strategy == 'pooled':
+            weights = torch.softmax(self.temporal_weight(h).squeeze(-1), dim=1)
+            h = (h * weights.unsqueeze(-1)).sum(dim=1)
+            out = self.output_head(h) + self.residual_proj(x)
+        else:
+            h = h.reshape(B, -1)
+            out = self.output_head(h)
 
         # RevIN denormalize
         if self.use_revin:
@@ -174,6 +189,7 @@ class TSTransformer(TorchModelMixin, ForecastingMixin):
                  dim_feedforward: int = 256,
                  dropout: float = 0.1,
                  use_revin: bool = True,
+                 output_strategy: str = 'flatten',
                  loss_fn='huber',
                  learning_rate: float = 0.001,
                  random_seed: int = 42,
@@ -193,6 +209,7 @@ class TSTransformer(TorchModelMixin, ForecastingMixin):
         self.dim_feedforward = dim_feedforward
         self.dropout = dropout
         self.use_revin = use_revin
+        self.output_strategy = output_strategy
         self.learning_rate = learning_rate
         self.loss_fn_name = loss_fn
         self.weight_decay = weight_decay
@@ -213,6 +230,7 @@ class TSTransformer(TorchModelMixin, ForecastingMixin):
             dim_feedforward=self.dim_feedforward,
             dropout=self.dropout,
             use_revin=self.use_revin,
+            output_strategy=self.output_strategy,
             use_gtb=self.use_gtb, gtb_d_model=self.gtb_d_model,
             routing_mode=self.routing_mode
         )

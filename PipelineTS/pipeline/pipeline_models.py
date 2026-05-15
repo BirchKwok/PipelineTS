@@ -3,6 +3,7 @@ from frozendict import frozendict
 from PipelineTS.statistic_model import *
 from PipelineTS.ml_model import *
 from PipelineTS.nn_model import *
+from PipelineTS.spinesTS.backends import is_mlx_available, is_torch_available
 
 from PipelineTS.base.base_utils import get_model_name_before_initial
 
@@ -24,6 +25,13 @@ def get_all_available_models():
     models = {
         'auto_arima': AutoARIMAModel,
         'prophet': ProphetModel,
+        'naive': NaiveModel,
+        'seasonal_naive': SeasonalNaiveModel,
+        'theta': ThetaModel,
+        'ets': ETSModel,
+        'short_trend_slot_blend': ShortTrendSlotBlendModel,
+        'long_slot_trend_blend': LongSlotTrendBlendModel,
+        'stat_ensemble': StatisticalEnsembleModel,
         # ML tree models (native implementations)
         'catboost': CatBoostModel,
         'xgboost': XGBoostModel,
@@ -34,23 +42,26 @@ def get_all_available_models():
         'multi_output_model': MultiOutputRegressorModel,
         'multi_step_model': MultiStepRegressorModel,
         'regressor_chain': RegressorChainModel,
-        # NN models
-        'd_linear': DLinearModel,
-        'n_linear': NLinearModel,
-        'n_beats': NBeatsModel,
-        'n_hits': NHitsModel,
-        'tcn': TCNModel,
-        'tft': TFTModel,
-        'gau': GAUModel,
-        'stacking_rnn': StackingRNNModel,
-        'time2vec': Time2VecModel,
-        'transformer': TransformerModel,
-        'tide': TiDEModel,
-        'patch_rnn': PatchRNNModel,
-        'itransformer': ITransformerModel,
-        'srs_net': SRSNetModel,
-        'deepar': DeepARModel,
     }
+
+    if is_torch_available() or is_mlx_available():
+        models.update({
+            'd_linear': DLinearModel,
+            'n_linear': NLinearModel,
+            'n_beats': NBeatsModel,
+            'n_hits': NHitsModel,
+            'tcn': TCNModel,
+            'tft': TFTModel,
+            'gau': GAUModel,
+            'stacking_rnn': StackingRNNModel,
+            'time2vec': Time2VecModel,
+            'transformer': TransformerModel,
+            'tide': TiDEModel,
+            'patch_rnn': PatchRNNModel,
+            'itransformer': ITransformerModel,
+            'srs_net': SRSNetModel,
+            'deepar': DeepARModel,
+        })
 
     # Chronos-2 family is optional — only register if chronos-forecasting is installed
     try:

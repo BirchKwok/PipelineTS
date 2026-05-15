@@ -155,3 +155,12 @@ cython_debug/
 .VSCodeCounter/
 
 .vscode
+
+*.pkl
+*.json
+*.err
+*.out
+*.pt
+
+*.txt
+

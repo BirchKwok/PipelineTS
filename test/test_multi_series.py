@@ -292,9 +292,9 @@ def test_smartrouter_profile_multi_series():
 def test_smartrouter_profile_single_series():
     """SmartRouter profiles single-series correctly (backward compat)."""
     from PipelineTS.pipeline.smart_router import SmartRouter
-    from PipelineTS.dataset import LoadElectricDataSets
+    from PipelineTS.dataset import LoadElectric
 
-    df = LoadElectricDataSets()
+    df = LoadElectricProduction()
     router = SmartRouter(time_col='date', target_col='value', verbose=False)
     df_dt = router._ensure_datetime(df)
     profile = router._profile_data(df_dt)

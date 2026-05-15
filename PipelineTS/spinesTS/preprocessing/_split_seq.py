@@ -3,8 +3,29 @@ from typing import Union
 
 import pandas as pd
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 from sklearn.model_selection import train_test_split
 from spinesUtils.asserts import raise_if_not
+
+
+def _as_array(seq):
+    if isinstance(seq, (pd.Series, pd.DataFrame)):
+        return seq.values
+    if isinstance(seq, list):
+        return np.asarray(seq)
+    return seq
+
+
+def _window_axis0(arr, window_size):
+    arr = _as_array(arr)
+    windows = sliding_window_view(arr, window_shape=window_size, axis=0)
+    if arr.ndim > 1:
+        windows = np.moveaxis(windows, -1, 1)
+    return windows
+
+
+def _writable_array(arr):
+    return np.asarray(arr).copy()
 
 
 def split_series(x_seq, y_seq, window_size: int, pred_steps: int, train_size: Union[None, float] = None,
@@ -46,36 +67,22 @@ def split_series(x_seq, y_seq, window_size: int, pred_steps: int, train_size: Un
                  "x_seq and y_seq must be longer than or equal to window_size")
     raise_if_not(TypeError, isinstance(shuffle, bool), "shuffle must be a bool")
 
-    if isinstance(x_seq, pd.Series):
-        x_seq = x_seq.values
-    elif isinstance(x_seq, list):
-        x_seq = np.array(x_seq)
-    if isinstance(y_seq, pd.Series):
-        y_seq = y_seq.values
-    elif isinstance(y_seq, list):
-        y_seq = np.array(y_seq)
-    X, y = [], []
+    x_seq = _as_array(x_seq)
+    y_seq = _as_array(y_seq)
 
-    for i in range(len(x_seq)):
-        end_index = i * skip_steps + window_size
-        out_end_index = end_index + pred_steps
-
-        if out_end_index > len(x_seq):
-            break
-
-        seq_x, seq_y = list(x_seq[i * skip_steps:end_index]), list(y_seq[end_index:out_end_index])
-
-        X.append(seq_x)
-        y.append(seq_y)
+    n_samples = (len(x_seq) - window_size - pred_steps) // skip_steps + 1
+    starts = np.arange(n_samples, dtype=np.int64) * skip_steps
+    X = _writable_array(_window_axis0(x_seq, window_size)[starts])
+    y = _writable_array(_window_axis0(y_seq, pred_steps)[window_size + starts])
 
     if train_size is None:
         if pred_steps > 1:
-            return np.array(X), np.array(y)
-        return np.array(X), np.squeeze(np.array(y))
+            return X, y
+        return X, np.squeeze(y)
     elif pred_steps == 1 and train_size is not None:
-        return train_test_split(np.array(X), np.squeeze(np.array(y)), train_size=train_size, shuffle=shuffle)
+        return train_test_split(X, np.squeeze(y), train_size=train_size, shuffle=shuffle)
     else:
-        return train_test_split(np.array(X), np.array(y), train_size=train_size, shuffle=shuffle)
+        return train_test_split(X, y, train_size=train_size, shuffle=shuffle)
 
 
 def lag_splits(x_seq, window_size, skip_steps=1, pred_steps=1):
@@ -102,10 +109,11 @@ def lag_splits(x_seq, window_size, skip_steps=1, pred_steps=1):
                  "x_seq must be a pandas.Series or numpy.ndarray or list")
     raise_if_not(ValueError, len(x_seq) >= window_size, "x_seq must be longer than or equal to window_size")
 
-    if isinstance(x_seq, pd.Series):
-        x_seq = x_seq.values
-    elif isinstance(x_seq, list):
-        x_seq = np.array(x_seq)
+    x_seq = _as_array(x_seq)
+
+    if pred_steps == 1:
+        starts = np.arange(0, len(x_seq) - window_size + 1, skip_steps, dtype=np.int64)
+        return _writable_array(_window_axis0(x_seq, window_size)[starts])
 
     X = []
     p, _ = 0, 0
@@ -153,19 +161,11 @@ def split_series_panel(x_seq, y_seq, group_ids, window_size: int, pred_steps: in
     series_indices : list of (group_id, n_samples) tuples
         Tracks how many samples came from each series.
     """
-    if isinstance(x_seq, pd.Series):
-        x_seq = x_seq.values
-    if isinstance(y_seq, pd.Series):
-        y_seq = y_seq.values
-    if isinstance(group_ids, pd.Series):
-        group_ids = group_ids.values
+    x_seq = _as_array(x_seq)
+    y_seq = _as_array(y_seq)
+    group_ids = _as_array(group_ids)
 
-    unique_ids = []
-    seen = set()
-    for gid in group_ids:
-        if gid not in seen:
-            seen.add(gid)
-            unique_ids.append(gid)
+    unique_ids = pd.unique(group_ids)
 
     all_X, all_y = [], []
     series_indices = []
@@ -207,17 +207,10 @@ def lag_splits_panel(x_seq, group_ids, window_size, skip_steps=1, pred_steps=1):
     dict : {group_id: np.ndarray of shape (1, window_size)}
         Last lag window for each series.
     """
-    if isinstance(x_seq, pd.Series):
-        x_seq = x_seq.values
-    if isinstance(group_ids, pd.Series):
-        group_ids = group_ids.values
+    x_seq = _as_array(x_seq)
+    group_ids = _as_array(group_ids)
 
-    unique_ids = []
-    seen = set()
-    for gid in group_ids:
-        if gid not in seen:
-            seen.add(gid)
-            unique_ids.append(gid)
+    unique_ids = pd.unique(group_ids)
 
     result = {}
     for gid in unique_ids:
@@ -265,10 +258,8 @@ def split_series_multivariate(features, targets, window_size: int, pred_steps: i
     raise_if_not(TypeError, isinstance(skip_steps, int), "skip_steps must be an integer")
     raise_if_not(ValueError, skip_steps > 0, "skip_steps must be greater than 0")
 
-    if isinstance(features, pd.DataFrame):
-        features = features.values
-    if isinstance(targets, (pd.DataFrame, pd.Series)):
-        targets = targets.values
+    features = _as_array(features)
+    targets = _as_array(targets)
 
     raise_if_not(ValueError, features.ndim == 2,
                  "features must be a 2D array with shape (T, C_features)")
@@ -277,17 +268,9 @@ def split_series_multivariate(features, targets, window_size: int, pred_steps: i
     raise_if_not(ValueError, len(features) >= window_size + pred_steps,
                  "data length must be >= window_size + pred_steps")
 
-    T = len(features)
-    X, y = [], []
+    n_samples = (len(features) - window_size - pred_steps) // skip_steps + 1
+    starts = np.arange(n_samples, dtype=np.int64) * skip_steps
+    X = _writable_array(_window_axis0(features, window_size)[starts])
+    y = _writable_array(_window_axis0(targets, pred_steps)[window_size + starts])
 
-    for i in range(T):
-        end_index = i * skip_steps + window_size
-        out_end_index = end_index + pred_steps
-
-        if out_end_index > T:
-            break
-
-        X.append(features[i * skip_steps:end_index])
-        y.append(targets[end_index:out_end_index])
-
-    return np.array(X), np.array(y)
+    return X, y

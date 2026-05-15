@@ -522,15 +522,15 @@ custom_pipeline = ModelPipeline(
 
 ---
 
-## Computing Backends / 计算后端
+## Accelerator Selection / 加速器选择
 
-Neural network models and GPU tree models support multiple computing backends:
-神经网络模型和 GPU 树模型支持多种计算后端：
+Neural network models automatically use the best available runtime. On Apple Silicon, PipelineTS uses MLX when available; otherwise it uses PyTorch.
+神经网络模型会自动使用最佳可用运行时。在 Apple Silicon 上，PipelineTS 会在可用时自动使用 MLX；其它环境使用 PyTorch。
 
 ```python
 from PipelineTS.pipeline import ModelPipeline
 
-# Auto-detect best available backend / 自动检测最佳可用后端
+# Auto-detect best available runtime / 自动检测最佳可用运行时
 pipeline = ModelPipeline(..., accelerator='auto')
 
 # Force CPU / 强制使用 CPU

@@ -64,15 +64,15 @@ pip install optuna
 
 ## GPU Acceleration / GPU 加速
 
-PipelineTS neural network models support multiple computing backends:
-PipelineTS 神经网络模型支持多种计算后端：
+PipelineTS automatically selects the available neural network runtime:
+PipelineTS 会自动选择可用的神经网络运行时：
 
-| Backend / 后端 | Accelerator Value / accelerator 值 | Note / 备注 |
+| Runtime / 运行时 | Accelerator Value / accelerator 值 | Note / 备注 |
 |---|---|---|
 | Auto-detect / 自动检测 | `'auto'` | Recommended / 推荐 |
 | CPU | `'cpu'` | Always available / 始终可用 |
 | CUDA (NVIDIA GPU) | `'cuda'` | Requires CUDA-enabled PyTorch / 需要支持 CUDA 的 PyTorch |
-| MPS (Apple Silicon) | `'mps'` | macOS with Apple Silicon / macOS Apple 芯片 |
+| Apple Silicon | `'auto'` | Uses MLX when available / 可用时自动使用 MLX |
 
 To use CUDA, install the CUDA-enabled version of PyTorch:
 要使用 CUDA，请安装支持 CUDA 的 PyTorch 版本：

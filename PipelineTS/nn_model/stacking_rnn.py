@@ -17,9 +17,9 @@ class StackingRNNModel(SpinesNNModelMixin):
             learning_rate=0.001,
             accelerator='auto',
             verbose=False,
-            epochs=3000,
+            epochs=1500,
             batch_size='auto',
-            patience=100,
+            patience=80,
             min_delta=0,
             lr_scheduler='CosineAnnealingLR',
             lr_scheduler_patience=10,
@@ -34,7 +34,7 @@ class StackingRNNModel(SpinesNNModelMixin):
             use_swa=False,
             swa_start_frac=0.75,
             warmup_epochs=0,
-            use_residual_gate=False
+            use_residual_gate=False,
     ):
         """
         StackingRNNModel: A wrapper for the StackingRNN model from the spinesTS library with additional features.
@@ -59,11 +59,11 @@ class StackingRNNModel(SpinesNNModelMixin):
             The PyTorch Lightning accelerator to use during training.
         verbose : bool, optional, default: False
             Whether to display verbose output during training.
-        epochs : int, optional, default: 1000
+        epochs : int, optional, default: 1500
             The number of epochs for training the model.
         batch_size : int or 'auto', optional, default: 'auto'
             The batch size used during training. Set to 'auto' to automatically determine the batch size.
-        patience : int, optional, default: 100
+        patience : int, optional, default: 80
             The patience parameter for early stopping during training.
         min_delta : int, optional, default: 0
             The minimum change in the monitored quantity to qualify as an improvement for early stopping.
@@ -124,7 +124,7 @@ class StackingRNNModel(SpinesNNModelMixin):
                 'use_swa': use_swa,
                 'swa_start_frac': swa_start_frac,
                 'warmup_epochs': warmup_epochs,
-                'use_residual_gate': use_residual_gate
+                'use_residual_gate': use_residual_gate,
             }
         )
 

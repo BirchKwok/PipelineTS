@@ -44,8 +44,8 @@ class TestRandomEventGenerator:
 
 class TestLoadElectricDataSets:
     def test_load(self):
-        from PipelineTS.dataset import LoadElectricDataSets
-        data = LoadElectricDataSets()
+        from PipelineTS.dataset import LoadElectric
+        data = LoadElectricProduction()
         assert isinstance(data, pd.DataFrame), "Should return a DataFrame"
         assert len(data) > 0, "Dataset should not be empty"
         assert data.shape[1] >= 2, "Should have at least 2 columns"
@@ -55,8 +55,8 @@ class TestLoadElectricDataSets:
 
 class TestLoadMessagesSentHourDataSets:
     def test_load(self):
-        from PipelineTS.dataset import LoadMessagesSentHourDataSets
-        data = LoadMessagesSentHourDataSets()
+        from PipelineTS.dataset import LoadMessagesSentHour
+        data = LoadMessagesSentHour()
         assert isinstance(data, pd.DataFrame)
         assert len(data) > 0
 
@@ -65,8 +65,8 @@ class TestLoadMessagesSentHourDataSets:
 
 class TestLoadMessagesSentDataSets:
     def test_load(self):
-        from PipelineTS.dataset import LoadMessagesSentDataSets
-        data = LoadMessagesSentDataSets()
+        from PipelineTS.dataset import LoadMessagesSent
+        data = LoadMessagesSent()
         assert isinstance(data, pd.DataFrame)
         assert len(data) > 0
 
