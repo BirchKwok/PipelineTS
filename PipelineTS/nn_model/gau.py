@@ -1,9 +1,9 @@
-from PipelineTS.spinesTS.nn import GAUNet
+from PipelineTS.nn_model.backbones import GAUNet
 from spinesUtils.asserts import generate_function_kwargs
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class GAUModel(SpinesNNModelMixin):
+class GAUModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -94,7 +94,7 @@ class GAUModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.GAUNet
+        model : PipelineTS.nn_model.backbones.GAUNet
             The GAUNet neural network model.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
@@ -155,7 +155,7 @@ class GAUModel(SpinesNNModelMixin):
 
         Returns
         -------
-        spinesTS.nn.GAUNet
+        PipelineTS.nn_model.backbones.GAUNet
             The GAUNet neural network model.
         """
         return GAUNet(**self.all_configs['model_configs'])

@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import NLinear
+from PipelineTS.nn_model.backbones import NLinear
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class NLinearModel(SpinesNNModelMixin):
+class NLinearModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -38,7 +38,7 @@ class NLinearModel(SpinesNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        NLinearModel: A wrapper for the NLinear model from spinesTS with additional features.
+        NLinearModel: A wrapper for the NLinear model from PipelineTS backbones with additional features.
 
         Parameters
         ----------
@@ -85,8 +85,8 @@ class NLinearModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.NLinear
-            The NLinear model from spinesTS.
+        model : PipelineTS.nn_model.backbones.NLinear
+            The NLinear model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -140,11 +140,11 @@ class NLinearModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the NLinear model from spinesTS.
+        Define the NLinear backbone model.
 
         Returns
         -------
-        spinesTS.nn.NLinear
+        PipelineTS.nn_model.backbones.NLinear
             The NLinear model.
         """
         return NLinear(**self.all_configs['model_configs'])

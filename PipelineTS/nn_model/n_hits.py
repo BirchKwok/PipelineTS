@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import NHiTS
+from PipelineTS.nn_model.backbones import NHiTS
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class NHitsModel(SpinesNNModelMixin):
+class NHitsModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -44,7 +44,7 @@ class NHitsModel(SpinesNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        NHitsModel: A wrapper for the N-HiTS model from spinesTS.
+        NHitsModel: A wrapper for the N-HiTS model from PipelineTS backbones.
 
         Parameters
         ----------
@@ -103,8 +103,8 @@ class NHitsModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.NHiTS
-            The N-HiTS model from spinesTS.
+        model : PipelineTS.nn_model.backbones.NHiTS
+            The N-HiTS model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -164,11 +164,11 @@ class NHitsModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the N-HiTS model from spinesTS.
+        Define the N-HiTS backbone model.
 
         Returns
         -------
-        spinesTS.nn.NHiTS
+        PipelineTS.nn_model.backbones.NHiTS
             The N-HiTS model.
         """
         return NHiTS(**self.all_configs['model_configs'])

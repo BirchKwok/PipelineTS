@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from PipelineTS.nn_model import DLinearModel, NLinearModel
-from PipelineTS.spinesTS.backends import is_mlx_available, is_torch_available
+from PipelineTS.nn_model.backends import is_mlx_available, is_torch_available
 
 
 def make_data(n=48):

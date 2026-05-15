@@ -1857,7 +1857,7 @@ class Executor:
             return "No model trained. Train a model first."
 
         from PipelineTS.evaluation import Backtester
-        from PipelineTS.spinesTS.metrics import mae
+        from PipelineTS.metrics import mae
 
         if model_name:
             if self.session.model_type == "pipeline":

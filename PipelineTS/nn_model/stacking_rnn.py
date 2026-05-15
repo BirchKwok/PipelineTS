@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import StackingRNN
+from PipelineTS.nn_model.backbones import StackingRNN
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class StackingRNNModel(SpinesNNModelMixin):
+class StackingRNNModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -37,7 +37,7 @@ class StackingRNNModel(SpinesNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        StackingRNNModel: A wrapper for the StackingRNN model from the spinesTS library with additional features.
+        StackingRNNModel: A wrapper for the StackingRNN model from PipelineTS backbones with additional features.
 
         Parameters
         ----------
@@ -80,8 +80,8 @@ class StackingRNNModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.StackingRNN
-            The StackingRNN model from the spinesTS library.
+        model : PipelineTS.nn_model.backbones.StackingRNN
+            The StackingRNN model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -134,11 +134,11 @@ class StackingRNNModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the StackingRNN model from the spinesTS library.
+        Define the StackingRNN backbone model.
 
         Returns
         -------
-        spinesTS.nn.StackingRNN
-            The StackingRNN model from the spinesTS library.
+        PipelineTS.nn_model.backbones.StackingRNN
+            The StackingRNN model from PipelineTS backbones.
         """
         return StackingRNN(**self.all_configs['model_configs'])

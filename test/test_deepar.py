@@ -1,8 +1,8 @@
 """
-Test suite for DeepAR model (spinesTS backend + PipelineTS wrapper).
+Test suite for DeepAR backbone and PipelineTS wrapper.
 
 Tests:
-1. SpinesTS DeepAR: low-level fit/predict with Gaussian NLL
+1. DeepAR backbone: low-level fit/predict with Gaussian NLL
 2. PipelineTS DeepARModel: full pipeline with interval prediction
 3. Point prediction (quantile=None)
 4. Predict with external data
@@ -54,12 +54,12 @@ def _check_prediction(result, target_col='value', time_col='date',
     assert not result[target_col].isna().any(), "Predictions contain NaN"
 
 
-# ─── SpinesTS Core DeepAR Tests ─────────────────────────────────────────────
+# ─── DeepAR Backbone Tests ──────────────────────────────────────────────────
 
-class TestSpinesTSDeepAR:
+class TestDeepARBackbone:
     def test_fit_predict(self):
-        """Test basic fit and predict at spinesTS level."""
-        from PipelineTS.spinesTS.nn import DeepAR
+        """Test basic fit and predict at backbone level."""
+        from PipelineTS.nn_model.backbones import DeepAR
         model = DeepAR(
             in_features=10, out_features=10,
             d_model=32, n_blocks=2, n_rwkv_blocks=2,
@@ -73,7 +73,7 @@ class TestSpinesTSDeepAR:
 
     def test_gaussian_output_during_training(self):
         """Test that model outputs [mu | sigma] during training forward pass."""
-        from PipelineTS.spinesTS.nn._deepar import DeepARBlock
+        from PipelineTS.nn_model.backbones._deepar import DeepARBlock
         import torch
         block = DeepARBlock(in_features=10, out_features=5, d_model=16)
         block._return_distribution = True
@@ -84,7 +84,7 @@ class TestSpinesTSDeepAR:
 
     def test_point_prediction_mode(self):
         """Test that setting _return_distribution=False gives point predictions."""
-        from PipelineTS.spinesTS.nn._deepar import DeepARBlock
+        from PipelineTS.nn_model.backbones._deepar import DeepARBlock
         import torch
         block = DeepARBlock(in_features=10, out_features=5, d_model=16)
         block._return_distribution = False
@@ -94,7 +94,7 @@ class TestSpinesTSDeepAR:
 
     def test_gaussian_nll_loss(self):
         """Test GaussianNLLLossFn computes valid loss."""
-        from PipelineTS.spinesTS.nn._deepar import GaussianNLLLossFn
+        from PipelineTS.nn_model.backbones._deepar import GaussianNLLLossFn
         import torch
         loss_fn = GaussianNLLLossFn()
         # pred = [mu | sigma], target = y

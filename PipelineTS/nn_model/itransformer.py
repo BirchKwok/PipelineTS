@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import ITransformer
+from PipelineTS.nn_model.backbones import ITransformer
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesMultivariateNNModelMixin
+from PipelineTS.base.model_mixins import MultivariateNNForecastingMixin
 
 
-class ITransformerModel(SpinesMultivariateNNModelMixin):
+class ITransformerModel(MultivariateNNForecastingMixin):
     _train_on_all_features = True
 
     def __init__(
@@ -48,7 +48,7 @@ class ITransformerModel(SpinesMultivariateNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        ITransformerModel: A wrapper for the ITransformer model from spinesTS.
+        ITransformerModel: A wrapper for the ITransformer model from PipelineTS backbones.
 
         The ITransformer (Inverted Transformer) treats each variate as a token
         and applies attention across variates instead of time steps.
@@ -126,8 +126,8 @@ class ITransformerModel(SpinesMultivariateNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.ITransformer
-            The ITransformer model from spinesTS.
+        model : PipelineTS.nn_model.backbones.ITransformer
+            The ITransformer model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col,
                          feature_cols=feature_cols, accelerator=accelerator)
@@ -189,11 +189,11 @@ class ITransformerModel(SpinesMultivariateNNModelMixin):
 
     def _define_model(self):
         """
-        Define the ITransformer model from spinesTS.
+        Define the ITransformer model from PipelineTS backbones.
 
         Returns
         -------
-        spinesTS.nn.ITransformer
+        PipelineTS.nn_model.backbones.ITransformer
             The ITransformer model.
         """
         return ITransformer(**self.all_configs['model_configs'])

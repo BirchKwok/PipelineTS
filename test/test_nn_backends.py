@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from PipelineTS.spinesTS.backends import resolve_nn_backend
+from PipelineTS.nn_model.backends import resolve_nn_backend
 
 
 @pytest.fixture(scope='module')

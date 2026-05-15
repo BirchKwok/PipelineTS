@@ -58,7 +58,7 @@ class WeightedEnsemble:
             self.weights = [1.0 / len(models)] * len(models)
 
         if metric is None:
-            from PipelineTS.spinesTS.metrics import mae
+            from PipelineTS.metrics import mae
             self.metric = mae
         else:
             self.metric = metric

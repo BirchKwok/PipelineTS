@@ -19,7 +19,7 @@ from PipelineTS.nn_model import (
     TransformerModel,
 )
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
-from PipelineTS.spinesTS.backends import is_mlx_available, is_torch_available, resolve_nn_backend
+from PipelineTS.nn_model.backends import is_mlx_available, is_torch_available, resolve_nn_backend
 
 
 def make_data(n=56):

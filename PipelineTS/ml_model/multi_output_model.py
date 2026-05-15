@@ -1,20 +1,20 @@
 import numpy as np
 import pandas as pd
 
-from PipelineTS.spinesTS.ml_model import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
+from PipelineTS.ml_model.regressor_wrappers import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
 from sklearn.multioutput import RegressorChain
-from PipelineTS.spinesTS.preprocessing import split_series, lag_splits
+from PipelineTS.preprocessing.sequence import split_series, lag_splits
 from sklearn.ensemble import ExtraTreesRegressor as _DefaultEstimator
 from spinesUtils.asserts import generate_function_kwargs, ParameterTypeAssert, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
-from PipelineTS.spinesTS.pipeline import Pipeline
+from PipelineTS.ml_model.estimator_pipeline import Pipeline
 
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
-from PipelineTS.base.spines_base import SpinesMLModelMixin
+from PipelineTS.base.model_mixins import MLForecastingMixin
 from PipelineTS.utils import check_time_col_is_timestamp, infer_freq, make_future_dates
 
 
-class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
+class _MultiOutputModelMixin(GBDTModelMixin, IntervalEstimationMixin, MLForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -303,7 +303,7 @@ class MultiOutputRegressorModel(_MultiOutputModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.pipeline.Pipeline
+        model : PipelineTS.ml_model.estimator_pipeline.Pipeline
             The pipeline containing the multi-output regressor model.
         """
         super().__init__(
@@ -322,7 +322,7 @@ class MultiOutputRegressorModel(_MultiOutputModelMixin):
 
         Returns
         -------
-        spinesTS.pipeline.Pipeline
+        PipelineTS.ml_model.estimator_pipeline.Pipeline
             The pipeline containing the multi-output regressor model.
         """
         return Pipeline([
@@ -360,7 +360,7 @@ class MultiStepRegressorModel(_MultiOutputModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.pipeline.Pipeline
+        model : PipelineTS.ml_model.estimator_pipeline.Pipeline
             The pipeline containing the multi-step regressor model.
         """
         super().__init__(
@@ -379,7 +379,7 @@ class MultiStepRegressorModel(_MultiOutputModelMixin):
 
         Returns
         -------
-        spinesTS.pipeline.Pipeline
+        PipelineTS.ml_model.estimator_pipeline.Pipeline
             The pipeline containing the multi-step regressor model.
         """
         return Pipeline([

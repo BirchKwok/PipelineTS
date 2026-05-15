@@ -7,7 +7,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from PipelineTS.spinesTS.backends import is_mlx_available, is_torch_available, resolve_nn_backend
+from PipelineTS.nn_model.backends import is_mlx_available, is_torch_available, resolve_nn_backend
 
 warnings.filterwarnings('ignore')
 

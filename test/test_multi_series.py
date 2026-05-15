@@ -13,7 +13,7 @@ sys.path.insert(0, '.')
 
 import numpy as np
 import pandas as pd
-from PipelineTS.spinesTS.preprocessing import (
+from PipelineTS.preprocessing import (
     split_series_panel, lag_splits_panel, split_series, lag_splits
 )
 

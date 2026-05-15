@@ -303,7 +303,7 @@ pipeline = ModelPipeline(..., scaler=None)
 ## Custom Evaluation Metric / 自定义评估指标
 
 ```python
-from PipelineTS.spinesTS.metrics import rmse, wmape
+from PipelineTS.metrics import rmse, wmape
 
 pipeline = ModelPipeline(
     ...,

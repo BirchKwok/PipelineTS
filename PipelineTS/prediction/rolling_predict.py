@@ -144,7 +144,7 @@ class RollingPredictor:
         if verbose:
             y_true = combined[f'{self.target_col}_actual'].values
             y_pred = combined[self.target_col].values
-            from PipelineTS.spinesTS.metrics import mae
+            from PipelineTS.metrics import mae
             print(f"\n  Rolling MAE: {mae(y_true, y_pred):.4f} "
                   f"({window_id} windows, {len(combined)} predictions)")
 
@@ -170,7 +170,7 @@ class RollingPredictor:
             {metric_name: {'overall': float, 'per_window': list}}
         """
         if metrics is None:
-            from PipelineTS.spinesTS.metrics import mae, rmse
+            from PipelineTS.metrics import mae, rmse
             metrics = {'MAE': mae, 'RMSE': rmse}
 
         y_true = results[f'{self.target_col}_actual'].values

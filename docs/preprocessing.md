@@ -142,7 +142,7 @@ Convert time series data into supervised learning format (X, y).
 ### Univariate Splitting / 单变量分割
 
 ```python
-from PipelineTS.spinesTS.preprocessing import split_series, train_test_split_ts
+from PipelineTS.preprocessing import split_series, train_test_split_ts
 import numpy as np
 
 series = np.sin(np.linspace(0, 4 * np.pi, 100))
@@ -160,7 +160,7 @@ X_train, X_test, y_train, y_test = train_test_split_ts(X, y, train_size=0.8)
 ### Multivariate Splitting / 多变量分割
 
 ```python
-from PipelineTS.spinesTS.preprocessing import split_series_multivariate
+from PipelineTS.preprocessing import split_series_multivariate
 
 # 3D input: (timesteps, n_variables)
 # 三维输入：（时间步数，变量数）
@@ -485,8 +485,7 @@ for train_df, test_df in TimeSeriesSplit.sliding_window(
 ### Point Prediction Metrics / 点预测指标
 
 ```python
-from PipelineTS.spinesTS.metrics import mae, mse, rmse, wmape
-from PipelineTS.metrics import mape, smape, mase, r2_score, medae
+from PipelineTS.metrics import mae, mse, rmse, wmape, mape, smape, mase, r2_score, medae
 import numpy as np
 
 y_true = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -508,10 +507,10 @@ print(f"MASE:  {mase(y_true, y_pred, y_train, seasonality=1):.4f}")
 
 | Metric / 指标 | Import / 导入 | Description / 描述 |
 |---|---|---|
-| MAE | `spinesTS.metrics` | Mean Absolute Error / 平均绝对误差 |
-| MSE | `spinesTS.metrics` | Mean Squared Error / 均方误差 |
-| RMSE | `spinesTS.metrics` | Root Mean Squared Error / 均方根误差 |
-| WMAPE | `spinesTS.metrics` | Weighted Mean Absolute Percentage Error / 加权平均绝对百分比误差 |
+| MAE | `PipelineTS.metrics` | Mean Absolute Error / 平均绝对误差 |
+| MSE | `PipelineTS.metrics` | Mean Squared Error / 均方误差 |
+| RMSE | `PipelineTS.metrics` | Root Mean Squared Error / 均方根误差 |
+| WMAPE | `PipelineTS.metrics` | Weighted Mean Absolute Percentage Error / 加权平均绝对百分比误差 |
 | MAPE | `PipelineTS.metrics` | Mean Absolute Percentage Error / 平均绝对百分比误差 |
 | sMAPE | `PipelineTS.metrics` | Symmetric MAPE / 对称 MAPE |
 | MASE | `PipelineTS.metrics` | Mean Absolute Scaled Error / 平均绝对缩放误差 |

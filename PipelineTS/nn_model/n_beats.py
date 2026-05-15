@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import NBeats
+from PipelineTS.nn_model.backbones import NBeats
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class NBeatsModel(SpinesNNModelMixin):
+class NBeatsModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -45,7 +45,7 @@ class NBeatsModel(SpinesNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        NBeatsModel: A wrapper for the N-BEATS model from spinesTS.
+        NBeatsModel: A wrapper for the N-BEATS model from PipelineTS backbones.
 
         Parameters
         ----------
@@ -106,8 +106,8 @@ class NBeatsModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.NBeats
-            The N-BEATS model from spinesTS.
+        model : PipelineTS.nn_model.backbones.NBeats
+            The N-BEATS model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -168,11 +168,11 @@ class NBeatsModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the N-BEATS model from spinesTS.
+        Define the N-BEATS backbone model.
 
         Returns
         -------
-        spinesTS.nn.NBeats
+        PipelineTS.nn_model.backbones.NBeats
             The N-BEATS model.
         """
         return NBeats(**self.all_configs['model_configs'])

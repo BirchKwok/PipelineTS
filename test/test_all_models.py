@@ -274,11 +274,11 @@ class TestAutoARIMAModel:
         _check_prediction(result, check_interval=False)
 
 
-# ─── SpinesTS Core NN Model Tests ────────────────────────────────────────────
+# ─── PipelineTS NN Backbone Model Tests ──────────────────────────────────────
 
-class TestSpinesTSNLinear:
+class TestBackboneNLinear:
     def test_fit_predict(self):
-        from PipelineTS.spinesTS.nn import NLinear
+        from PipelineTS.nn_model.backbones import NLinear
         model = NLinear(in_features=10, out_features=10, loss_fn='mae', random_seed=42)
         X = np.random.randn(50, 10).astype(np.float32)
         y = np.random.randn(50, 10).astype(np.float32)
@@ -287,9 +287,9 @@ class TestSpinesTSNLinear:
         assert pred.shape == (1, 10)
 
 
-class TestSpinesTSDLinear:
+class TestBackboneDLinear:
     def test_fit_predict(self):
-        from PipelineTS.spinesTS.nn import DLinear
+        from PipelineTS.nn_model.backbones import DLinear
         model = DLinear(in_features=10, out_features=10, loss_fn='mae', random_seed=42)
         X = np.random.randn(50, 10).astype(np.float32)
         y = np.random.randn(50, 10).astype(np.float32)
@@ -298,9 +298,9 @@ class TestSpinesTSDLinear:
         assert pred.shape == (1, 10)
 
 
-class TestSpinesTSNBeats:
+class TestBackboneNBeats:
     def test_fit_predict(self):
-        from PipelineTS.spinesTS.nn import NBeats
+        from PipelineTS.nn_model.backbones import NBeats
         model = NBeats(
             in_features=10, out_features=10, num_stacks=1,
             num_blocks=1, num_layers=2, layer_widths=32,
@@ -313,9 +313,9 @@ class TestSpinesTSNBeats:
         assert pred.shape == (1, 10)
 
 
-class TestSpinesTSNHiTS:
+class TestBackboneNHiTS:
     def test_fit_predict(self):
-        from PipelineTS.spinesTS.nn import NHiTS
+        from PipelineTS.nn_model.backbones import NHiTS
         model = NHiTS(
             in_features=10, out_features=10, num_stacks=2,
             num_blocks=1, layer_widths=32,
@@ -328,9 +328,9 @@ class TestSpinesTSNHiTS:
         assert pred.shape == (1, 10)
 
 
-class TestSpinesTSTransformer:
+class TestBackboneTransformer:
     def test_fit_predict(self):
-        from PipelineTS.spinesTS.nn import TSTransformer
+        from PipelineTS.nn_model.backbones import TSTransformer
         model = TSTransformer(
             in_features=10, out_features=10, d_model=16,
             nhead=2, num_encoder_layers=1,
@@ -343,9 +343,9 @@ class TestSpinesTSTransformer:
         assert pred.shape == (1, 10)
 
 
-class TestSpinesTSTFT:
+class TestBackboneTFT:
     def test_fit_predict(self):
-        from PipelineTS.spinesTS.nn import TFT
+        from PipelineTS.nn_model.backbones import TFT
         model = TFT(
             in_features=10, out_features=10, hidden_size=16,
             n_heads=2, loss_fn='mae', random_seed=42
@@ -357,9 +357,9 @@ class TestSpinesTSTFT:
         assert pred.shape == (1, 10)
 
 
-class TestSpinesTSTiDE:
+class TestBackboneTiDE:
     def test_fit_predict(self):
-        from PipelineTS.spinesTS.nn import TiDE
+        from PipelineTS.nn_model.backbones import TiDE
         model = TiDE(
             in_features=10, out_features=10, hidden_size=32,
             loss_fn='mae', random_seed=42

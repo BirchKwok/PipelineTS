@@ -8,8 +8,8 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.base import TransformerMixin
 from frozendict import frozendict
 
-from PipelineTS.spinesTS.base import detect_available_device
-from PipelineTS.spinesTS.metrics import mae
+from PipelineTS.base import detect_available_device
+from PipelineTS.metrics import mae
 from spinesUtils.asserts import (
     ParameterTypeAssert,
     ParameterValuesAssert,

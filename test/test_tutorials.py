@@ -346,7 +346,7 @@ class TestTutorial04AdvancedPipeline:
 
     def test_custom_metric(self, base_data):
         from PipelineTS.pipeline import ModelPipeline
-        from PipelineTS.spinesTS.metrics import rmse
+        from PipelineTS.metrics import rmse
         pipeline = ModelPipeline(
             time_col='date', target_col='value', lags=LAGS,
             include_models=['catboost', 'random_forest'],
@@ -415,7 +415,7 @@ class TestTutorial05Preprocessing:
             assert recovered.shape == X.shape
 
     def test_split_series(self):
-        from PipelineTS.spinesTS.preprocessing import (
+        from PipelineTS.preprocessing import (
             split_series, train_test_split_ts,
         )
         series = np.sin(np.linspace(0, 4 * np.pi, 100))
@@ -426,14 +426,14 @@ class TestTutorial05Preprocessing:
         assert X_tr.shape[0] + X_te.shape[0] == X.shape[0]
 
     def test_split_series_multivariate(self):
-        from PipelineTS.spinesTS.preprocessing import split_series_multivariate
+        from PipelineTS.preprocessing import split_series_multivariate
         multi = np.random.randn(100, 3).astype(np.float32)
         X, y = split_series_multivariate(multi, multi, window_size=10, pred_steps=5)
         assert X.ndim == 3
         assert X.shape[2] == 3
 
     def test_metrics(self):
-        from PipelineTS.spinesTS.metrics import mae, mse, rmse, wmape
+        from PipelineTS.metrics import mae, mse, rmse, wmape
         yt = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         yp = np.array([1.1, 2.2, 2.8, 4.1, 5.3])
         assert mae(yt, yp) > 0

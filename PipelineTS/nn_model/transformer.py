@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import TSTransformer
+from PipelineTS.nn_model.backbones import TSTransformer
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class TransformerModel(SpinesNNModelMixin):
+class TransformerModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -43,7 +43,7 @@ class TransformerModel(SpinesNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        TransformerModel: A wrapper for the Transformer model from spinesTS.
+        TransformerModel: A wrapper for the Transformer model from PipelineTS backbones.
 
         Parameters
         ----------
@@ -98,8 +98,8 @@ class TransformerModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.TSTransformer
-            The Transformer model from spinesTS.
+        model : PipelineTS.nn_model.backbones.TSTransformer
+            The Transformer model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -158,11 +158,11 @@ class TransformerModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the Transformer model from spinesTS.
+        Define the Transformer model from PipelineTS backbones.
 
         Returns
         -------
-        spinesTS.nn.TSTransformer
+        PipelineTS.nn_model.backbones.TSTransformer
             The Transformer model.
         """
         return TSTransformer(**self.all_configs['model_configs'])

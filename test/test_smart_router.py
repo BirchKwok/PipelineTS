@@ -1383,7 +1383,7 @@ def test_stability_params_in_model_wrapper():
 def test_sinkhorn_residual_gate():
     """Test mHC-inspired SinkhornResidualGate module."""
     import torch
-    from PipelineTS.spinesTS.base._torch_mixin import SinkhornResidualGate
+    from PipelineTS.base.torch_mixin import SinkhornResidualGate
 
     base = torch.nn.Linear(16, 16)
     gate = SinkhornResidualGate(base, in_features=16, out_features=16)

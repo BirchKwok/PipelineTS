@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import TFT
+from PipelineTS.nn_model.backbones import TFT
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class TFTModel(SpinesNNModelMixin):
+class TFTModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -41,7 +41,7 @@ class TFTModel(SpinesNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        TFTModel: A wrapper for the TFT model from spinesTS with additional features.
+        TFTModel: A wrapper for the TFT model from PipelineTS backbones with additional features.
 
         Parameters
         ----------
@@ -94,8 +94,8 @@ class TFTModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.TFT
-            The TFT model from spinesTS.
+        model : PipelineTS.nn_model.backbones.TFT
+            The TFT model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -152,11 +152,11 @@ class TFTModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the TFT model from spinesTS.
+        Define the TFT model from PipelineTS backbones.
 
         Returns
         -------
-        spinesTS.nn.TFT
+        PipelineTS.nn_model.backbones.TFT
             The TFT model.
         """
         return TFT(**self.all_configs['model_configs'])

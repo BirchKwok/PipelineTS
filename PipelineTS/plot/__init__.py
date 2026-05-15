@@ -187,3 +187,5 @@ def plot_single_series(series, time_col, target_col, label=None, date_fmt='%Y-%m
 
     # Display the plot
     plt.show()
+
+from PipelineTS.plot.basic import plot1d, plot2d

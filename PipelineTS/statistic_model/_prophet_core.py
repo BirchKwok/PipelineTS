@@ -210,7 +210,7 @@ def _build_seasonality_features(t, periods, n_fourier=5):
     return np.column_stack(features)
 
 
-class SpinesProphet:
+class PipelineProphet:
     """Modern Prophet-like decomposable time series model.
 
     Model (additive):       y(t) = g(t) + s(t) + ε(t)

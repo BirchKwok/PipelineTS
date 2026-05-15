@@ -8,7 +8,7 @@ optional and lazily instantiated.
 import pandas as pd
 from typing import Optional, Union
 
-from PipelineTS.spinesTS.features_generator import DateExtendFeatures
+from PipelineTS.feature_engineering.calendar_features import DateExtendFeatures
 from .fourier_features import FourierFeatures
 from .holiday_features import HolidayFeatures
 from .lag_features import LagFeatureExtractor

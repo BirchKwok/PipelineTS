@@ -1,4 +1,4 @@
-from PipelineTS.spinesTS.data import (
+from PipelineTS.datasets import (
     DataGenerator,
     RandomEventGenerator,
     LoadElectric,
@@ -6,5 +6,5 @@ from PipelineTS.spinesTS.data import (
     LoadMessagesSent,
     LoadWebSales,
     LoadSupermarketIncoming,
-    BuiltInSeriesData
+    BuiltInSeriesData,
 )

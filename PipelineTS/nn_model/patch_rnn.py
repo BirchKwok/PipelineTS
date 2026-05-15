@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import PatchRNN
+from PipelineTS.nn_model.backbones import PatchRNN
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class PatchRNNModel(SpinesNNModelMixin):
+class PatchRNNModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -38,7 +38,7 @@ class PatchRNNModel(SpinesNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        PatchRNNModel: A wrapper for the PatchRNN model from the spinesTS library with additional features.
+        PatchRNNModel: A wrapper for the PatchRNN model from PipelineTS backbones with additional features.
 
         Parameters
         ----------
@@ -83,8 +83,8 @@ class PatchRNNModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.PatchRNN
-            The PatchRNN model from the spinesTS library.
+        model : PipelineTS.nn_model.backbones.PatchRNN
+            The PatchRNN model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -138,11 +138,11 @@ class PatchRNNModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the PatchRNN model from the spinesTS library.
+        Define the PatchRNN backbone model.
 
         Returns
         -------
-        spinesTS.nn.PatchRNN
-            The PatchRNN model from the spinesTS library.
+        PipelineTS.nn_model.backbones.PatchRNN
+            The PatchRNN model from PipelineTS backbones.
         """
         return PatchRNN(**self.all_configs['model_configs'])

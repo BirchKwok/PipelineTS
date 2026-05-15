@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import Time2VecNet
+from PipelineTS.nn_model.backbones import Time2VecNet
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class Time2VecModel(SpinesNNModelMixin):
+class Time2VecModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -78,8 +78,8 @@ class Time2VecModel(SpinesNNModelMixin):
         ----------
         x : None
             Placeholder for input data (not used in this implementation).
-        model : spinesTS.nn.Time2VecNet
-            The Time2VecNet model from the spinesTS library.
+        model : PipelineTS.nn_model.backbones.Time2VecNet
+            The Time2VecNet model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -130,11 +130,11 @@ class Time2VecModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the Time2VecNet model from the spinesTS library.
+        Define the Time2VecNet model from PipelineTS backbones.
 
         Returns
         -------
-        spinesTS.nn.Time2VecNet
-            The Time2VecNet model from the spinesTS library.
+        PipelineTS.nn_model.backbones.Time2VecNet
+            The Time2VecNet model from PipelineTS backbones.
         """
         return Time2VecNet(**self.all_configs['model_configs'])

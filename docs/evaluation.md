@@ -17,7 +17,7 @@ The model is deep-copied per fold to avoid state leakage between folds.
 ```python
 from PipelineTS.evaluation import Backtester
 from PipelineTS.ml_model import TorchBoostingForestModel
-from PipelineTS.spinesTS.metrics import mae
+from PipelineTS.metrics import mae
 
 model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
 

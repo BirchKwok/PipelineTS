@@ -33,7 +33,7 @@ def make_series(n=600, seed=42, freq="D"):
 
 
 def bench_split_series(n, lags, repeat):
-    from PipelineTS.spinesTS.preprocessing import (
+    from PipelineTS.preprocessing.sequence import (
         lag_splits,
         split_series,
         split_series_multivariate,

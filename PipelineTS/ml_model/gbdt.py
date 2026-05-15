@@ -4,13 +4,13 @@ from spinesUtils.asserts import ParameterTypeAssert
 from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import gc_collector
 
-from PipelineTS.spinesTS.preprocessing import split_series, lag_splits, split_series_panel, lag_splits_panel
+from PipelineTS.preprocessing import split_series, lag_splits, split_series_panel, lag_splits_panel
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
-from PipelineTS.base.spines_base import SpinesMLModelMixin
+from PipelineTS.base.model_mixins import MLForecastingMixin
 from PipelineTS.utils import check_time_col_is_timestamp, infer_freq, make_future_dates
 
 
-class _DirectGBDTMixin(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
+class _DirectGBDTMixin(GBDTModelMixin, IntervalEstimationMixin, MLForecastingMixin):
     """Base mixin for direct GBDT forecasting using lag features.
 
     Uses native ML libraries directly with RegressorChain for multi-step output.

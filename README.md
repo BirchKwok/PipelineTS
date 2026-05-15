@@ -10,8 +10,8 @@
 One-stop time series analysis tool, supporting data preprocessing, feature engineering, model training, model evaluation, and forecasting.
 一站式时间序列分析工具，支持数据预处理、特征工程、模型训练、模型评估与预测。
 
-Built on top of spinesTS, it provides a unified interface for 26 time series models with automatic model selection, conformal prediction intervals, multivariate forecasting, and rich visualization with Chinese font support.
-基于 spinesTS 构建，提供 26 种时间序列模型的统一接口，支持自动模型选择、保形预测区间、多变量预测，以及支持中文字体的丰富可视化。
+Built as an integrated PipelineTS forecasting stack, it provides a unified interface for 26 time series models with automatic model selection, conformal prediction intervals, multivariate forecasting, and rich visualization with Chinese font support.
+作为一体化 PipelineTS 预测栈构建，提供 26 种时间序列模型的统一接口，支持自动模型选择、保形预测区间、多变量预测，以及支持中文字体的丰富可视化。
 
 ---
 
@@ -632,8 +632,7 @@ df = lf.transform(data)
 ### Point Forecast Metrics / 点预测指标
 
 ```python
-from PipelineTS.metrics import mape, smape, mase, r2_score, medae
-from PipelineTS.spinesTS.metrics import mae, mse, rmse, wmape
+from PipelineTS.metrics import mae, mse, rmse, wmape, mape, smape, mase, r2_score, medae
 import numpy as np
 
 y_true = np.array([100, 200, 300, 400, 500], dtype=np.float64)
@@ -677,7 +676,7 @@ Walk-forward backtesting evaluates model performance by simulating sequential re
 ```python
 from PipelineTS.evaluation import Backtester
 from PipelineTS.ml_model import TorchBoostingForestModel
-from PipelineTS.spinesTS.metrics import mae
+from PipelineTS.metrics import mae
 
 model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
 bt = Backtester(model, time_col='date', target_col='value', metric=mae, metric_name='MAE')
@@ -742,7 +741,7 @@ Built-in hyperparameter tuning using Optuna (with random search fallback).
 ```python
 from PipelineTS.training import AutoTune
 from PipelineTS.ml_model import TorchBoostingForestModel
-from PipelineTS.spinesTS.metrics import mae
+from PipelineTS.metrics import mae
 
 tuner = AutoTune(
     model_class=TorchBoostingForestModel,

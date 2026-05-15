@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import TiDE
+from PipelineTS.nn_model.backbones import TiDE
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class TiDEModel(SpinesNNModelMixin):
+class TiDEModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -43,7 +43,7 @@ class TiDEModel(SpinesNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        TiDEModel: A wrapper for the TiDE model from spinesTS with additional features.
+        TiDEModel: A wrapper for the TiDE model from PipelineTS backbones with additional features.
 
         Parameters
         ----------
@@ -100,8 +100,8 @@ class TiDEModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.TiDE
-            The TiDE model from spinesTS.
+        model : PipelineTS.nn_model.backbones.TiDE
+            The TiDE model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -160,11 +160,11 @@ class TiDEModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the TiDE model from spinesTS.
+        Define the TiDE backbone model.
 
         Returns
         -------
-        spinesTS.nn.TiDE
+        PipelineTS.nn_model.backbones.TiDE
             The TiDE model.
         """
         return TiDE(**self.all_configs['model_configs'])

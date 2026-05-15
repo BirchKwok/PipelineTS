@@ -39,7 +39,7 @@ class AutoTune:
     Examples
     --------
     >>> from PipelineTS.ml_model import TorchBoostingForestModel
-    >>> from PipelineTS.spinesTS.metrics import mae
+    >>> from PipelineTS.metrics import mae
     >>> tuner = AutoTune(
     ...     model_class=TorchBoostingForestModel,
     ...     time_col='date', target_col='value', lags=12,

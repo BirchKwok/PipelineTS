@@ -3,7 +3,7 @@ import pandas as pd
 from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
-from PipelineTS.statistic_model._prophet_core import SpinesProphet
+from PipelineTS.statistic_model._prophet_core import PipelineProphet
 from PipelineTS.utils import check_time_col_is_timestamp
 
 
@@ -96,7 +96,7 @@ class ProphetModel(StatisticModelMixin, IntervalEstimationMixin):
         self.last_dt = None
 
     def _define_model(self):
-        return SpinesProphet(
+        return PipelineProphet(
             n_changepoints=self.all_configs['n_changepoints'],
             changepoint_prior_scale=self.all_configs['changepoint_prior_scale'],
             seasonality_prior_scale=self.all_configs['seasonality_prior_scale'],

@@ -2,7 +2,7 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from PipelineTS.spinesTS.ml_model import GBRTPreprocessing
+from PipelineTS.ml_model.wide_gbrt_preprocessing import GBRTPreprocessing
 from sklearn.multioutput import RegressorChain
 from sklearn.ensemble import ExtraTreesRegressor as _DefaultEstimator
 from spinesUtils.asserts import generate_function_kwargs, ParameterValuesAssert
@@ -10,11 +10,11 @@ from spinesUtils.asserts import raise_if_not
 from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
-from PipelineTS.base.spines_base import SpinesMLModelMixin
+from PipelineTS.base.model_mixins import MLForecastingMixin
 from PipelineTS.utils import check_time_col_is_timestamp, infer_freq, make_future_dates
 
 
-class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin):
+class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, MLForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -61,7 +61,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, SpinesMLModelMixin)
         ----------
         estimator : BaseEstimator
             The base estimator for the GBRT model.
-        processor : spinesTS.ml_model.GBRTPreprocessing
+        processor : PipelineTS.ml_model.wide_gbrt_preprocessing.GBRTPreprocessing
             The preprocessor for transforming input data.
         model : sklearn.multioutput.RegressorChain
             The GBRT model wrapped in a regressor chain.

@@ -1,7 +1,7 @@
 import numpy as np
 
-from PipelineTS.spinesTS.backends import is_torch_available
-from PipelineTS.spinesTS.backends._native_models import MLXNativeNN
+from PipelineTS.nn_model.backends import is_torch_available
+from PipelineTS.nn_model.backends._native_models import MLXNativeNN
 
 
 def count_np_params(params):
@@ -13,7 +13,7 @@ def count_torch_params(model):
 
 
 def check_tcn():
-    from PipelineTS.spinesTS.nn._tcn import TemporalConvNet
+    from PipelineTS.nn_model.backbones._tcn import TemporalConvNet
 
     cfg = {
         'in_features': 12,
@@ -32,7 +32,7 @@ def check_tcn():
 
 
 def check_nbeats(generic_architecture):
-    from PipelineTS.spinesTS.nn._n_beats import NBEATSBackbone
+    from PipelineTS.nn_model.backbones._n_beats import NBEATSBackbone
 
     cfg = {
         'in_features': 12,
@@ -57,7 +57,7 @@ def check_nbeats(generic_architecture):
 
 
 def check_nhits():
-    from PipelineTS.spinesTS.nn._n_hits import NHiTSBackbone
+    from PipelineTS.nn_model.backbones._n_hits import NHiTSBackbone
 
     cfg = {
         'in_features': 12,
@@ -80,7 +80,7 @@ def check_nhits():
 
 
 def check_transformer():
-    from PipelineTS.spinesTS.nn._transformer import TransformerBackbone
+    from PipelineTS.nn_model.backbones._transformer import TransformerBackbone
 
     cfg = {
         'in_features': 12,

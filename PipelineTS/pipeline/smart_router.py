@@ -20,7 +20,7 @@ from spinesUtils.asserts import ParameterTypeAssert, raise_if
 
 from PipelineTS.pipeline.pipeline import ModelPipeline
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
-from PipelineTS.spinesTS.metrics import mae
+from PipelineTS.metrics import mae
 from PipelineTS.dataset import (
     LoadElectric,
     LoadMessagesSentHour,
@@ -640,7 +640,7 @@ class SmartRouter:
 
         # Print device info once at the very beginning
         if self.verbose:
-            from PipelineTS.spinesTS.base._torch_mixin import detect_available_device
+            from PipelineTS.base.torch_mixin import detect_available_device
             _dev, _detail = detect_available_device(self.accelerator)
             _active = _dev.upper().replace(':', ' ').split()[0]
             self.logger.info(f"Accelerator: {_active}")

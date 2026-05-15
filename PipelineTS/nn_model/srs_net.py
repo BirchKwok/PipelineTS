@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import SRSNet
+from PipelineTS.nn_model.backbones import SRSNet
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesMultivariateNNModelMixin
+from PipelineTS.base.model_mixins import MultivariateNNForecastingMixin
 
 
-class SRSNetModel(SpinesMultivariateNNModelMixin):
+class SRSNetModel(MultivariateNNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -41,7 +41,7 @@ class SRSNetModel(SpinesMultivariateNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        SRSNetModel: A wrapper for the SRSNet model from spinesTS.
+        SRSNetModel: A wrapper for the SRSNet model from PipelineTS backbones.
 
         SRSNet (Selective Representation Space Network) uses multi-scale adaptive
         patching and selective representation via attention-based scoring and selection,
@@ -112,8 +112,8 @@ class SRSNetModel(SpinesMultivariateNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.SRSNet
-            The SRSNet model from spinesTS.
+        model : PipelineTS.nn_model.backbones.SRSNet
+            The SRSNet model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col,
                          feature_cols=feature_cols, accelerator=accelerator)
@@ -172,11 +172,11 @@ class SRSNetModel(SpinesMultivariateNNModelMixin):
 
     def _define_model(self):
         """
-        Define the SRSNet model from spinesTS.
+        Define the SRSNet model from PipelineTS backbones.
 
         Returns
         -------
-        spinesTS.nn.SRSNet
+        PipelineTS.nn_model.backbones.SRSNet
             The SRSNet model.
         """
         return SRSNet(**self.all_configs['model_configs'])

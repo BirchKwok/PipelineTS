@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import TCN
+from PipelineTS.nn_model.backbones import TCN
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class TCNModel(SpinesNNModelMixin):
+class TCNModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -39,7 +39,7 @@ class TCNModel(SpinesNNModelMixin):
             use_residual_gate=False,
     ):
         """
-        TCNModel: A wrapper for the TCN model from the spinesTS library with additional features.
+        TCNModel: A wrapper for the TCN model from PipelineTS backbones with additional features.
 
         Parameters
         ----------
@@ -84,8 +84,8 @@ class TCNModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.TCN
-            The TCN model from the spinesTS library.
+        model : PipelineTS.nn_model.backbones.TCN
+            The TCN model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -140,11 +140,11 @@ class TCNModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the TCN model from the spinesTS library.
+        Define the TCN model from PipelineTS backbones.
 
         Returns
         -------
-        spinesTS.nn.TCN
-            The TCN model from the spinesTS library.
+        PipelineTS.nn_model.backbones.TCN
+            The TCN model from PipelineTS backbones.
         """
         return TCN(**self.all_configs['model_configs'])

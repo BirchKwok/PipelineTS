@@ -479,7 +479,7 @@ TimeSeriesSplit.sliding_window(data, time_col, train_size, test_size, step)     
 ### Sequence Splitting / 序列分割
 
 ```python
-from PipelineTS.spinesTS.preprocessing import (
+from PipelineTS.preprocessing import (
     split_series,                # Univariate split / 单变量分割
     split_series_multivariate,   # Multivariate split / 多变量分割
     train_test_split_ts,         # Time-series train/test split / 时序训练/测试分割
@@ -549,8 +549,7 @@ lf.get_feature_names()       # Feature column names / 特征列名
 ### Point Metrics / 点指标
 
 ```python
-from PipelineTS.spinesTS.metrics import mae, mse, rmse, wmape
-from PipelineTS.metrics import mape, smape, mase, r2_score, medae
+from PipelineTS.metrics import mae, mse, rmse, wmape, mape, smape, mase, r2_score, medae
 ```
 
 | Function / 函数 | Description / 描述 |

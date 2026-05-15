@@ -80,7 +80,7 @@ class ModelComparison:
         ----------
         metrics : dict or None
             Mapping of {metric_name: callable(y_true, y_pred) -> float}.
-            If None, uses MAE and RMSE from spinesTS.
+            If None, uses MAE and RMSE from PipelineTS.metrics.
         interval_metrics : dict or None
             Mapping of {metric_name: callable(y_true, lower, upper) -> float}
             for interval evaluation. Applied only to models with interval results.
@@ -91,7 +91,7 @@ class ModelComparison:
             Comparison table with models as rows and metrics as columns.
         """
         if metrics is None:
-            from PipelineTS.spinesTS.metrics import mae, rmse
+            from PipelineTS.metrics import mae, rmse
             metrics = {'MAE': mae, 'RMSE': rmse}
 
         records = []

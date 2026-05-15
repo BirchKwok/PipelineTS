@@ -1,10 +1,10 @@
-from PipelineTS.spinesTS.nn import DeepAR
+from PipelineTS.nn_model.backbones import DeepAR
 from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.spines_base import SpinesNNModelMixin
+from PipelineTS.base.model_mixins import NNForecastingMixin
 
 
-class DeepARModel(SpinesNNModelMixin):
+class DeepARModel(NNForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -89,8 +89,8 @@ class DeepARModel(SpinesNNModelMixin):
 
         Attributes
         ----------
-        model : spinesTS.nn.DeepAR
-            The DeepAR model from the spinesTS library.
+        model : PipelineTS.nn_model.backbones.DeepAR
+            The DeepAR model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
@@ -142,11 +142,11 @@ class DeepARModel(SpinesNNModelMixin):
 
     def _define_model(self):
         """
-        Define the DeepAR model from the spinesTS library.
+        Define the DeepAR backbone model.
 
         Returns
         -------
-        spinesTS.nn.DeepAR
+        PipelineTS.nn_model.backbones.DeepAR
             The DeepAR model.
         """
         return DeepAR(**self.all_configs['model_configs'])

@@ -3,7 +3,7 @@ from frozendict import frozendict
 from PipelineTS.statistic_model import *
 from PipelineTS.ml_model import *
 from PipelineTS.nn_model import *
-from PipelineTS.spinesTS.backends import is_mlx_available, is_torch_available
+from PipelineTS.nn_model.backends import is_mlx_available, is_torch_available
 
 from PipelineTS.base.base_utils import get_model_name_before_initial
 

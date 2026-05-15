@@ -35,7 +35,7 @@ class Backtester:
     Examples
     --------
     >>> from PipelineTS.ml_model import TorchBoostingForestModel
-    >>> from PipelineTS.spinesTS.metrics import mae
+    >>> from PipelineTS.metrics import mae
     >>> model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
     >>> bt = Backtester(model, time_col='date', target_col='value', metric=mae)
     >>> results = bt.fit(data, n_splits=5, test_size=12, mode='expanding')

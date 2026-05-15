@@ -14,7 +14,7 @@ PipelineTS 提供内置的超参数调优和集成方法，以提升预测性能
 ```python
 from PipelineTS.training import AutoTune
 from PipelineTS.ml_model import TorchBoostingForestModel
-from PipelineTS.spinesTS.metrics import mae
+from PipelineTS.metrics import mae
 
 tuner = AutoTune(
     model_class=TorchBoostingForestModel,
