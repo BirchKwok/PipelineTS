@@ -52,13 +52,7 @@ class StatisticModelMixin:
 class NNModelMixin:
     def __init__(self, time_col, target_col, accelerator=None):
         self.all_configs = {'model_configs': {}}
-        if accelerator is None:
-            if sys.platform == 'darwin':
-                self.accelerator = 'cpu'
-            else:
-                self.accelerator = 'auto'
-        else:
-            self.accelerator = accelerator
+        self.accelerator = accelerator if accelerator is not None else 'auto'
 
         self.sorted_cols = [
             time_col,

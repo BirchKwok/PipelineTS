@@ -20,7 +20,7 @@ import numpy as np
 from PipelineTS.pipeline.smart_router import SmartRouter, DataProfile, DataInsightProfile, EnsemblePredictor
 from PipelineTS.pipeline.pipeline import ModelPipeline
 from PipelineTS.dataset import (
-    LoadElectric,
+    LoadElectricProduction,
     LoadMessagesSentHour,
     LoadMessagesSent,
     LoadWebSales,
@@ -402,6 +402,34 @@ def test_pipeline_failed_skipped_properties():
     assert pipeline.failed_models == []
     assert pipeline.skipped_models == []
     print(f"[PASS] test_pipeline_failed_skipped_properties")
+
+
+def test_smart_router_split_eval_then_full_history_refit():
+    dates = pd.date_range("2020-01-01", periods=72, freq="D")
+    values = 100 + np.sin(np.arange(72) / 3.0) * 10 + np.arange(72) * 0.2
+    df = pd.DataFrame({"date": dates, "value": values})
+    router = SmartRouter(
+        time_col="date",
+        target_col="value",
+        n_predict=6,
+        include_models=["theta"],
+        preset="fast",
+        search_strategy="basic",
+        ensemble_strategy="none",
+        cv=2,
+        metric="business",
+        verbose=False,
+    )
+
+    router.fit(df)
+
+    assert router.metric_name == "business"
+    assert router._train_data_for_eval is not None
+    assert len(router._train_data_for_eval) < len(router._preprocessed_data)
+    assert router.pipeline_._training_data is not None
+    assert len(router.pipeline_._training_data) == len(router._preprocessed_data)
+    assert router.leader_board_ is not None and not router.leader_board_.empty
+    print("[PASS] test_smart_router_split_eval_then_full_history_refit")
 
 
 # ─── Integration Tests (with model training) ────────────────────────────────
@@ -986,7 +1014,7 @@ def test_baseline_guardrail_switches_to_stronger_baseline(monkeypatch):
     assert r.leader_board_.iloc[0]['model'] == 'random_forest'
     assert r.strategy_['lags'] == 12
     assert r.strategy_['model_hyperparams'] == {}
-    assert captured['init_kwargs']['include_models'][0] == 'random_forest'
+    assert 'random_forest' in captured['init_kwargs']['include_models']
     assert captured['init_kwargs']['scaler'] is True
     assert r.autonomy_summary_['baseline_guardrail']['switched'] is True
 

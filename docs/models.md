@@ -39,6 +39,14 @@ All NN models additionally support:
 | `gtb_d_model` | 64 | GTB hidden dimension / GTB 隐藏维度 |
 | `routing_mode` | `'static'` | GTB routing: `'static'` (all experts) or `'adaptive'` (MoE top-K) / GTB 路由：`'static'`（全部专家）或 `'adaptive'`（MoE top-K） |
 
+### Modern modular NN family / 现代模块化 NN 模型族
+
+The following registry keys are available through one shared backbone/layer implementation: `timexer`, `time_mixer`, `timesnet`, `pyraformer`, `etsformer`, `lightts`, `patchtst`, `tsmixer`, `nonstationary_transformer`, `fedformer`, `autoformer`, `informer`, `reformer`, `multi_patch_former`, `wpmixer`, `timefilter`, `msgnet`, `seg_rnn`, and `tirex`.
+以下注册名通过同一套共享 backbone/layer 实现提供：`timexer`、`time_mixer`、`timesnet`、`pyraformer`、`etsformer`、`lightts`、`patchtst`、`tsmixer`、`nonstationary_transformer`、`fedformer`、`autoformer`、`informer`、`reformer`、`multi_patch_former`、`wpmixer`、`timefilter`、`msgnet`、`seg_rnn` 和 `tirex`。
+
+Public wrapper classes such as `PatchTSTModel`, `TimesNetModel`, and `TimeMixerModel` are generated from a central model spec registry, reducing duplicated training boilerplate while keeping the same `fit()` / `predict()` interface.
+公开包装类（如 `PatchTSTModel`、`TimesNetModel`、`TimeMixerModel`）由统一模型规格注册表生成，减少重复训练模板代码，同时保持相同的 `fit()` / `predict()` 接口。
+
 ### NLinearModel
 
 Simple linear mapping model. The fastest NN model, suitable as a baseline.
@@ -597,18 +605,22 @@ result = model.predict(10)
 Foundation models are large pretrained models that perform **zero-shot forecasting** — no training on your data is needed.
 基础模型是大型预训练模型，执行**零样本预测** —— 无需在您的数据上训练。
 
-> Requires: `pip install chronos-forecasting`
+> Optional dependencies: `pip install chronos-forecasting` for Chronos-2, `pip install tirex-ts` for TiRex foundation, and `pip install transformers==4.40.1` for Sundial / Time-MoE.
+> 可选依赖：Chronos-2 使用 `pip install chronos-forecasting`，TiRex foundation 使用 `pip install tirex-ts`，Sundial / Time-MoE 使用 `pip install transformers==4.40.1`。
 
-### Chronos-2 Family / Chronos-2 家族
+### Foundation family / 基础模型家族
 
-Three Chronos-2 model classes are available, each wrapping a different pretrained checkpoint:
-提供三个 Chronos-2 模型类，分别封装不同的预训练检查点：
+The foundation adapters wrap Chronos-2, TiRex, Sundial, and Time-MoE checkpoints through lazy-loaded optional dependencies:
+基础模型适配器通过延迟加载的可选依赖封装 Chronos-2、TiRex、Sundial 和 Time-MoE 检查点：
 
 | Class / 类 | Pipeline Key / 管道键名 | HuggingFace Path | Size / 大小 |
 |---|---|---|---|
 | `Chronos2Model` | `chronos_2` | `amazon/chronos-2` | 120M |
 | `Chronos2SynthModel` | `chronos_2_synth` | `autogluon/chronos-2-synth` | 120M |
 | `Chronos2SmallModel` | `chronos_2_small` | `autogluon/chronos-2-small` | 28M |
+| `TiRexFoundationModel` | `tirex_foundation` | `NX-AI/TiRex` | 35M |
+| `SundialModel` | `sundial` | `thuml/sundial-base-128m` | 128M |
+| `TimeMoEModel` | `time_moe` | `Maple728/TimeMoE-50M` | 50M |
 
 `ChronosModel` is a backward-compatible alias for `Chronos2Model`.
 `ChronosModel` 是 `Chronos2Model` 的向后兼容别名。
@@ -623,6 +635,7 @@ Three Chronos-2 model classes are available, each wrapping a different pretraine
 
 ```python
 from PipelineTS.nn_model import Chronos2Model, Chronos2SynthModel, Chronos2SmallModel
+from PipelineTS.nn_model import TiRexFoundationModel, SundialModel, TimeMoEModel
 
 # Standalone usage / 独立使用
 model = Chronos2SmallModel(
@@ -636,7 +649,7 @@ from PipelineTS.pipeline import ModelPipeline
 
 pipe = ModelPipeline(
     time_col='date', target_col='value', lags=12,
-    include_models=['chronos_2_small'],
+    include_models=['chronos_2_small', 'tirex_foundation', 'sundial', 'time_moe'],
     quantile=0.9,
 )
 pipe.fit(data)
@@ -645,7 +658,7 @@ pipe.predict(n=10)
 
 **Key features / 主要特点:**
 - **Zero-shot**: No training needed, uses pretrained weights / 零样本：无需训练，使用预训练权重
-- **Covariate support**: All Chronos-2 models support known future covariates / 协变量支持：所有 Chronos-2 模型支持已知未来协变量
+- **Covariate support**: Chronos-2 models support known future covariates / 协变量支持：Chronos-2 模型支持已知未来协变量
 - **Multi-series**: Supports panel data via `id_col` / 多序列：通过 `id_col` 支持面板数据
 - **Conformal intervals**: Prediction intervals via conformal calibration / 共形区间：通过共形校准实现预测区间
 

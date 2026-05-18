@@ -1,5 +1,6 @@
 from importlib import import_module
 
+from PipelineTS.nn_model._modern_ts_specs import MODERN_TS_MODEL_SPECS
 from PipelineTS.nn_model.backends._native_models import make_native_dispatcher
 
 
@@ -37,3 +38,9 @@ TSTransformer = make_native_dispatcher('transformer', _load('._transformer', 'TS
 TFT = make_native_dispatcher('tft', _load('._tft', 'TFT'))
 TiDE = make_native_dispatcher('tide', _load('._tide', 'TiDE'))
 DeepAR = make_native_dispatcher('deepar', _load('._deepar', 'DeepAR'))
+
+for _spec in MODERN_TS_MODEL_SPECS:
+    globals()[_spec.backbone_class] = make_native_dispatcher(
+        _spec.key,
+        _load('._modern_ts', _spec.backbone_class),
+    )

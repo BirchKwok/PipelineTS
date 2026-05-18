@@ -1615,7 +1615,8 @@ class Executor:
         ]
         stat_models = ["auto_arima", "prophet"]
         foundation_models = [
-            "chronos_2", "chronos_2_synth", "chronos_2_small", "chronos_bolt_small",
+            "chronos_2", "chronos_2_synth", "chronos_2_small",
+            "tirex_foundation", "sundial", "time_moe",
         ]
 
         lines = ["Available Models:"]

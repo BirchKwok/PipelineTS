@@ -16,3 +16,4 @@ from ._position_encoder import PositionalEncoding, LearnablePositionalEncoding
 from ._srs import RevIN, MultiScalePatchEmbedding, SelectiveRepresentationSpace, SRSBlock
 from ._rwkv import RWKVBlock, RWKVEncoder, GatedTimeMixing, LightChannelMixing
 from ._global_temporal_block import GlobalTemporalBlock, ExpertRouter, FreqMixingBlock, GatedLinearAttention, SwiGLU, RMSNorm
+from ._modern_ts_layers import ModernEncoderBlock, ModernMixerBlock, ModernSeriesTokenizer, TemporalProjectionHead

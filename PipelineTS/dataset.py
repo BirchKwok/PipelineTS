@@ -1,6 +1,13 @@
 from PipelineTS.datasets import (
     DataGenerator,
     RandomEventGenerator,
+    LoadAirPassengers,
+    LoadElectricProduction,
+    LoadETTh1,
+    LoadETTh2,
+    LoadETTm1,
+    LoadETTm2,
+    LoadInventory,
     LoadElectric,
     LoadMessagesSentHour,
     LoadMessagesSent,

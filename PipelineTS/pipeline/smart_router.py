@@ -20,7 +20,7 @@ from spinesUtils.asserts import ParameterTypeAssert, raise_if
 
 from PipelineTS.pipeline.pipeline import ModelPipeline
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
-from PipelineTS.metrics import mae
+from PipelineTS.metrics import resolve_metric
 from PipelineTS.dataset import (
     LoadElectric,
     LoadMessagesSentHour,
@@ -37,6 +37,13 @@ from PipelineTS.preprocessing import (
 from PipelineTS.preprocessing.time_series_diagnostics import (
     hurst_exponent,
     spectral_entropy,
+)
+from PipelineTS.nn_model._nn_specs import (
+    NN_FOUNDATION_MODEL_KEYS,
+    NN_GTB_MODEL_KEYS,
+    NN_KEYS_BY_CATEGORY,
+    NN_MODEL_KEYS,
+    NN_TRANSFORMER_LIKE_MODEL_KEYS,
 )
 
 
@@ -412,12 +419,9 @@ class SmartRouter:
         'ml': {'catboost', 'xgboost', 'random_forest', 'extra_forest',
                'gc_forest', 'wide_gbrt', 'multi_output_model',
                'multi_step_model', 'regressor_chain'},
-        'nn_light': {'d_linear', 'n_linear', 'tide', 'tcn'},
-        'nn_medium': {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
-                      'time2vec', 'gau'},
-        'nn_heavy': {'transformer', 'tft', 'itransformer', 'srs_net',
-                     'deepar', 'chronos_2', 'chronos_2_synth',
-                     'chronos_2_small'},
+        'nn_light': NN_KEYS_BY_CATEGORY['light'],
+        'nn_medium': NN_KEYS_BY_CATEGORY['medium'],
+        'nn_heavy': NN_KEYS_BY_CATEGORY['heavy'] | set(NN_FOUNDATION_MODEL_KEYS),
     }
 
     _SAFE_PORTFOLIO = (
@@ -453,6 +457,7 @@ class SmartRouter:
         'hpo_n_trials': (int, None),
         'hpo_timeout_per_model': (int, float, None),
         'include_models': (str, list, None),
+        'epochs': (int, None),
     }, 'SmartRouter')
     def __init__(
         self,
@@ -477,6 +482,9 @@ class SmartRouter:
         hpo_n_trials=None,
         hpo_timeout_per_model=None,
         include_models=None,
+        epochs=None,
+        metric='business',
+        **model_kwargs,
     ):
         # Resolve preset: preset provides defaults, explicit params override
         if preset is not None:
@@ -498,6 +506,10 @@ class SmartRouter:
             raise_if(ValueError, len(include_models) == 0,
                      "include_models cannot be empty")
         self.include_models = include_models
+        self.epochs = epochs
+        self.metric, self.metric_name = resolve_metric(metric)
+        self.metric_less_is_better = True
+        self.model_kwargs = dict(model_kwargs)
 
         # When user pins models, auto-adjust max_models if not explicitly set
         if include_models is not None and max_models is None:
@@ -576,6 +588,7 @@ class SmartRouter:
         self.ensemble_ = None
         self.model_scores_ = None
         self._preprocessed_data = None
+        self._train_data_for_eval = None
         self._valid_data = None
         self._scaler_obj = None
         self._screening_results = None
@@ -601,32 +614,55 @@ class SmartRouter:
     def fit(self, data, valid_data=None):
         """Profile data, select strategy, fit pipeline, return self.
 
-        When ``search_strategy`` is ``'auto'`` or ``'thorough'``, the fit
-        process adds validation-driven phases before full training:
+        The fit process runs these stages in order:
 
-        1. **Quick screening** – trains lightweight models on a data subset
-           to eliminate weak candidates before committing full training time.
-        2. **Multi-lag exploration** – tests 2-3 lag candidates with a fast
-           model and picks the one with the best holdout metric.
-        3. **Score calibration** – after full training, compares heuristic
-           rankings with actual performance and logs correlation.
+        1. **Data profiling** – characterises stationarity, seasonality, trend,
+           noise, autocorrelation, missing rate, and outlier rate.
+        2. **Strategy selection** – chooses scaler, lags, model subset,
+           hyperparameters, and ensemble strategy based on the data profile.
+        3. **Baseline preflight** (when budget ≤ 45 s) – fits a fast statistical
+           ensemble and accepts it immediately if the budget is very tight.
+        4. **Wide screening** (``'auto'``/``'thorough'`` only) – trains
+           lightweight models on a data subset to eliminate weak candidates.
+        5. **Lag exploration** (``'auto'``/``'thorough'`` only) – tests 2-3
+           lag values and picks the best one.
+        6. **HPO** (when ``hpo_strategy != 'none'``) – runs Optuna search for
+           top candidates.
+        7. **Full training** – fits the final :class:`ModelPipeline` and
+           builds an ensemble of the top-K models.
 
         Parameters
         ----------
         data : pd.DataFrame
-            Training data with time_col and target_col.
-        valid_data : pd.DataFrame or None
-            Optional validation data.
+            Training data containing at least *time_col* and *target_col*.
+            For panel data, must also contain *id_col*.
+        valid_data : pd.DataFrame or None, default None
+            Optional external validation set.  When ``None``, an internal
+            chronological split is used for model evaluation.
 
         Returns
         -------
         self
+            Returns the fitted ``SmartRouter`` instance for method chaining.
+
+        Raises
+        ------
+        ValueError
+            If *data* is empty or does not contain the required columns.
+
+        Examples
+        --------
+        >>> router = SmartRouter(time_col='date', target_col='value',
+        ...                      preset='medium_quality')
+        >>> router.fit(train_df)
+        >>> router.fit(train_df, valid_data=val_df)
         """
         t0 = time.time()
         self._model_results = []
         self._screening_results = None
         self._lag_exploration_results = None
         self._per_model_lags = None
+        self._train_data_for_eval = None
         self._calibration_rho = None
         self._hpo_results = None
         self._active_hpo_strategy_ = None
@@ -702,11 +738,11 @@ class SmartRouter:
                 full_processed, self.strategy_['lags']
             )
 
-        # The pipeline trains on ALL data and evaluates on the valid tail.
-        # When valid_data is passed explicitly, pipeline uses data.copy()
-        # for training — so we pass the full dataset, not just the train split.
-        # The valid split is only used for metric evaluation.
+        # Evaluation trains on the historical train split and scores the
+        # immediately following validation tail. For auto-split training,
+        # the final predictor is refitted on full history after evaluation.
         self._preprocessed_data = full_processed
+        self._train_data_for_eval = processed_train
         self._valid_data = processed_valid
 
         if self._should_run_baseline_preflight():
@@ -771,13 +807,15 @@ class SmartRouter:
                             f"  Primary lag updated: {old_lag} -> {primary_lag} "
                             f"(max of per-model lags)"
                         )
-                # Re-split with primary lag (only if we auto-split)
+                # Re-split with primary lag (only if we auto-split).
+                # Only update the validation window — full data for training.
                 if not user_provided_valid:
                     processed_train, processed_valid = self._temporal_split(
                         full_processed, primary_lag
                     )
-                    self._preprocessed_data = processed_train
+                    self._train_data_for_eval = processed_train
                     self._valid_data = processed_valid
+                    self._baseline_guardrail_cache = None
 
             # Store per-model lags in strategy (only if models differ)
             if per_model_lags and not all_same_lag:
@@ -813,6 +851,8 @@ class SmartRouter:
             hyperparams, models, per_model_budget=per_model_budget,
             profile=self.profile_
         )
+        # Apply user-specified overrides (highest priority)
+        hyperparams = self._apply_user_model_kwargs(hyperparams)
         self.strategy_['model_hyperparams'] = hyperparams
         self.autonomy_summary_ = self._build_autonomy_summary(self.strategy_)
         if self.verbose and budget_caps:
@@ -844,6 +884,8 @@ class SmartRouter:
             random_state=self.random_state,
             cv=self.cv,
             gbdt_differential_n=gbdt_diff_n,
+            metric=self.metric,
+            metric_less_is_better=self.metric_less_is_better,
             time_limit=remaining_time,
             per_model_lags=effective_per_model_lags,
             **hyperparams,
@@ -851,13 +893,14 @@ class SmartRouter:
 
         # SmartRouter already printed device info, suppress Pipeline's duplicate
         self.pipeline_._device_info_logged = True
+        self.pipeline_._phase_label = "Full Training"
 
         # Register callback for real-time model tracking
         self._model_results = []
         self.pipeline_._on_model_complete_callback = self._on_model_trained
 
         self.leader_board_ = self.pipeline_.fit(
-            self._preprocessed_data, valid_data=self._valid_data
+            self._train_data_for_eval, valid_data=self._valid_data
         )
 
         if self.leader_board_.empty:
@@ -879,6 +922,9 @@ class SmartRouter:
         self.ensemble_ = self._build_ensemble()
         if self.ensemble_ is not None:
             self.ensemble_ = self._evaluate_ensemble(self.ensemble_)
+
+        if not user_provided_valid:
+            self._refit_final_pipeline_on_full_history()
 
         self._compute_calibration()
         self.dataset_benchmark_ = (
@@ -909,6 +955,22 @@ class SmartRouter:
             'train_cost': fit_info['train_cost'],
             'eval_cost': fit_info['eval_cost'],
         })
+
+    def _refit_final_pipeline_on_full_history(self):
+        if self.pipeline_ is None or self._valid_data is None:
+            return False
+        if len(self._valid_data) == 0:
+            return False
+        try:
+            self.pipeline_.update(self._valid_data, refit_all=True)
+            self.best_model_ = self.pipeline_.best_model_
+            return True
+        except Exception as e:
+            if self.verbose:
+                self.logger.warning(
+                    f"  Final full-history refit skipped: {type(e).__name__}: {e}"
+                )
+            return False
 
     def _build_autonomy_summary(self, strategy):
         strategy = strategy or {}
@@ -1034,11 +1096,14 @@ class SmartRouter:
             random_state=self.random_state,
             cv=min(self.cv, 3),
             gbdt_differential_n=0,
+            metric=self.metric,
+            metric_less_is_better=self.metric_less_is_better,
             time_limit=remaining_time,
         )
         baseline_pipeline._device_info_logged = True
+        baseline_pipeline._phase_label = reason_prefix
         baseline_lb = baseline_pipeline.fit(
-            self._preprocessed_data, valid_data=self._valid_data
+            self._train_data_for_eval, valid_data=self._valid_data
         )
         result.update({
             'pipeline': baseline_pipeline,
@@ -1309,13 +1374,16 @@ class SmartRouter:
                 random_state=self.random_state,
                 cv=min(self.cv, 3),
                 gbdt_differential_n=self.strategy_['gbdt_differential_n'],
+                metric=self.metric,
+                metric_less_is_better=self.metric_less_is_better,
                 time_limit=remaining_time,
                 **params,
             )
             self.pipeline_._device_info_logged = True
+            self.pipeline_._phase_label = "Safe Portfolio Fallback"
             self.pipeline_._on_model_complete_callback = self._on_model_trained
             self.leader_board_ = self.pipeline_.fit(
-                self._preprocessed_data, valid_data=self._valid_data
+                self._train_data_for_eval, valid_data=self._valid_data
             )
             if self.leader_board_ is None or self.leader_board_.empty:
                 return False
@@ -1485,7 +1553,24 @@ class SmartRouter:
         )
 
     def get_model(self, model_name=None):
-        """Retrieve a fitted model from the pipeline."""
+        """Retrieve a fitted model object from the underlying pipeline.
+
+        Parameters
+        ----------
+        model_name : str or None, default None
+            Name of the model to retrieve (as it appears in ``leader_board_``).
+            ``None`` returns the best model.
+
+        Returns
+        -------
+        model object
+            The fitted model instance.
+
+        Raises
+        ------
+        ValueError
+            If :meth:`fit` has not been called yet.
+        """
         raise_if(ValueError, self.pipeline_ is None,
                  "SmartRouter has not been fitted yet.")
         return self.pipeline_.get_model(model_name)
@@ -1964,7 +2049,7 @@ class SmartRouter:
                 risk += 0.25
                 reasons.append('medium_model_time_risk')
 
-        if model_name in ('chronos_2', 'chronos_2_synth') and self.time_limit is not None:
+        if model_name in NN_FOUNDATION_MODEL_KEYS and self.time_limit is not None:
             if self.time_limit / max(1, self.max_models) < 30:
                 risk += 0.25
                 reasons.append('foundation_model_time_risk')
@@ -2065,22 +2150,32 @@ class SmartRouter:
 
         freq = str(getattr(p, 'freq', '') or '').upper()
         horizon = int(self.n_predict or min(12, max(1, p.n_rows // 10)))
-        keep_chronos_small = (
-            'chronos_2_small' in feasible and p.n_rows <= 180 and horizon <= 12 and
+        foundation_family = [
+            m for m in (
+                'chronos_2_small', 'tirex_foundation', 'sundial',
+                'time_moe', 'chronos_2', 'chronos_2_synth',
+            )
+            if m in NN_FOUNDATION_MODEL_KEYS
+        ]
+        foundation_available = [m for m in foundation_family if m in feasible]
+        any_foundation_in_pool = any(m in pool for m in foundation_family)
+        keep_foundation_family = (
+            bool(foundation_available) and p.n_rows <= 180 and horizon <= 12 and
             p.is_regular and freq.startswith(('M', 'Q', 'A', 'Y')) and
             (p.seasonality_strength > 0.25 or p.n_seasonalities >= 2) and
             p.trend_strength > 0.4
         )
-        if keep_chronos_small and 'chronos_2_small' not in pool:
+        if keep_foundation_family and not any_foundation_in_pool:
+            inject = foundation_available[0]  # highest-scored by heuristic (sorted earlier)
             if len(pool) >= pool_size:
                 protected = set(active_strategy.get('models', []))
                 replace_idx = next(
                     (i for i in range(len(pool) - 1, -1, -1) if pool[i] not in protected),
                     len(pool) - 1,
                 )
-                pool[replace_idx] = 'chronos_2_small'
+                pool[replace_idx] = inject
             else:
-                pool.append('chronos_2_small')
+                pool.append(inject)
 
         return pool[:pool_size]
 
@@ -2271,14 +2366,8 @@ class SmartRouter:
         # --- Feature engineering decisions ---
         fe = self._select_feature_engineering(p)
 
-        # --- NN models list (GTB-capable) ---
-        nn_gtb_models = [
-            'd_linear', 'n_linear', 'n_beats', 'n_hits', 'tcn', 'tft',
-            'gau', 'stacking_rnn', 'time2vec', 'transformer', 'tide',
-            'patch_rnn',
-        ]
-        # All NN models (including non-GTB)
-        nn_all = nn_gtb_models + ['deepar', 'itransformer', 'srs_net']
+        nn_gtb_models = list(NN_GTB_MODEL_KEYS)
+        nn_all = list(NN_MODEL_KEYS)
 
         # --- NN: routing_mode ---
         if fe.get('routing_mode') == 'adaptive':
@@ -2292,9 +2381,8 @@ class SmartRouter:
 
         # --- NN: adaptive learning_rate ---
         # Lower LR for complex/heavy models, higher for simple ones
-        nn_heavy = {'transformer', 'tft', 'itransformer', 'srs_net', 'deepar',
-                     'gau', 'n_beats', 'n_hits'}
-        nn_light = {'d_linear', 'n_linear', 'tide', 'tcn'}
+        nn_heavy = NN_KEYS_BY_CATEGORY['medium'] | NN_KEYS_BY_CATEGORY['heavy']
+        nn_light = NN_KEYS_BY_CATEGORY['light']
         if n >= 300:
             # Larger data → can use standard LR
             for m in nn_heavy:
@@ -2346,7 +2434,7 @@ class SmartRouter:
 
         # --- NN: warmup for transformer-based models ---
         # Transformers benefit from LR warmup to stabilize early training
-        transformer_models = {'transformer', 'tft', 'itransformer', 'gau', 'time2vec'}
+        transformer_models = set(NN_TRANSFORMER_LIKE_MODEL_KEYS)
         if n >= 100:
             for m in transformer_models:
                 params[f'{m}__warmup_epochs'] = 10
@@ -2533,6 +2621,25 @@ class SmartRouter:
 
         return params, caps
 
+    def _apply_user_model_kwargs(self, hyperparams):
+        """Apply user-specified epochs and model_kwargs on top of auto hyperparams.
+
+        Priority (highest wins):
+            model_kwargs  >  global epochs  >  auto hyperparams / budget caps
+        """
+        if self.epochs is None and not self.model_kwargs:
+            return hyperparams
+        params = dict(hyperparams)
+        if self.epochs is not None:
+            for m in NN_MODEL_KEYS:
+                key = f'{m}__epochs'
+                # Only override if not already overridden by per-model model_kwargs
+                if key not in self.model_kwargs:
+                    params[key] = self.epochs
+        # Per-model kwargs always win (highest priority)
+        params.update(self.model_kwargs)
+        return params
+
     def _suggest_lags(self, p):
         """Suggest optimal lags based on data characteristics."""
         n = p.n_rows
@@ -2709,11 +2816,9 @@ class SmartRouter:
         ml_models = {'catboost', 'xgboost', 'random_forest', 'extra_forest',
                       'gc_forest', 'wide_gbrt', 'multi_output_model',
                       'multi_step_model', 'regressor_chain'}
-        nn_light = {'d_linear', 'n_linear', 'tide', 'tcn'}
-        nn_medium = {'n_beats', 'n_hits', 'stacking_rnn', 'patch_rnn',
-                      'time2vec', 'gau'}
-        nn_heavy = {'transformer', 'tft', 'itransformer', 'srs_net', 'deepar',
-                    'chronos_2', 'chronos_2_synth', 'chronos_2_small'}
+        nn_light = self._CATEGORIES['nn_light']
+        nn_medium = self._CATEGORIES['nn_medium']
+        nn_heavy = self._CATEGORIES['nn_heavy']
 
         # ---- Series length ----
         if n < 50:
@@ -2970,9 +3075,7 @@ class SmartRouter:
             if p.noise_ratio > 0.5:
                 _add(2, 'extra_forest: randomized splits reduce overfitting')
 
-        if model_name in ('chronos_2', 'chronos_2_synth', 'chronos_2_small'):
-            # Chronos-2 family: zero-shot foundation models — no training needed
-            # Strong for small data where trained models may overfit
+        if model_name in NN_FOUNDATION_MODEL_KEYS:
             if n < 100:
                 _add(10, f'{model_name}: zero-shot excels on small data')
             elif n < 300:
@@ -2981,15 +3084,8 @@ class SmartRouter:
                 _add(3, f'{model_name}: pretrained robustness to missing data ({p.pct_missing:.1%})')
             if p.n_seasonalities >= 2:
                 _add(5, f'{model_name}: pretrained handles complex seasonality')
-            if (
-                model_name == 'chronos_2_small' and n <= 180 and p.is_regular and
-                (p.seasonality_strength > 0.25 or p.n_seasonalities >= 2) and
-                p.trend_strength > 0.4
-            ):
-                _add(42, f'{model_name}: lightweight zero-shot for small regular seasonal trend')
-            # Differentiate: chronos_2_small is lighter, give slight bonus for speed
-            if model_name == 'chronos_2_small' and n >= 200:
-                _add(2, 'chronos_2_small: lightweight variant for larger data')
+            if model_name in {'chronos_2_small', 'tirex_foundation', 'time_moe'}:
+                _add(3, f'{model_name}: lightweight foundation variant')
 
         return score, reasons
 
@@ -3332,8 +3428,8 @@ class SmartRouter:
             time_col=self.time_col,
             target_col=self.target_col,
             lags=lags,
-            metric=mae,
-            metric_less_is_better=True,
+            metric=self.metric,
+            metric_less_is_better=self.metric_less_is_better,
             n_trials=n_trials,
             timeout_per_model=timeout_per_model,
             verbose=self.verbose,
@@ -3462,11 +3558,14 @@ class SmartRouter:
                 known_covariates=self.known_covariates or None,
                 past_covariates=self.past_covariates or None,
                 gbdt_differential_n=strategy['gbdt_differential_n'],
+                metric=self.metric,
+                metric_less_is_better=self.metric_less_is_better,
                 time_limit=screen_time,
                 **screen_params,
             )
 
             screen_pipeline._device_info_logged = True
+            screen_pipeline._phase_label = f"Wide Screening [{len(candidates)} candidates]"
             screen_lb = screen_pipeline.fit(screen_train, valid_data=screen_valid)
 
             if screen_lb.empty:
@@ -3808,10 +3907,13 @@ class SmartRouter:
                     known_covariates=self.known_covariates or None,
                     past_covariates=self.past_covariates or None,
                     gbdt_differential_n=strategy['gbdt_differential_n'],
+                    metric=self.metric,
+                    metric_less_is_better=self.metric_less_is_better,
                     time_limit=lag_time_limit,
                     **fast_params,
                 )
                 eval_pipeline._device_info_logged = True
+                eval_pipeline._phase_label = f"Lag Exploration [lag={lag}]"
                 lb = eval_pipeline.fit(split_train, valid_data=split_valid)
 
                 if not lb.empty:

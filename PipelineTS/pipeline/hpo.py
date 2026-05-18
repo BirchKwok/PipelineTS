@@ -12,6 +12,9 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from PipelineTS.nn_model._nn_specs import NN_KEYS_BY_CATEGORY
+from PipelineTS.nn_model._foundation_specs import FOUNDATION_MODEL_KEYS
+
 
 def _lazy_import_optuna():
     """Lazy import optuna with clear error message."""
@@ -85,31 +88,13 @@ MODEL_SEARCH_SPACES = {
     'multi_output_model': SKLEARN_FOREST_SEARCH_SPACE,
     'multi_step_model': SKLEARN_FOREST_SEARCH_SPACE,
     'regressor_chain': SKLEARN_FOREST_SEARCH_SPACE,
-    # NN light
-    'd_linear': NN_LIGHT_SEARCH_SPACE,
-    'n_linear': NN_LIGHT_SEARCH_SPACE,
-    'tide': NN_LIGHT_SEARCH_SPACE,
-    'tcn': NN_LIGHT_SEARCH_SPACE,
-    # NN medium
-    'n_beats': NN_HEAVY_SEARCH_SPACE,
-    'n_hits': NN_HEAVY_SEARCH_SPACE,
-    'stacking_rnn': NN_HEAVY_SEARCH_SPACE,
-    'patch_rnn': NN_HEAVY_SEARCH_SPACE,
-    'time2vec': NN_HEAVY_SEARCH_SPACE,
-    'gau': NN_HEAVY_SEARCH_SPACE,
-    # NN heavy
-    'transformer': NN_HEAVY_SEARCH_SPACE,
-    'tft': NN_HEAVY_SEARCH_SPACE,
-    'itransformer': NN_HEAVY_SEARCH_SPACE,
-    'srs_net': NN_HEAVY_SEARCH_SPACE,
-    'deepar': NN_HEAVY_SEARCH_SPACE,
+    **{model: NN_LIGHT_SEARCH_SPACE for model in NN_KEYS_BY_CATEGORY['light']},
+    **{model: NN_HEAVY_SEARCH_SPACE for model in NN_KEYS_BY_CATEGORY['medium']},
+    **{model: NN_HEAVY_SEARCH_SPACE for model in NN_KEYS_BY_CATEGORY['heavy']},
     # Statistic
     'prophet': PROPHET_SEARCH_SPACE,
     'auto_arima': ARIMA_SEARCH_SPACE,
-    # Foundation
-    'chronos_2': {},  # Chronos-2 family: zero-shot, no tunable hyperparams
-    'chronos_2_synth': {},
-    'chronos_2_small': {},
+    **{model: {} for model in FOUNDATION_MODEL_KEYS},
 }
 
 

@@ -55,6 +55,17 @@ class RMSNorm(nn.Module):
         return x / rms * self.weight
 
 
+def _temporal_moving_average(x, kernel_size):
+    L = x.shape[1]
+    k = min(kernel_size, L if L % 2 == 1 else max(1, L - 1))
+    if k <= 1:
+        return x
+    pad = k // 2
+    x_t = x.transpose(1, 2)
+    smooth = F.avg_pool1d(F.pad(x_t, (pad, pad), mode='replicate'), kernel_size=k, stride=1)
+    return smooth.transpose(1, 2)
+
+
 class FreqMixingBlock(nn.Module):
     """Frequency-guided 2D convolution for global temporal pattern capture.
 
@@ -95,30 +106,35 @@ class FreqMixingBlock(nn.Module):
 
         # FFT to find dominant periods
         x_freq = torch.fft.rfft(x.mean(dim=-1), dim=1)  # (B, L//2+1)
-        amp = x_freq.abs().mean(dim=0)  # (L//2+1,) average across batch
+        amp = x_freq.abs().mean(dim=0).clone()  # (L//2+1,) average across batch
 
         # Ignore DC component
         amp[0] = 0
 
         # Top-k frequencies → periods
         top_k = min(self.top_k, max(1, len(amp) - 1))
-        _, top_freq_idx = torch.topk(amp, top_k)
+        top_amp, top_freq_idx = torch.topk(amp, top_k)
 
         periods = []
-        for idx in top_freq_idx:
+        period_weights = []
+        for raw_amp, idx in zip(top_amp, top_freq_idx):
             freq = idx.item()
             if freq > 0:
                 p = max(2, round(L / freq))
                 if p not in periods and p <= L:
                     periods.append(p)
+                    period_weights.append(raw_amp)
 
         if len(periods) == 0:
             periods = [max(2, L // 2)]
+            period_weights = [x.new_tensor(1.0)]
+        period_weights = torch.stack(period_weights)
+        period_weights = period_weights / period_weights.sum().clamp_min(1e-6)
 
         # For each period, reshape to 2D and apply conv
         aggregated = torch.zeros_like(x)
 
-        for p in periods:
+        for p, period_weight in zip(periods, period_weights):
             n_cols = math.ceil(L / p)
             pad_len = p * n_cols - L
             if pad_len > 0:
@@ -134,9 +150,9 @@ class FreqMixingBlock(nn.Module):
 
             # Reshape back to 1D and trim padding
             out_1d = out_2d.reshape(B, D, -1)[:, :, :L]  # (B, D, L)
-            aggregated = aggregated + out_1d.permute(0, 2, 1)  # (B, L, D)
+            aggregated = aggregated + period_weight * out_1d.permute(0, 2, 1)  # (B, L, D)
 
-        return aggregated / len(periods)
+        return aggregated
 
 
 class GatedLinearAttention(nn.Module):
@@ -226,6 +242,49 @@ class SwiGLU(nn.Module):
         return self.dropout(self.W_down(F.silu(self.W_gate(x)) * self.W_up(x)))
 
 
+class TrendExtractionBlock(nn.Module):
+    def __init__(self, d_model, kernel_size=7, dropout=0.1):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.proj = nn.Linear(d_model, d_model, bias=False)
+        self.gate = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        smooth = _temporal_moving_average(x, self.kernel_size)
+        gate = torch.sigmoid(self.gate(x))
+        return self.dropout(gate * self.proj(smooth))
+
+
+class SeasonalResidualBlock(nn.Module):
+    def __init__(self, d_model, kernel_size=5, dropout=0.1):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.depthwise = nn.Conv1d(d_model, d_model, kernel_size=3, padding=1, groups=d_model, bias=False)
+        self.pointwise = nn.Linear(d_model, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        residual = x - _temporal_moving_average(x, self.kernel_size)
+        out = self.depthwise(residual.transpose(1, 2)).transpose(1, 2)
+        return self.dropout(self.pointwise(out))
+
+
+class NoiseResidualBlock(nn.Module):
+    def __init__(self, d_model, kernel_size=3, dropout=0.1):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.gate = nn.Linear(d_model, d_model)
+        self.proj = nn.Linear(d_model, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        residual = x - _temporal_moving_average(x, self.kernel_size)
+        scale = residual.abs().mean(dim=1, keepdim=True).clamp_min(1e-6)
+        gate = torch.sigmoid(self.gate(residual / scale))
+        return self.dropout(self.proj(gate * residual))
+
+
 class ExpertRouter(nn.Module):
     """MoE-style Top-K sparse routing network for GTB experts.
 
@@ -248,24 +307,153 @@ class ExpertRouter(nn.Module):
         balance_coeff: Coefficient for load-balancing auxiliary loss.
     """
 
-    def __init__(self, d_model, n_experts=3, top_k=2, noise_std=0.1, balance_coeff=0.01):
+    def __init__(self, d_model, n_experts=3, top_k=2, noise_std=0.1, balance_coeff=0.01,
+                 balance_update_rate=0.01, bias_clamp=2.0, min_top_k=None, max_top_k=None,
+                 feature_adaptive=False, expert_prior_strength=1.0, pool_min_experts=None,
+                 pool_max_experts=None):
         super().__init__()
         self.n_experts = n_experts
-        self.top_k = min(top_k, n_experts)
+        self.dynamic_top_k = isinstance(top_k, str) and top_k in {'auto', 'dynamic'}
+        if self.dynamic_top_k:
+            self.min_top_k = max(1, min(min_top_k or 2, n_experts))
+            default_max = max(self.min_top_k, min(n_experts, math.ceil(n_experts * 0.67)))
+            self.max_top_k = max(self.min_top_k, min(max_top_k or default_max, n_experts))
+            self.top_k = self.max_top_k
+        else:
+            self.top_k = min(int(top_k), n_experts)
+            self.min_top_k = self.top_k
+            self.max_top_k = self.top_k
         self.noise_std = noise_std
         self.balance_coeff = balance_coeff
+        self.balance_update_rate = balance_update_rate
+        self.bias_clamp = bias_clamp
+        self.feature_adaptive = feature_adaptive
+        self.expert_prior_strength = expert_prior_strength
+        self.profile_dim = 8
+        if self.feature_adaptive:
+            self.pool_min_experts = max(self.min_top_k, min(pool_min_experts or max(3, self.min_top_k), n_experts))
+            self.pool_max_experts = max(self.pool_min_experts, min(pool_max_experts or n_experts, n_experts))
+        else:
+            self.pool_min_experts = n_experts
+            self.pool_max_experts = n_experts
 
         # Lightweight router: pool sequence → project to expert logits
+        hidden = max(8, d_model)
         self.gate = nn.Sequential(
-            nn.Linear(d_model, d_model // 2),
+            nn.Linear(d_model * 4, hidden),
             nn.SiLU(),
-            nn.Linear(d_model // 2, n_experts),
+            nn.Linear(hidden, n_experts),
         )
+        if self.feature_adaptive:
+            self.profile_gate = nn.Sequential(
+                nn.Linear(self.profile_dim, hidden),
+                nn.SiLU(),
+                nn.Linear(hidden, n_experts),
+            )
+            nn.init.zeros_(self.profile_gate[-1].weight)
+            nn.init.zeros_(self.profile_gate[-1].bias)
 
         # Running statistics for monitoring routing distribution
         self.register_buffer('_expert_counts', torch.zeros(n_experts))
         self.register_buffer('_total_samples', torch.tensor(0.0))
+        self.register_buffer('_load_bias', torch.zeros(n_experts))
+        self.register_buffer('_active_expert_total', torch.tensor(0.0))
+        self.register_buffer('_candidate_expert_total', torch.tensor(0.0))
+        self.register_buffer('_profile_total', torch.zeros(self.profile_dim))
         self._aux_loss = torch.tensor(0.0)
+
+    def _extract_profile(self, h):
+        eps = 1e-6
+        B, L, _ = h.shape
+        y = h.mean(dim=-1)
+        centered = y - y.mean(dim=1, keepdim=True)
+        scale = centered.std(dim=1, unbiased=False).clamp_min(eps)
+        if L > 1:
+            diff = y[:, 1:] - y[:, :-1]
+            diff_abs = diff.abs()
+            noise = (diff.std(dim=1, unbiased=False) / scale / 3.0).clamp(0.0, 1.0)
+            volatility = (diff_abs.std(dim=1, unbiased=False) / scale / 3.0).clamp(0.0, 1.0)
+        else:
+            noise = y.new_zeros(B)
+            volatility = y.new_zeros(B)
+        trend = ((y[:, -1] - y[:, 0]).abs() / scale / 3.0).clamp(0.0, 1.0)
+        mid = max(1, L // 2)
+        first = y[:, :mid].mean(dim=1)
+        second = y[:, mid:].mean(dim=1) if mid < L else y[:, -1]
+        regime = ((second - first).abs() / scale / 3.0).clamp(0.0, 1.0)
+        smooth = _temporal_moving_average(y.unsqueeze(-1), min(7, max(1, L if L % 2 == 1 else L - 1))).squeeze(-1)
+        residual = y - smooth
+        residual_strength = (residual.std(dim=1, unbiased=False) / scale / 2.0).clamp(0.0, 1.0)
+        spike = ((centered.abs().amax(dim=1) / scale - 2.0) / 4.0).clamp(0.0, 1.0)
+        if L > 2:
+            amp = torch.fft.rfft(centered, dim=1).abs()
+            amp[:, 0] = 0.0
+            freq_energy = amp.sum(dim=1, keepdim=True).clamp_min(eps)
+            prob = amp / freq_energy
+            peak = prob.max(dim=1).values
+            denom = max(1.0, math.log(float(amp.shape[1])))
+            entropy = -(prob * prob.clamp_min(eps).log()).sum(dim=1) / denom
+            seasonal = (peak * math.sqrt(float(amp.shape[1]))).clamp(0.0, 1.0)
+            spectral_complexity = entropy.clamp(0.0, 1.0)
+        else:
+            seasonal = y.new_zeros(B)
+            spectral_complexity = y.new_zeros(B)
+        return torch.stack([
+            trend,
+            seasonal,
+            noise,
+            regime,
+            spectral_complexity,
+            volatility,
+            residual_strength,
+            spike,
+        ], dim=1)
+
+    def _profile_prior(self, profile):
+        prior = profile.new_zeros(profile.shape[0], self.n_experts)
+        trend, seasonal, noise, regime, complexity, volatility, residual, spike = profile.unbind(dim=1)
+        if self.n_experts > 0:
+            prior[:, 0] = 1.2 * seasonal + 0.3 * (1.0 - complexity)
+        if self.n_experts > 1:
+            prior[:, 1] = 0.7 * complexity + 0.6 * regime + 0.3 * trend
+        if self.n_experts > 2:
+            prior[:, 2] = 0.4 + 0.4 * complexity + 0.2 * noise
+        if self.n_experts > 3:
+            prior[:, 3] = 1.2 * trend + 0.5 * regime
+        if self.n_experts > 4:
+            prior[:, 4] = 1.1 * seasonal + 0.6 * residual
+        if self.n_experts > 5:
+            prior[:, 5] = 1.1 * noise + 0.7 * spike
+        if self.n_experts > 6:
+            simple = 1.0 - torch.stack([
+                trend,
+                seasonal,
+                noise,
+                regime,
+                complexity,
+                volatility,
+                residual,
+                spike,
+            ], dim=1).max(dim=1).values
+            prior[:, 6] = 1.0 * simple.clamp(0.0, 1.0) + 0.2 * (1.0 - complexity)
+        if self.n_experts > 7:
+            prior[:, 7] = 1.2 * regime + 0.5 * trend + 0.4 * spike
+        if self.n_experts > 8:
+            prior[:, 8] = 1.2 * volatility + 0.7 * noise + 0.3 * spike
+        return prior
+
+    def _profile_complexity(self, profile):
+        trend, seasonal, noise, regime, complexity, volatility, residual, spike = profile.unbind(dim=1)
+        structural = torch.stack([
+            0.5 * trend + 0.5 * seasonal,
+            noise,
+            regime,
+            complexity,
+            volatility,
+            residual,
+            spike,
+        ], dim=1)
+        return (0.45 * structural.mean(dim=1) + 0.55 * structural.max(dim=1).values).clamp(0.0, 1.0)
 
     def forward(self, h):
         """Compute routing weights.
@@ -281,21 +469,68 @@ class ExpertRouter(nn.Module):
         B = h.shape[0]
 
         # Global average pooling over sequence dim → (B, D)
-        h_pool = h.mean(dim=1)
+        h_mean = h.mean(dim=1)
+        h_std = h.std(dim=1, unbiased=False)
+        h_last = h[:, -1, :]
+        h_trend = h[:, -1, :] - h[:, 0, :]
+        h_pool = torch.cat([h_mean, h_std, h_last, h_trend], dim=-1)
 
-        # Router logits → (B, n_experts)
         logits = self.gate(h_pool)
+        profile = None
+        complexity = None
+        candidate_count = torch.full((B,), self.n_experts, device=h.device, dtype=torch.long)
+
+        if self.feature_adaptive:
+            profile = self._extract_profile(h)
+            complexity = self._profile_complexity(profile)
+            logits = logits + self.profile_gate(profile) + self.expert_prior_strength * self._profile_prior(profile)
+            pool_float = self.pool_min_experts + complexity * (self.pool_max_experts - self.pool_min_experts)
+            candidate_count = torch.ceil(pool_float).to(torch.long).clamp(
+                min=self.pool_min_experts,
+                max=self.pool_max_experts
+            )
 
         # Add noise during training for exploration (Switch Transformer trick)
         if self.training and self.noise_std > 0:
             noise = torch.randn_like(logits) * self.noise_std
             logits = logits + noise
 
+        selection_logits = logits + self._load_bias.to(logits.device)
+        if self.feature_adaptive:
+            candidate_slots = min(self.pool_max_experts, self.n_experts)
+            _, candidate_indices = torch.topk(selection_logits, candidate_slots, dim=-1)
+            candidate_rank = torch.arange(candidate_slots, device=h.device).unsqueeze(0)
+            candidate_rank_mask = candidate_rank < candidate_count.unsqueeze(1)
+            candidate_mask = torch.zeros_like(selection_logits)
+            candidate_mask.scatter_(1, candidate_indices, candidate_rank_mask.to(selection_logits.dtype))
+            selection_logits = selection_logits.masked_fill(candidate_mask <= 0, -1e9)
+
+        if self.dynamic_top_k:
+            selection_probs = F.softmax(selection_logits, dim=-1)
+            entropy = -(selection_probs * selection_probs.clamp_min(1e-8).log()).sum(dim=-1)
+            denom = torch.log(candidate_count.to(selection_logits.dtype).clamp_min(2.0))
+            entropy = (entropy / denom).clamp(0.0, 1.0)
+            activation_score = entropy if complexity is None else (0.45 * entropy + 0.55 * complexity)
+            k_float = self.min_top_k + activation_score * (self.max_top_k - self.min_top_k)
+            k_upper = torch.minimum(
+                torch.full_like(candidate_count, self.max_top_k),
+                candidate_count
+            )
+            k_per_sample = torch.ceil(k_float).to(torch.long).clamp(min=self.min_top_k)
+            k_per_sample = torch.minimum(k_per_sample, k_upper)
+        else:
+            k_per_sample = torch.full((B,), self.top_k, device=h.device, dtype=torch.long)
+            k_per_sample = torch.minimum(k_per_sample, candidate_count)
+
         # Top-K selection
-        top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=-1)  # (B, top_k)
+        _, top_k_indices = torch.topk(selection_logits, self.max_top_k, dim=-1)  # (B, top_k)
+        top_k_logits = logits.gather(1, top_k_indices)
+        top_k_rank = torch.arange(self.max_top_k, device=h.device).unsqueeze(0)
+        top_k_mask = top_k_rank < k_per_sample.unsqueeze(1)
 
         # Softmax only over selected experts (sparse softmax)
-        top_k_weights = F.softmax(top_k_logits, dim=-1)  # (B, top_k)
+        top_k_logits = top_k_logits.masked_fill(~top_k_mask, -1e9)
+        top_k_weights = F.softmax(top_k_logits, dim=-1) * top_k_mask.to(logits.dtype)  # (B, top_k)
 
         # Build full sparse weight matrix for convenient indexing
         weights = torch.zeros(B, self.n_experts, device=h.device)  # (B, n_experts)
@@ -309,7 +544,7 @@ class ExpertRouter(nn.Module):
             probs = F.softmax(logits, dim=-1)  # (B, n_experts)
             # f_i: fraction of samples where expert i is in top-k
             mask = torch.zeros_like(logits)
-            mask.scatter_(1, top_k_indices, 1.0)
+            mask.scatter_(1, top_k_indices, top_k_mask.to(logits.dtype))
             f = mask.mean(dim=0)  # (n_experts,)
             # P_i: mean probability for expert i
             P = probs.mean(dim=0)  # (n_experts,)
@@ -319,6 +554,14 @@ class ExpertRouter(nn.Module):
             with torch.no_grad():
                 self._expert_counts += mask.sum(dim=0)
                 self._total_samples += B
+                self._active_expert_total += k_per_sample.float().sum()
+                self._candidate_expert_total += candidate_count.float().sum()
+                if profile is not None:
+                    self._profile_total += profile.detach().sum(dim=0)
+                target = k_per_sample.float().mean() / float(self.n_experts)
+                self._load_bias += self.balance_update_rate * (target - f)
+                self._load_bias -= self._load_bias.mean()
+                self._load_bias.clamp_(min=-self.bias_clamp, max=self.bias_clamp)
         else:
             aux_loss = torch.tensor(0.0, device=h.device)
 
@@ -329,13 +572,36 @@ class ExpertRouter(nn.Module):
         """Return routing distribution statistics for monitoring."""
         if self._total_samples > 0:
             freq = self._expert_counts / self._total_samples
-            return {'expert_freq': freq.cpu().tolist(), 'total_samples': int(self._total_samples.item())}
-        return {'expert_freq': [0.0] * self.n_experts, 'total_samples': 0}
+            avg_profile = self._profile_total / self._total_samples
+            return {
+                'expert_freq': freq.cpu().tolist(),
+                'load_bias': self._load_bias.cpu().tolist(),
+                'avg_active_experts': float((self._active_expert_total / self._total_samples).item()),
+                'avg_candidate_experts': float((self._candidate_expert_total / self._total_samples).item()),
+                'avg_profile': avg_profile.cpu().tolist(),
+                'dynamic_top_k': self.dynamic_top_k,
+                'feature_adaptive': self.feature_adaptive,
+                'total_samples': int(self._total_samples.item())
+            }
+        return {
+            'expert_freq': [0.0] * self.n_experts,
+            'load_bias': [0.0] * self.n_experts,
+            'avg_active_experts': 0.0,
+            'avg_candidate_experts': 0.0,
+            'avg_profile': [0.0] * self.profile_dim,
+            'dynamic_top_k': self.dynamic_top_k,
+            'feature_adaptive': self.feature_adaptive,
+            'total_samples': 0
+        }
 
     def reset_stats(self):
         """Reset running routing statistics."""
         self._expert_counts.zero_()
         self._total_samples.zero_()
+        self._load_bias.zero_()
+        self._active_expert_total.zero_()
+        self._candidate_expert_total.zero_()
+        self._profile_total.zero_()
 
 
 class GlobalTemporalBlock(nn.Module):
@@ -386,7 +652,11 @@ class GlobalTemporalBlock(nn.Module):
         self.d_model = d_model
         self.routing_mode = routing_mode
         self.shared_expert = shared_expert
-        self.n_experts = 3
+        self.use_extended_experts = routing_mode == 'adaptive_plus'
+        self.expert_names = ['FreqMix', 'Attention', 'SwiGLU']
+        if self.use_extended_experts:
+            self.expert_names = self.expert_names + ['Trend', 'SeasonalResidual', 'NoiseResidual', 'Skip']
+        self.n_experts = len(self.expert_names)
 
         # Ensure n_heads divides d_model
         for h in [n_heads, 4, 2, 1]:
@@ -406,7 +676,7 @@ class GlobalTemporalBlock(nn.Module):
         # In adaptive mode, all experts exist but are selectively activated.
         # In static mode, flags control which are created (backward compat).
 
-        if routing_mode == 'adaptive':
+        if routing_mode in {'adaptive', 'adaptive_plus'}:
             # Adaptive: always create all experts
             self.use_freq_mixing = True
             self.use_attention = True
@@ -432,14 +702,37 @@ class GlobalTemporalBlock(nn.Module):
             self.ffn_norm = RMSNorm(d_model)
             self.ffn = SwiGLU(d_model, expand_ratio, dropout)
 
+        if self.use_extended_experts:
+            self.trend_norm = RMSNorm(d_model)
+            self.trend = TrendExtractionBlock(d_model, dropout=dropout)
+            self.seasonal_norm = RMSNorm(d_model)
+            self.seasonal = SeasonalResidualBlock(d_model, dropout=dropout)
+            self.noise_norm = RMSNorm(d_model)
+            self.noise = NoiseResidualBlock(d_model, dropout=dropout)
+
         # --- Router (adaptive mode only) ---
-        if routing_mode == 'adaptive':
+        if routing_mode in {'adaptive', 'adaptive_plus'}:
+            router_top_k = top_k_experts
+            router_balance_coeff = balance_coeff
+            router_max_top_k = min(4, self.n_experts)
+            feature_adaptive_router = False
+            if routing_mode == 'adaptive_plus' and top_k_experts == 2:
+                router_top_k = 'dynamic'
+                router_balance_coeff = min(balance_coeff, 0.005)
+                router_max_top_k = min(4, self.n_experts)
+                feature_adaptive_router = True
             self.router = ExpertRouter(
                 d_model=d_model,
                 n_experts=self.n_experts,
-                top_k=top_k_experts,
+                top_k=router_top_k,
                 noise_std=router_noise_std,
-                balance_coeff=balance_coeff
+                balance_coeff=router_balance_coeff,
+                min_top_k=2,
+                max_top_k=router_max_top_k,
+                feature_adaptive=feature_adaptive_router,
+                expert_prior_strength=0.8,
+                pool_min_experts=4,
+                pool_max_experts=self.n_experts
             )
 
         # Learnable residual scale — starts small so block doesn't disrupt
@@ -471,6 +764,12 @@ class GlobalTemporalBlock(nn.Module):
             return self.attention(self.attn_norm(h))
         elif idx == 2:
             return self.ffn(self.ffn_norm(h))
+        elif idx == 3 and self.use_extended_experts:
+            return self.trend(self.trend_norm(h))
+        elif idx == 4 and self.use_extended_experts:
+            return self.seasonal(self.seasonal_norm(h))
+        elif idx == 5 and self.use_extended_experts:
+            return self.noise(self.noise_norm(h))
         return torch.zeros_like(h)
 
     def _forward_static(self, h):
@@ -532,9 +831,9 @@ class GlobalTemporalBlock(nn.Module):
 
     def get_routing_stats(self):
         """Return routing statistics (adaptive mode only)."""
-        if self.routing_mode == 'adaptive':
+        if self.routing_mode in {'adaptive', 'adaptive_plus'}:
             stats = self.router.get_routing_stats()
-            stats['expert_names'] = self.EXPERT_NAMES
+            stats['expert_names'] = self.expert_names
             return stats
         return None
 
@@ -566,7 +865,7 @@ class GlobalTemporalBlock(nn.Module):
         residual_h = h
 
         # Route through experts
-        if self.routing_mode == 'adaptive':
+        if self.routing_mode in {'adaptive', 'adaptive_plus'}:
             h = self._forward_adaptive(h)
         else:
             h = self._forward_static(h)

@@ -13,6 +13,8 @@ from PipelineTS.nn_model.tcn import TCNModel
 from PipelineTS.nn_model.itransformer import ITransformerModel
 from PipelineTS.nn_model.srs_net import SRSNetModel
 from PipelineTS.nn_model.deepar import DeepARModel
+from PipelineTS.nn_model.modern_ts import *
+from PipelineTS.nn_model.foundation import TiRexFoundationModel, SundialModel, TimeMoEModel
 
 try:
     from PipelineTS.nn_model.chronos import (

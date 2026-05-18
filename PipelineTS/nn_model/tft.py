@@ -1,10 +1,9 @@
 from PipelineTS.nn_model.backbones import TFT
-from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.model_mixins import NNForecastingMixin
+from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
 
 
-class TFTModel(NNForecastingMixin):
+class TFTModel(NNBackboneForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -99,10 +98,29 @@ class TFTModel(NNForecastingMixin):
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
-        self.all_configs['model_configs'] = generate_function_kwargs(
-            TFT,
-            in_features=lags,
-            out_features=lags,
+        self._init_backbone_model(
+            backbone_cls=TFT,
+            lags=lags,
+            quantile=quantile,
+            time_col=time_col,
+            target_col=target_col,
+            verbose=verbose,
+            epochs=epochs,
+            batch_size=batch_size,
+            patience=patience,
+            min_delta=min_delta,
+            lr_scheduler=lr_scheduler,
+            lr_scheduler_patience=lr_scheduler_patience,
+            lr_factor=lr_factor,
+            restore_best_weights=restore_best_weights,
+            loss_type=loss_type,
+            use_ema=use_ema,
+            ema_decay=ema_decay,
+            use_swa=use_swa,
+            swa_start_frac=swa_start_frac,
+            warmup_epochs=warmup_epochs,
+            use_residual_gate=use_residual_gate,
+            model_kwargs=dict(
             hidden_size=hidden_size,
             lstm_layers=lstm_layers,
             n_heads=n_heads,
@@ -116,47 +134,5 @@ class TFTModel(NNForecastingMixin):
             use_gtb=use_gtb,
             gtb_d_model=gtb_d_model,
             routing_mode=routing_mode
+            ),
         )
-
-        self.last_dt = None
-
-        self.all_configs.update(
-            {
-                'lags': lags,
-                'quantile': quantile,
-                'time_col': time_col,
-                'target_col': target_col,
-                'quantile_error': (0, 0),
-                'verbose': verbose,
-                'epochs': epochs,
-                'batch_size': batch_size,
-                'patience': patience,
-                'min_delta': min_delta,
-                'lr_scheduler': lr_scheduler,
-                'lr_scheduler_patience': lr_scheduler_patience,
-                'lr_factor': lr_factor,
-                'restore_best_weights': restore_best_weights,
-                'loss_type': loss_type,
-                'use_ema': use_ema,
-                'ema_decay': ema_decay,
-                'use_swa': use_swa,
-                'swa_start_frac': swa_start_frac,
-                'warmup_epochs': warmup_epochs,
-                'use_residual_gate': use_residual_gate,
-            }
-        )
-
-        self.x = None
-
-        self.model = self._define_model()
-
-    def _define_model(self):
-        """
-        Define the TFT model from PipelineTS backbones.
-
-        Returns
-        -------
-        PipelineTS.nn_model.backbones.TFT
-            The TFT model.
-        """
-        return TFT(**self.all_configs['model_configs'])

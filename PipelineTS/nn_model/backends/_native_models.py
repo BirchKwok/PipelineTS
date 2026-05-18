@@ -3,6 +3,12 @@ import math
 import numpy as np
 
 from PipelineTS.base import ForecastingMixin
+from PipelineTS.nn_model._modern_ts_specs import (
+    MODERN_TS_NATIVE_ATTENTION_KINDS,
+    MODERN_TS_NATIVE_DEFAULTS,
+    MODERN_TS_NATIVE_FEATURE_BANK_KINDS,
+    MODERN_TS_NATIVE_RNN_KINDS,
+)
 from PipelineTS.nn_model.backends import resolve_nn_backend
 from PipelineTS.nn_model.backends._linear_models import _batch_size
 
@@ -21,6 +27,7 @@ _NATIVE_KIND_DEFAULTS = {
     'tft': {'hidden': 128, 'layers': 2},
     'srs_net': {'hidden': 128, 'layers': 2},
     'deepar': {'hidden': 96, 'layers': 3},
+    **MODERN_TS_NATIVE_DEFAULTS,
 }
 
 
@@ -37,7 +44,7 @@ def _flatten_target(y):
 
 
 def _feature_dim(kind, input_dim):
-    if kind in {'tcn', 'patch_rnn', 'nhits'}:
+    if kind in {'tcn', 'patch_rnn', 'nhits'} | MODERN_TS_NATIVE_FEATURE_BANK_KINDS:
         return input_dim * 3
     if kind == 'time2vec':
         return input_dim * 10
@@ -103,12 +110,12 @@ class _BaseNativeNN:
             params[name] = rng.uniform(-scale, scale, (fan_in, fan_out)).astype(np.float32)
             params[name.replace('w', 'b', 1)] = np.zeros((fan_out,), dtype=np.float32)
 
-        if self.kind in {'transformer', 'itransformer', 'gau', 'tft', 'srs_net'}:
+        if self.kind in {'transformer', 'itransformer', 'gau', 'tft', 'srs_net'} | MODERN_TS_NATIVE_ATTENTION_KINDS:
             init_w('w_q', input_dim, self.hidden_size)
             init_w('w_k', input_dim, self.hidden_size)
             init_w('w_v', input_dim, self.hidden_size)
             init_w('w_attn', self.hidden_size, feature_dim)
-        elif self.kind == 'stacking_rnn':
+        elif self.kind in {'stacking_rnn'} | MODERN_TS_NATIVE_RNN_KINDS:
             init_w('w_rnn_x', 1, self.hidden_size)
             init_w('w_rnn_h', self.hidden_size, self.hidden_size)
             init_w('w_rnn_out', self.hidden_size, feature_dim)
@@ -319,7 +326,7 @@ class _BaseNativeNN:
         return d_model, nhead, num_layers, dim_feedforward, output_strategy
 
     def _features(self, xp, params, x_flat, original_x):
-        if self.kind in {'tcn', 'patch_rnn', 'nhits'}:
+        if self.kind in {'tcn', 'patch_rnn', 'nhits'} | MODERN_TS_NATIVE_FEATURE_BANK_KINDS:
             delta = xp.concatenate([xp.zeros_like(x_flat[:, :1]), x_flat[:, 1:] - x_flat[:, :-1]], axis=1)
             rev = x_flat[:, ::-1]
             return xp.concatenate([x_flat, delta, rev], axis=1)
@@ -333,7 +340,7 @@ class _BaseNativeNN:
                 periodic.append(xp.cos(x_flat * freq[i] + phase[i]))
             return xp.concatenate([x_flat] + periodic + [x_flat * x_flat], axis=1)
 
-        if self.kind in {'transformer', 'itransformer', 'gau', 'tft', 'srs_net'}:
+        if self.kind in {'transformer', 'itransformer', 'gau', 'tft', 'srs_net'} | MODERN_TS_NATIVE_ATTENTION_KINDS:
             q = self._linear(xp, x_flat, params, 'w_q')
             k = self._linear(xp, x_flat, params, 'w_k')
             v = self._linear(xp, x_flat, params, 'w_v')
@@ -345,7 +352,7 @@ class _BaseNativeNN:
                 h = v * gate
             return self._linear(xp, h, params, 'w_attn')
 
-        if self.kind in {'stacking_rnn', 'deepar'}:
+        if self.kind in {'stacking_rnn', 'deepar'} | MODERN_TS_NATIVE_RNN_KINDS:
             h = xp.zeros((x_flat.shape[0], self.hidden_size))
             for i in range(x_flat.shape[1]):
                 step = x_flat[:, i:i + 1]

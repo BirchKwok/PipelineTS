@@ -63,5 +63,24 @@ class TestQuantileAcc:
         assert isinstance(acc, float)
 
 
+class TestBusinessScore:
+    def test_prefers_shape_when_mae_ties(self):
+        from PipelineTS.metrics import business_score, mae
+        yt = np.array([10.0, 20.0, 10.0, 20.0])
+        flat = np.array([15.0, 15.0, 15.0, 15.0])
+        shifted_curve = np.array([15.0, 25.0, 15.0, 25.0])
+        assert mae(yt, flat) == mae(yt, shifted_curve)
+        assert business_score(yt, shifted_curve) < business_score(yt, flat)
+
+    def test_resolve_metric_business_aliases(self):
+        from PipelineTS.metrics import business_score, resolve_metric
+        fn, name = resolve_metric("business")
+        assert fn is business_score
+        assert name == "business"
+        fn, name = resolve_metric("curve")
+        assert fn is business_score
+        assert name == "business"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short', '-x'])

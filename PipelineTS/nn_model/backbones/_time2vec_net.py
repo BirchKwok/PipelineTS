@@ -6,9 +6,6 @@ from PipelineTS.nn_model.layers import Time2Vec, MultivariateWrapper, RWKVEncode
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
 from PipelineTS.nn_model.backbones.utils import get_weight_norm
 
-# in case of using MPS
-import os
-os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'
 
 
 class MovingAvgDecompose(nn.Module):

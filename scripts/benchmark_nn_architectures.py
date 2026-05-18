@@ -32,9 +32,16 @@ MODEL_CLASS_NAMES = {
 
 BUILTIN_DATASETS = {
     "synthetic": (None, "date", "value"),
-    "electric": ("LoadElectricDataSets", "date", "value"),
-    "messages": ("LoadMessagesSentDataSets", "date", "ta"),
-    "messages_hour": ("LoadMessagesSentHourDataSets", "date", "ta"),
+    "air_passengers": ("LoadAirPassengers", "Month", "Passengers"),
+    "electric": ("LoadElectric", "date", "value"),
+    "electric_production": ("LoadElectricProduction", "date", "value"),
+    "etth1": ("LoadETTh1", "date", "OT"),
+    "etth2": ("LoadETTh2", "date", "OT"),
+    "ettm1": ("LoadETTm1", "date", "OT"),
+    "ettm2": ("LoadETTm2", "date", "OT"),
+    "inventory": ("LoadInventory", "complete_date", "num1"),
+    "messages": ("LoadMessagesSent", "date", "ta"),
+    "messages_hour": ("LoadMessagesSentHour", "date", "ta"),
     "web_sales": ("LoadWebSales", "date", "type_a"),
     "supermarket": ("LoadSupermarketIncoming", "date", "goods_cnt"),
 }
@@ -96,6 +103,7 @@ EXTRA_VARIANT_CONFIGS = {
 ENHANCEMENT_VARIANT_CONFIGS = {
     "gtb_static": {"use_gtb": True, "routing_mode": "static", "gtb_d_model": 64},
     "gtb_adaptive": {"use_gtb": True, "routing_mode": "adaptive", "gtb_d_model": 64},
+    "gtb_adaptive_plus": {"use_gtb": True, "routing_mode": "adaptive_plus", "gtb_d_model": 64},
     "ema": {"use_ema": True, "ema_decay": 0.999},
     "swa": {"use_swa": True, "swa_start_frac": 0.75},
     "residual_gate": {"use_residual_gate": True},

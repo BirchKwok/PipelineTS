@@ -1,214 +1,246 @@
 # Quick Start Guide
 # 快速入门指南
 
-This guide will walk you through the core workflow of PipelineTS in just a few steps.
-本指南将通过几个简单步骤带你了解 PipelineTS 的核心工作流。
+This guide walks through PipelineTS in order of increasing control, from a single function call to manual pipeline configuration.
+本指南按控制粒度从低到高依次介绍 PipelineTS，从单次函数调用到手动管道配置。
 
 ---
 
-## Step 1: Load Data / 第一步：加载数据
+## Level 0 — One-line forecast (zero config) / 一行预测（零配置）
 
-PipelineTS provides several built-in datasets for quick experimentation.
-PipelineTS 提供了多个内置数据集，方便快速实验。
-
-```python
-from PipelineTS.dataset import LoadElectricDataSets
-import pandas as pd
-
-# Load the Electric Production dataset
-# 加载电力生产数据集
-data = LoadElectricDataSets()
-time_col = 'date'
-target_col = 'value'
-data[time_col] = pd.to_datetime(data[time_col])
-
-print(f"Data shape: {data.shape}")
-print(f"Time range: {data[time_col].min()} ~ {data[time_col].max()}")
-```
-
-You can also load your own data as a pandas DataFrame:
-你也可以加载自己的数据作为 pandas DataFrame：
+The fastest way to get a prediction. Column names are inferred automatically.
+获取预测结果的最快方式。列名自动推断，无需任何配置。
 
 ```python
-data = pd.read_csv('your_data.csv')
-data['date'] = pd.to_datetime(data['date'])
+from PipelineTS import forecast
+
+pred = forecast("sales.csv", n=12)
 ```
 
-**Important**: The time column must be in `datetime64[ns]` format.
-**重要**：时间列必须为 `datetime64[ns]` 格式。
+PipelineTS will automatically / PipelineTS 将自动完成：
+1. Detect the time and target columns / 检测时间列与目标列
+2. Auto-clean the data (deduplicate, fill gaps, clip outliers) / 自动清洗数据（去重、填补缺口、裁剪异常值）
+3. Run AutoML model selection (`preset="fast"` by default) / 运行 AutoML 模型选择（默认 `preset="fast"`）
+4. Return a DataFrame of the next 12 predictions / 返回未来 12 步的预测 DataFrame
+
+```python
+# With prediction intervals and better quality / 带预测区间与更高质量
+pred = forecast("sales.csv", n=12, quantile=0.9, preset="high_quality")
+
+# Accept a DataFrame directly / 直接传入 DataFrame
+pred = forecast(df, n=12)
+
+# Keep the trained model for later use / 保留训练好的模型
+pred, model = forecast(df, n=12, return_model=True)
+model.save("forecaster.pts")
+loaded = type(model).load("forecaster.pts")
+```
 
 ---
 
-## Step 2: Train a Single Model / 第二步：训练单个模型
+## Level 0.5 — Diagnose before you forecast / 预测前先诊断
 
-All models share the same `fit()` / `predict()` interface.
-所有模型共享相同的 `fit()` / `predict()` 接口。
+Before running a forecast, use `diagnose()` to understand your data.
+在运行预测之前，使用 `diagnose()` 了解数据状况。
 
 ```python
-from PipelineTS.ml_model import TorchBoostingForestModel
+from PipelineTS import diagnose
 
-model = TorchBoostingForestModel(
-    time_col=time_col,
-    target_col=target_col,
-    lags=12,           # Use 12 past time steps as features
-                       # 使用过去 12 个时间步作为特征
-    quantile=0.9,      # 90% prediction interval
-                       # 90% 预测区间
+result = diagnose("sales.csv", horizon=12)
+print(result["status"])       # 'READY' / 'WARNING' / 'NOT_READY'
+print(result["reports"]["forecastability"])
+print(result["next_step"])    # Ready-to-run forecast() call / 可直接运行的 forecast() 调用
+```
+
+Use `full=True` for extended reports (seasonality, trend, leakage risk).
+使用 `full=True` 获取扩展报告（季节性、趋势、泄露风险）。
+
+```python
+result = diagnose(df, horizon=12, full=True)
+print(result["reports"]["seasonality"])
+print(result["reports"]["trend"])
+```
+
+---
+
+## Level 1 — AutoForecast (sklearn-style, reusable) / AutoForecast（sklearn 风格，可复用）
+
+`AutoForecast` is a reusable object that wraps the full AutoML pipeline.
+Use it when you need to `fit()` once and `predict()` multiple times, or want access to the leaderboard and strategy.
+`AutoForecast` 是封装了完整 AutoML 管道的可复用对象。
+适用于需要 `fit()` 一次、多次 `predict()` 的场景，或需要查看排行榜和策略详情时。
+
+```python
+from PipelineTS import AutoForecast
+
+model = AutoForecast(
+    horizon=12,
+    preset="medium_quality",  # 'fast' | 'medium_quality' | 'high_quality' | 'best_quality'
+    quantile=0.9,             # 90% prediction intervals / 90% 预测区间
+    time_limit=120,           # 2-minute training budget / 2 分钟训练预算
 )
+model.fit(train_df)
 
-# Train the model
-# 训练模型
-model.fit(data)
+pred = model.predict()        # Predict next 12 steps / 预测未来 12 步
+pred = model.predict(n=24)    # Override horizon / 覆盖预测步数
 
-# Predict the next 10 steps
-# 预测未来 10 个时间步
-result = model.predict(10)
-print(result)
+# Inspect results / 查看结果
+print(model.leader_board_)
+print(model.strategy_)
 ```
 
-The result is a DataFrame containing:
-结果是一个 DataFrame，包含：
-
-- `date`: Predicted timestamps / 预测的时间戳
-- `value`: Point predictions / 点预测值
-- `value_lower`: Lower bound of the prediction interval (when `quantile` is set) / 预测区间下界（设置了 `quantile` 时）
-- `value_upper`: Upper bound of the prediction interval (when `quantile` is set) / 预测区间上界（设置了 `quantile` 时）
-
----
-
-## Step 3: Visualize Results / 第三步：可视化结果
+**With covariates / 带协变量:**
 
 ```python
-from PipelineTS.plot import plot_data_period
-
-plot_data_period(
-    data,
-    result,
-    time_col=time_col,
-    target_col=target_col
+model = AutoForecast(
+    horizon=14,
+    known_covariates=["promotion", "holiday"],   # Values known at prediction time / 预测时已知的列
+    past_covariates=["temperature"],              # Historical context only / 仅提供历史上下文
 )
+model.fit(train_df)
+pred = model.predict(future_covariates=future_df)  # future_df must have n rows / 须含 n 行
+```
+
+**For panel (multi-series) data / 面板（多序列）数据:**
+
+```python
+model = AutoForecast(horizon=12, id_col="store_id")
+model.fit(panel_df)   # panel_df has columns: date, store_id, sales, ... / 含 date, store_id, sales 等列
+pred = model.predict()
+```
+
+**Save and load / 保存与加载:**
+
+```python
+model.save("forecaster.pts")
+loaded = AutoForecast.load("forecaster.pts")
+loaded.predict()
 ```
 
 ---
 
-## Step 4: Use ModelPipeline for Auto Selection / 第四步：使用 ModelPipeline 自动选择模型
+## Level 2 — ModelPipeline (full control) / ModelPipeline（完全控制）
 
-`ModelPipeline` automatically trains multiple models and selects the best one.
-`ModelPipeline` 自动训练多个模型并选出最佳模型。
+`ModelPipeline` gives explicit control over model selection, validation, and configuration.
+`ModelPipeline` 对模型选择、验证和配置提供完全的显式控制。
 
 ```python
 from PipelineTS.pipeline import ModelPipeline
 
+print(ModelPipeline.list_all_available_models())  # see all model names / 查看所有模型名称
+
 pipeline = ModelPipeline(
-    time_col=time_col,
-    target_col=target_col,
-    lags=12,
+    time_col="date",
+    target_col="sales",
+    lags=14,
     quantile=0.9,
-    include_models='ml',  # 'light', 'all', 'nn', 'ml', or a list
-                          # 'light', 'all', 'nn', 'ml', 或模型名称列表
-    cv=3,                 # Cross-validation folds for interval estimation
-                          # 用于区间估计的交叉验证折数
+    include_models=["catboost", "d_linear", "auto_arima"],  # or 'light' | 'ml' | 'nn' | 'all'
+    cv=3,
+    random_state=42,
 )
 
-# Train all models and get leaderboard
-# 训练所有模型并获取排行榜
-leaderboard = pipeline.fit(data)
+leaderboard = pipeline.fit(train_df, valid_data=val_df)
 print(leaderboard)
 
-# Predict using the best model
-# 使用最佳模型进行预测
-result = pipeline.predict(10)
+pred = pipeline.predict(n=14)
+pred = pipeline.predict(n=14, model_name="catboost_0")   # specific model / 指定模型
+
+quantiles = pipeline.predict_quantiles(n=14, levels=[0.5, 0.8, 0.95])
 ```
 
-You can also predict using a specific model:
-你也可以使用指定的模型进行预测：
+**Visualize / 可视化:**
 
 ```python
-result = pipeline.predict(10, model_name='torch_boosting_forest')
+pipeline.plot(n=14, history_tail=90, lang="zh")
+pipeline.plot_leaderboard(lang="zh")
+```
+
+**Per-model configuration / 逐模型配置:**
+
+```python
+from PipelineTS.pipeline import PipelineConfigs
+
+configs = PipelineConfigs([
+    ("d_linear", "d_linear_12", {"pipeline_configs": {"lags": 12}}),
+    ("d_linear", "d_linear_24", {"pipeline_configs": {"lags": 24}}),
+    ("catboost", "cat_deep",    {"init_configs": {"iterations": 300},
+                                 "pipeline_configs": {"differential_n": 1}}),
+])
+pipeline = ModelPipeline(time_col="date", target_col="sales", lags=14, configs=configs)
+pipeline.fit(train_df)
+```
+
+**Save and load / 保存与加载:**
+
+```python
+pipeline.save("pipeline.pts")
+loaded = ModelPipeline.load("pipeline.pts")
 ```
 
 ---
 
-### Use SmartRouter for Intelligent Auto-Selection / 使用 SmartRouter 进行智能自动选择
+## Level 3 — SmartRouter (intelligent AutoML) / SmartRouter（智能 AutoML）
 
-`SmartRouter` is an intelligent routing system that automatically analyzes data characteristics and selects optimal preprocessing, models, lags, and hyperparameters. It also supports weighted ensemble of top models.
-
-`SmartRouter` 是一个智能路由系统，自动分析数据特征并选择最优的预处理、模型、滞后窗口和超参数。它还支持顶级模型的加权集成。
+`SmartRouter` profiles data, selects models, runs optional screening/HPO, and builds an ensemble.
+`SmartRouter` 对数据画像、选择模型、运行可选筛选/HPO 并构建集成。
 
 ```python
 from PipelineTS.pipeline import SmartRouter
 
-# SmartRouter automatically profiles data and makes intelligent choices
-# SmartRouter 自动分析数据并做出智能选择
 router = SmartRouter(
-    time_col=time_col,
-    target_col=target_col,
+    time_col="date",
+    target_col="sales",
     n_predict=12,
-    max_models=5,
-    ensemble_strategy='auto',  # 'auto', 'weighted_avg', or 'none'
+    preset="medium_quality",   # 'fast' | 'medium_quality' | 'high_quality' | 'best_quality'
+    ensemble_strategy="auto",  # 'auto' | 'weighted_avg' | 'none'
     verbose=True,
 )
+router.fit(train_df)
 
-# Fit and automatically select best strategy
-# 拟合并自动选择最佳策略
-router.fit(data)
+pred = router.predict(12)
+pred = router.predict_quantiles(12, levels=[0.8, 0.95])
 
-# Predict using ensemble (if built) or best single model
-# 使用集成（如果已构建）或最佳单模型进行预测
-result = router.predict(12)
-
-# Access the selected strategy details
-# 查看选择的策略详情
+# Inspect what the router decided / 查看路由器的决策
 print(router.strategy)
 print(router.leader_board_)
+print(router.profile_)         # Data characteristics / 数据特征画像
+
+router.update(new_df)          # Incremental update / 增量更新
+router.plot(n=12, lang="zh")
+router.plot_leaderboard()
 ```
-
-**Key Features / 主要特性:**
-
-- **Automatic data profiling**: Detects stationarity, seasonality, trend, noise, autocorrelation, and regime changes
-- **自动数据画像**：检测平稳性、季节性、趋势、噪声、自相关和机制变化
-
-- **Intelligent model scoring**: Scores models based on data length, seasonality strength, trend, noise, autocorrelation, and forecast horizon
-- **智能模型评分**：基于数据长度、季节性强度、趋势、噪声、自相关和预测范围对模型评分
-
-- **Adaptive feature engineering**: Automatically enables adaptive MoE routing for NN models and Prophet lag features when appropriate
-- **自适应特征工程**：自动为 NN 模型启用自适应 MoE 路由，并在适当时启用 Prophet 滞后特征
-
-- **Adaptive hyperparameters**: Auto-adjusts GBDT n_estimators/learning_rate/max_depth and NN routing_mode based on data profile
-- **自适应超参数**：根据数据画像自动调整 GBDT 的 n_estimators/learning_rate/max_depth 和 NN 的 routing_mode
-
-- **Ensemble support**: 'auto' mode builds ensemble when top models are competitive; 'weighted_avg' always builds ensemble
-- **集成支持**：'auto' 模式在顶级模型具有竞争力时构建集成；'weighted_avg' 始终构建集成
 
 ---
 
-## Step 5: Save and Load / 第五步：保存与加载
+## Level 4 — Walk-forward backtesting / 前向回测
+
+Evaluate before deploying.
+在部署前进行评估。
 
 ```python
-from PipelineTS.io import save_model, load_model
+from PipelineTS import backtest
 
-# Save the pipeline or a single model
-# 保存管道或单个模型
-save_model('my_pipeline.zip', pipeline)
+result = backtest("sales.csv", n=12, n_splits=5, metric="smape")
+print(result["summary"])
+# {'mean': 0.082, 'std': 0.011, 'min': 0.071, 'max': 0.097}
 
-# Load it back
-# 重新加载
-loaded_pipeline = load_model('my_pipeline.zip')
-result = loaded_pipeline.predict(10)
+# Sliding window, custom metric / 滑动窗口，自定义指标
+import numpy as np
+result = backtest(
+    df, n=12,
+    metric=lambda y, yhat: np.median(np.abs(y - yhat)),
+    mode="sliding", train_size=200,
+)
 ```
 
 ---
 
 ## Next Steps / 下一步
 
-- Learn about all 24 models: [Model Reference](models.md)
-- 了解所有 24 个模型：[模型参考](models.md)
-
-- Master the pipeline: [Pipeline Usage](pipeline.md)
-- 掌握管道使用：[管道使用](pipeline.md)
-
-- Explore multivariate prediction: [Multivariate Prediction](multivariate.md)
-- 探索多变量预测：[多变量预测](multivariate.md)
-
-- Advanced features: [Advanced Features](advanced.md)
-- 高级功能：[高级功能](advanced.md)
+- **Complete API / 完整 API** → [api_reference.md](api_reference.md)
+- **All models / 所有模型** → [models.md](models.md)
+- **Preprocessing / 数据预处理** → [preprocessing.md](preprocessing.md)
+- **Multivariate & covariates / 多变量与协变量** → [multivariate.md](multivariate.md)
+- **Advanced pipeline tricks / 高级管道用法** → [advanced.md](advanced.md)
+- **Evaluation / 评估** → [evaluation.md](evaluation.md)
+- **Interactive tutorials / 交互式教程** → `tutorials/00_EasyAPI.ipynb` … `tutorials/12_SmartRouter_and_Pipeline.ipynb`

@@ -10,13 +10,17 @@ Welcome to the PipelineTS documentation. This guide covers everything you need t
 
 ### Getting Started / 入门
 
+- **[Zero-Friction API / 零配置 API](api_reference.md#zero-friction-api-pipelinets)**
+  One-line `forecast()`, `diagnose()`, `AutoForecast`, and `backtest()` — no configuration needed.
+  一行完成 `forecast()`、`diagnose()`、`AutoForecast` 和 `backtest()` — 无需配置。
+
 - **[Installation Guide / 安装指南](installation.md)**
   How to install PipelineTS and its dependencies.
   如何安装 PipelineTS 及其依赖项。
 
 - **[Quick Start Guide / 快速入门指南](quickstart.md)**
-  Get up and running in minutes with a simple example.
-  通过简单示例在几分钟内快速上手。
+  Progressive guide from `forecast()` to `ModelPipeline` to `SmartRouter`.
+  从 `forecast()` 到 `ModelPipeline` 到 `SmartRouter` 的逐步指南。
 
 ### Core Guides / 核心指南
 
@@ -61,6 +65,7 @@ For hands-on learning, check out the [tutorials/](../tutorials/) directory which
 
 | # | Tutorial / 教程 | Description / 描述 |
 |---|---|---|
+| 00 | [Zero-Friction API](../tutorials/00_EasyAPI.ipynb) | `load_data`, `infer_*`, `preprocess`, `diagnose`, `forecast`, `AutoForecast`, `backtest` |
 | 01 | [Quick Start Guide](../tutorials/01_QuickStart_Guide.ipynb) | Basic usage and core workflow / 基本用法和核心工作流 |
 | 02 | [All Models Guide](../tutorials/02_All_Models_Guide.ipynb) | Usage of all models including GPU tree models / 所有模型的用法（含 GPU 树模型） |
 | 03 | [Multivariate Prediction](../tutorials/03_Multivariate_Prediction.ipynb) | Multi-input/multi-output forecasting / 多输入/多输出预测 |

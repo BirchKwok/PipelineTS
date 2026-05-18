@@ -32,6 +32,7 @@ from PipelineTS.pipeline.pipeline_models import (
 from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 from PipelineTS.base.base_utils import generate_models_set
+from PipelineTS.nn_model._nn_specs import NN_MODEL_KEYS
 
 
 _UNSET = object()  # sentinel to distinguish "not set" from None
@@ -164,9 +165,7 @@ class ModelPipeline:
         elif include_models == 'all':
             include_models = None
         elif include_models == 'nn':
-            include_models = ['d_linear', 'deepar', 'gau', 'n_beats', 'n_hits', 'n_linear', 'tcn', 'tft',
-                              'patch_rnn', 'stacking_rnn', 'tide', 'time2vec', 'transformer',
-                              'itransformer', 'srs_net']
+            include_models = list(NN_MODEL_KEYS)
         elif include_models == 'ml':
             include_models = ['catboost', 'xgboost', 'random_forest', 'extra_forest',
                               'gc_forest', 'multi_output_model',
@@ -244,6 +243,7 @@ class ModelPipeline:
         self._skipped_models = []
         self._on_model_complete_callback = None
         self._device_info_logged = False
+        self._phase_label = None
 
         self._model_init_kwargs = {}
         self._training_data = None
@@ -863,7 +863,8 @@ class ModelPipeline:
         models = self._initial_models()
         n_models = len(models)
         model_names = [name for name, _ in models]
-        self.logger.info(f"Training {n_models} models: {model_names}")
+        _phase_prefix = f"[{self._phase_label}] " if self._phase_label else ""
+        self.logger.info(f"{_phase_prefix}Training {n_models} models: {model_names}")
         if self.per_model_lags:
             lag_info = ', '.join(f"{m}={l}" for m, l in sorted(self.per_model_lags.items()) if m in model_names)
             if lag_info:

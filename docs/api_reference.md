@@ -6,6 +6,429 @@ PipelineTS 所有公共类和函数的完整参考。
 
 ---
 
+## Zero-Friction API (`PipelineTS`) / 零配置 API
+
+The top-level package exposes a set of simple, one-call functions that handle
+column inference, preprocessing, AutoML routing, and evaluation automatically.
+Import them directly from `PipelineTS`.
+顶层包提供了一组简单的单次调用函数，自动处理列推断、预处理、AutoML 路由和评估。
+直接从 `PipelineTS` 导入即可使用。
+
+```python
+from PipelineTS import (
+    load_data,
+    infer_time_col, infer_target_col, infer_id_col,
+    preprocess,
+    diagnose,
+    AutoForecast,
+    forecast,
+    backtest,
+)
+```
+
+---
+
+### `load_data`
+
+```python
+load_data(
+    data: pd.DataFrame | str | Path,
+    **read_kwargs,
+) -> pd.DataFrame
+```
+
+Load time series data from a file path or return a DataFrame as-is.
+Supports `.csv`, `.tsv`, `.xlsx`/`.xls`, `.parquet`, `.json`.
+Files without an extension are treated as CSV.
+从文件路径加载时间序列数据，或原样返回 DataFrame。
+支持 `.csv`、`.tsv`、`.xlsx`/`.xls`、`.parquet`、`.json`。无扩展名文件视为 CSV。
+
+```python
+df = load_data("sales.csv")
+df = load_data("/data/electric.parquet")
+df = load_data(existing_dataframe)   # returned as-is / 原样返回
+```
+
+---
+
+### `infer_time_col`
+
+```python
+infer_time_col(
+    data: pd.DataFrame,
+    time_col: str | None = None,
+) -> str
+```
+
+Infer or validate the time column. When `time_col=None`, searches by:
+推断或验证时间列。`time_col=None` 时按以下顺序搜索：
+1. Common time-like column names (`date`, `ds`, `timestamp`, `datetime`, …) / 常见时间列名
+2. Columns with `datetime64` dtype / `datetime64` 类型列
+3. Columns whose values parse as dates with ≥ 80 % success / 超过 80% 值可解析为日期的列
+
+```python
+col = infer_time_col(df)              # auto-detect / 自动检测
+col = infer_time_col(df, "ts")        # validate explicit name / 验证指定列名
+```
+
+---
+
+### `infer_target_col`
+
+```python
+infer_target_col(
+    data: pd.DataFrame,
+    target_col: str | None = None,
+    time_col: str | None = None,
+    id_col: str | None = None,
+    exclude: list | str | None = None,
+) -> str
+```
+
+Infer or validate the forecast target column.
+Prefers columns named `y`, `value`, `sales`, `demand`, `revenue`, etc.
+Falls back to the last numeric column when multiple candidates exist.
+推断或验证预测目标列。
+优先选择名为 `y`、`value`、`sales`、`demand`、`revenue` 等的列。
+存在多个候选列时，退而选择最后一个数值列。
+
+```python
+col = infer_target_col(df, time_col="date")
+col = infer_target_col(df, target_col="sales", exclude=["promotion"])
+```
+
+---
+
+### `infer_id_col`
+
+```python
+infer_id_col(
+    data: pd.DataFrame,
+    id_col: str | None = None,
+) -> str | None
+```
+
+Infer or validate the series-ID column for panel (multi-series) data.
+Pass `id_col='auto'` to auto-detect columns named `id`, `series_id`, `store_id`, etc.
+Returns `None` for single-series mode.
+推断或验证面板（多序列）数据的序列 ID 列。
+传入 `id_col='auto'` 可自动检测名为 `id`、`series_id`、`store_id` 等的列。
+单序列模式返回 `None`。
+
+```python
+col = infer_id_col(df, id_col="store_id")   # explicit / 显式指定
+col = infer_id_col(df, id_col="auto")        # auto-detect / 自动检测
+col = infer_id_col(df)                       # returns None / 返回 None
+```
+
+---
+
+### `preprocess`
+
+```python
+preprocess(
+    data: pd.DataFrame | str | Path,
+    time_col: str | None = None,
+    target_col: str | None = None,
+    id_col: str | None = None,
+    freq: str | bool | None = None,
+    fill_missing: bool = True,
+    fill_method: str = "linear",      # 'linear' | 'ffill' | 'bfill' | 'zero'
+    deduplicate: bool = True,
+    clip_outliers: bool | str = "auto",
+    lower_q: float = 0.01,
+    upper_q: float = 0.99,
+    return_info: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]
+```
+
+Clean and standardize a time series DataFrame for forecasting.
+清洗并标准化时间序列 DataFrame，使其适合预测。
+
+**Steps applied (in order) / 处理步骤（按顺序）:**
+1. Column inference — resolves `time_col`, `target_col`, `id_col` / 列推断——解析 `time_col`、`target_col`、`id_col`
+2. Sort & deduplicate — sorts by time, removes duplicate timestamps per series / 排序去重——按时间排序，删除每条序列中重复的时间戳
+3. Frequency resampling (optional) — resamples to a regular grid at `freq` / 频率重采样（可选）——按 `freq` 重采样到规则网格
+4. Missing value filling — fills NaN values in numeric columns / 缺失值填充——填充数值列中的 NaN
+5. Outlier clipping — clips extreme values in `target_col` / 异常值裁剪——裁剪 `target_col` 中的极端值
+
+| Parameter / 参数 | Description / 描述 |
+|---|---|
+| `freq` | Pandas offset string (`'D'`, `'MS'`, `'h'`), `True`/`'auto'` for auto-detect, or `None` to skip / Pandas 频率字符串，`True`/`'auto'` 自动检测，`None` 跳过 |
+| `clip_outliers` | `'auto'` clips only when IQR outliers detected; `True` always clips; `False` never / `'auto'` 仅在检测到 IQR 异常时裁剪；`True` 始终裁剪；`False` 从不裁剪 |
+| `return_info` | Return `(cleaned_df, info_dict)` instead of just the DataFrame / 返回 `(cleaned_df, info_dict)` 而非仅返回 DataFrame |
+
+```python
+clean = preprocess("sales.csv")
+clean, info = preprocess(df, time_col="date", return_info=True)
+clean = preprocess(df, freq="D", clip_outliers=True)
+```
+
+**`info` dict keys / 返回字典键:** `time_col`, `target_col`, `id_col`, `rows`, `freq`,
+`filled_missing`, `clipped_outliers`.
+
+---
+
+### `diagnose`
+
+```python
+diagnose(
+    data: pd.DataFrame | str | Path,
+    time_col: str | None = None,
+    target_col: str | None = None,
+    id_col: str | None = None,
+    horizon: int | None = None,
+    known_covariates: list | str | None = None,
+    past_covariates: list | str | None = None,
+    full: bool = False,
+    **read_kwargs,
+) -> dict
+```
+
+Run a comprehensive readiness diagnostic on a time series dataset.
+Answers: *Is this data ready for forecasting?*
+对时间序列数据集进行全面的就绪性诊断。
+回答：*数据是否已准备好进行预测？*
+
+**Returned dict keys / 返回字典键:**
+
+| Key / 键 | Description / 描述 |
+|---|---|
+| `status` | `'READY'` / `'WARNING'` / `'NOT_READY'` |
+| `rows` / `clean_rows` | Raw and cleaned row count / 原始行数与清洗后行数 |
+| `time_col` / `target_col` / `id_col` | Resolved column names / 已解析的列名 |
+| `freq` | Detected frequency (e.g. `'MS'`) / 检测到的频率 |
+| `horizon` | Effective forecast horizon used / 实际使用的预测步数 |
+| `preprocess` | Dict of preprocessing actions applied / 已执行的预处理操作字典 |
+| `reports` | Sub-reports: `readiness`, `forecastability`, `baseline`, `recommendations` (+ `full=True` 时包含 `panel` 及扩展报告) |
+| `next_step` | Copy-pasteable `forecast()` call / 可直接复制运行的 `forecast()` 调用 |
+
+```python
+result = diagnose("sales.csv", horizon=12)
+print(result["status"])             # 'READY'
+print(result["next_step"])          # forecast(data, n=12, ...)
+print(result["reports"]["forecastability"])
+
+# Extended reports / 扩展报告
+result = diagnose(df, full=True)
+print(result["reports"]["seasonality"])
+print(result["reports"]["trend"])
+```
+
+---
+
+### `AutoForecast`
+
+```python
+AutoForecast(
+    time_col: str | None = None,
+    target_col: str | None = None,
+    horizon: int | None = None,         # also: n_predict
+    quantile: float | None = None,
+    preset: str = "fast",
+    time_limit: float | None = None,
+    id_col: str | None = None,
+    known_covariates: list | str | None = None,
+    past_covariates: list | str | None = None,
+    preprocess_data: bool | dict = True,
+    verbose: bool = False,
+    **router_kwargs,
+)
+```
+
+Scikit-learn–style AutoML forecaster backed by `SmartRouter`.
+Handles column inference, preprocessing, and training in one object.
+基于 `SmartRouter` 的 sklearn 风格 AutoML 预测器。
+在单个对象中完成列推断、预处理和训练。
+
+**Presets / 预设方案:**
+
+| Preset / 预设 | Models / 模型数 | Search / 搜索 | Ensemble / 集成 | Speed / 速度 |
+|---|---|---|---|---|
+| `'fast'` | 3 | basic / 基础 | none / 无 | seconds / 秒级 |
+| `'medium_quality'` | 5 | auto / 自动 | auto / 自动 | ~1 min / 约 1 分钟 |
+| `'high_quality'` | 8 | thorough / 充分 | weighted / 加权 | ~5 min / 约 5 分钟 |
+| `'best_quality'` | 15 | thorough / 充分 | top-5 weighted / 前 5 加权 | ~20 min / 约 20 分钟 |
+
+**Key attributes (available after `fit`) / 关键属性（`fit` 后可用）:**
+
+| Attribute / 属性 | Description / 描述 |
+|---|---|
+| `router_` | Fitted `SmartRouter` instance / 已拟合的 `SmartRouter` 实例 |
+| `inferred_columns_` | Dict with resolved `time_col`, `target_col`, `id_col` / 已解析的列名字典 |
+| `training_data_` | Preprocessed training DataFrame / 已预处理的训练数据 |
+| `leader_board_` | Model ranking table / 模型排行榜 DataFrame |
+| `strategy_` | Routing decision summary / 路由决策摘要 |
+| `best_model_` | Best fitted model object / 最佳已拟合模型对象 |
+
+**Methods / 方法:**
+
+```python
+model = AutoForecast(horizon=12, preset="medium_quality", quantile=0.9)
+
+model.fit(data)                                    # Train / 训练
+model.fit(train_df, valid_data=val_df)             # With explicit validation / 显式验证集
+
+pred = model.predict()                             # Next horizon steps / 预测未来 horizon 步
+pred = model.predict(n=24)                         # Override horizon / 覆盖预测步数
+pred = model.predict(data=new_context)             # Fresh context window / 新上下文窗口
+pred = model.predict(future_covariates=fut_df)     # With future covariates / 带未来协变量
+
+pred = model.fit_predict(data)                     # fit + predict in one call / 一步完成
+
+model.save("forecaster.pts")
+loaded = AutoForecast.load("forecaster.pts")
+```
+
+```python
+# Full example / 完整示例
+from PipelineTS import AutoForecast
+
+model = AutoForecast(
+    time_col="date",
+    target_col="value",
+    horizon=12,
+    preset="high_quality",
+    quantile=0.9,
+    id_col=None,                       # set for panel data / 面板数据时指定
+    known_covariates=["promotion"],    # future-known columns / 未来已知列
+    time_limit=300,                    # 5-minute budget / 5 分钟训练预算
+)
+model.fit(train_df, valid_data=val_df)
+pred = model.predict()
+
+print(model.leader_board_)
+print(model.strategy_)
+model.save("my_model.pts")
+```
+
+---
+
+### `forecast`
+
+```python
+forecast(
+    data: pd.DataFrame | str | Path,
+    n: int | None = None,
+    time_col: str | None = None,
+    target_col: str | None = None,
+    horizon: int | None = None,
+    quantile: float | None = None,
+    preset: str = "fast",
+    time_limit: float | None = None,
+    id_col: str | None = None,
+    known_covariates: list | str | None = None,
+    past_covariates: list | str | None = None,
+    future_covariates: pd.DataFrame | None = None,
+    preprocess_data: bool | dict = True,
+    return_model: bool = False,
+    verbose: bool = False,
+    valid_data: pd.DataFrame | None = None,
+    **router_kwargs,
+) -> pd.DataFrame | tuple[pd.DataFrame, AutoForecast]
+```
+
+One-line AutoML forecast — the simplest entry point.
+Auto-infers columns, preprocesses, trains, and returns predictions.
+一行 AutoML 预测——最简入口。
+自动推断列名、预处理、训练并返回预测结果。
+
+```python
+from PipelineTS import forecast
+
+# Minimal usage / 最简用法
+pred = forecast("sales.csv", n=12)
+
+# With options / 带选项
+pred = forecast(df, n=12, quantile=0.9, preset="high_quality")
+
+# Panel data / 面板数据
+pred = forecast(df, n=12, id_col="store_id")
+
+# With covariates / 带协变量
+pred = forecast(
+    df, n=12,
+    known_covariates=["promotion", "holiday"],
+    future_covariates=future_df,   # DataFrame with n rows / 含 n 行的 DataFrame
+)
+
+# Get the model back for saving / 返回模型以保存
+pred, model = forecast(df, n=12, return_model=True)
+model.save("forecaster.pts")
+```
+
+**Returns / 返回值:** DataFrame with `[time_col, target_col]` and optionally
+`[target_col_lower, target_col_upper]` columns.
+包含 `[time_col, target_col]` 列，设置 `quantile` 时还包含 `[target_col_lower, target_col_upper]`。
+
+---
+
+### `backtest`
+
+```python
+backtest(
+    data: pd.DataFrame | str | Path,
+    n: int | None = None,
+    time_col: str | None = None,
+    target_col: str | None = None,
+    id_col: str | None = None,
+    n_splits: int = 3,
+    test_size: int | None = None,
+    metric: str | callable = "mae",
+    mode: str = "expanding",          # 'expanding' | 'sliding'
+    train_size: int | None = None,
+    preset: str = "fast",
+    time_limit: float | None = None,
+    quantile: float | None = None,
+    known_covariates: list | str | None = None,
+    past_covariates: list | str | None = None,
+    preprocess_data: bool | dict = True,
+    verbose: bool = False,
+    return_backtester: bool = False,
+    **router_kwargs,
+) -> dict
+```
+
+Walk-forward backtesting with AutoML forecasting.
+Simulates how the model would have performed in production.
+基于 AutoML 预测的时间序列前向回测。
+模拟模型在生产环境中的实际表现。
+
+**Metric strings / 指标字符串:** `'mae'`, `'mse'`, `'rmse'`, `'mape'`, `'smape'`, `'wmape'`, `'medae'`
+Or pass any `callable(y_true, y_pred) -> float`.
+或传入任意 `callable(y_true, y_pred) -> float` 自定义指标。
+
+**Returned dict / 返回字典:**
+
+| Key / 键 | Description / 描述 |
+|---|---|
+| `results` | List of per-fold metric values / 各折指标值列表 |
+| `summary` | Dict: `mean`, `std`, `min`, `max` / 统计摘要字典 |
+| `metric` | Metric name / 指标名称 |
+| `time_col` / `target_col` / `id_col` | Resolved column names / 已解析的列名 |
+| `horizon` | Effective test window size / 实际测试窗口大小 |
+| `n_splits` | Number of folds evaluated / 评估折数 |
+| `backtester` | `Backtester` instance (only when `return_backtester=True`) / 仅 `return_backtester=True` 时返回 |
+
+```python
+from PipelineTS import backtest
+
+result = backtest("sales.csv", n=12, n_splits=5)
+print(result["summary"])   # {'mean': ..., 'std': ..., 'min': ..., 'max': ...}
+
+# Sliding window / 滑动窗口
+result = backtest(df, n=12, metric="smape", mode="sliding", train_size=200)
+
+# Custom metric / 自定义指标
+result = backtest(df, n=12, metric=lambda y, yhat: np.median(np.abs(y - yhat)))
+
+# Get per-fold backtester / 获取回测器对象
+result = backtest(df, n=12, return_backtester=True)
+result["backtester"].summary()
+```
+
+---
+
 ## Pipeline / 管道
 
 ### `PipelineTS.pipeline.ModelPipeline`
@@ -194,9 +617,31 @@ All located in `PipelineTS.nn_model`.
 | `ITransformerModel` | `from PipelineTS.nn_model import ITransformerModel` |
 | `SRSNetModel` | `from PipelineTS.nn_model import SRSNetModel` |
 | `DeepARModel` | `from PipelineTS.nn_model import DeepARModel` |
+| `TimeXerModel` | `from PipelineTS.nn_model import TimeXerModel` |
+| `TimeMixerModel` | `from PipelineTS.nn_model import TimeMixerModel` |
+| `TimesNetModel` | `from PipelineTS.nn_model import TimesNetModel` |
+| `PyraformerModel` | `from PipelineTS.nn_model import PyraformerModel` |
+| `ETSformerModel` | `from PipelineTS.nn_model import ETSformerModel` |
+| `LightTSModel` | `from PipelineTS.nn_model import LightTSModel` |
+| `PatchTSTModel` | `from PipelineTS.nn_model import PatchTSTModel` |
+| `TSMixerModel` | `from PipelineTS.nn_model import TSMixerModel` |
+| `NonstationaryTransformerModel` | `from PipelineTS.nn_model import NonstationaryTransformerModel` |
+| `FEDformerModel` | `from PipelineTS.nn_model import FEDformerModel` |
+| `AutoformerModel` | `from PipelineTS.nn_model import AutoformerModel` |
+| `InformerModel` | `from PipelineTS.nn_model import InformerModel` |
+| `ReformerModel` | `from PipelineTS.nn_model import ReformerModel` |
+| `MultiPatchFormerModel` | `from PipelineTS.nn_model import MultiPatchFormerModel` |
+| `WPMixerModel` | `from PipelineTS.nn_model import WPMixerModel` |
+| `TimeFilterModel` | `from PipelineTS.nn_model import TimeFilterModel` |
+| `MSGNetModel` | `from PipelineTS.nn_model import MSGNetModel` |
+| `SegRNNModel` | `from PipelineTS.nn_model import SegRNNModel` |
+| `TiRexModel` | `from PipelineTS.nn_model import TiRexModel` |
 | `Chronos2Model` *(optional)* | `from PipelineTS.nn_model import Chronos2Model` |
 | `Chronos2SynthModel` *(optional)* | `from PipelineTS.nn_model import Chronos2SynthModel` |
 | `Chronos2SmallModel` *(optional)* | `from PipelineTS.nn_model import Chronos2SmallModel` |
+| `TiRexFoundationModel` *(optional)* | `from PipelineTS.nn_model import TiRexFoundationModel` |
+| `SundialModel` *(optional)* | `from PipelineTS.nn_model import SundialModel` |
+| `TimeMoEModel` *(optional)* | `from PipelineTS.nn_model import TimeMoEModel` |
 
 **Common interface / 通用接口:**
 
@@ -221,24 +666,30 @@ model.fit(data, valid_data=None)  # Train / 训练
 model.predict(n, data=None)       # Predict / 预测
 ```
 
-### Chronos-2 Family *(optional dependency / 可选依赖)*
+The modern NN family (`timexer`, `time_mixer`, `timesnet`, `patchtst`, etc.) is implemented through shared layers and a central model spec registry, so public classes remain available without duplicating 19 separate training wrappers.
+现代 NN 模型族（如 `timexer`、`time_mixer`、`timesnet`、`patchtst` 等）通过共享层和统一模型规格注册实现，在保留公开类的同时避免复制 19 份训练包装逻辑。
 
-Zero-shot foundation models wrapping Amazon/AutoGluon Chronos-2 pretrained models.
-零样本基础模型，封装 Amazon/AutoGluon Chronos-2 预训练模型。
+### Foundation Models *(optional dependencies / 可选依赖)*
 
-> Requires: `pip install chronos-forecasting`
+Zero-shot foundation models wrapping Chronos-2, TiRex, Sundial, and Time-MoE pretrained checkpoints.
+零样本基础模型，封装 Chronos-2、TiRex、Sundial 和 Time-MoE 预训练检查点。
+
+> Optional dependencies: `pip install chronos-forecasting`, `pip install tirex-ts`, and `pip install transformers==4.40.1`.
 
 | Class / 类 | Pipeline Key / 管道键名 | HuggingFace Path | Size / 大小 |
 |---|---|---|---|
 | `Chronos2Model` | `chronos_2` | `amazon/chronos-2` | 120M |
 | `Chronos2SynthModel` | `chronos_2_synth` | `autogluon/chronos-2-synth` | 120M |
 | `Chronos2SmallModel` | `chronos_2_small` | `autogluon/chronos-2-small` | 28M |
+| `TiRexFoundationModel` | `tirex_foundation` | `NX-AI/TiRex` | 35M |
+| `SundialModel` | `sundial` | `thuml/sundial-base-128m` | 128M |
+| `TimeMoEModel` | `time_moe` | `Maple728/TimeMoE-50M` | 50M |
 
 `ChronosModel` is a backward-compatible alias for `Chronos2Model`.
 `ChronosModel` 是 `Chronos2Model` 的向后兼容别名。
 
 ```python
-from PipelineTS.nn_model import Chronos2Model, Chronos2SynthModel, Chronos2SmallModel
+from PipelineTS.nn_model import Chronos2Model, Chronos2SmallModel, TiRexFoundationModel, SundialModel, TimeMoEModel
 
 model = Chronos2SmallModel(
     time_col: str,
@@ -252,8 +703,8 @@ model.fit(data, cv=5)                              # Store data + calibrate inte
 model.predict(n, future_covariates=None)            # Zero-shot predict / 零样本预测
 ```
 
-**Features / 特点:** Zero-shot (no training), multi-series (`id_col`), covariates support, conformal intervals.
-**特点：** 零样本（无需训练）、多序列（`id_col`）、协变量支持、共形预测区间。
+**Features / 特点:** Zero-shot (no training), multi-series (`id_col`), Chronos-2 covariates support, conformal intervals.
+**特点：** 零样本（无需训练）、多序列（`id_col`）、Chronos-2 协变量支持、共形预测区间。
 
 ---
 
@@ -375,10 +826,44 @@ model.predict(n, data=None)
 All located in `PipelineTS.statistic_model`.
 全部位于 `PipelineTS.statistic_model`。
 
-| Class / 类 | Import / 导入 |
-|---|---|
-| `ProphetModel` | `from PipelineTS.statistic_model import ProphetModel` |
-| `AutoARIMAModel` | `from PipelineTS.statistic_model import AutoARIMAModel` |
+| Class / 类 | Pipeline key | Import / 导入 |
+|---|---|---|
+| `ProphetModel` | `prophet` | `from PipelineTS.statistic_model import ProphetModel` |
+| `AutoARIMAModel` | `auto_arima` | `from PipelineTS.statistic_model import AutoARIMAModel` |
+| `ThetaModel` | `theta` | `from PipelineTS.statistic_model import ThetaModel` |
+| `ETSModel` | `ets` | `from PipelineTS.statistic_model import ETSModel` |
+| `NaiveModel` | `naive` | `from PipelineTS.statistic_model import NaiveModel` |
+| `SeasonalNaiveModel` | `seasonal_naive` | `from PipelineTS.statistic_model import SeasonalNaiveModel` |
+| `StatisticalEnsembleModel` | `stat_ensemble` | `from PipelineTS.statistic_model import StatisticalEnsembleModel` |
+
+**Lightweight baselines** — `theta`, `ets`, `naive`, `seasonal_naive`, `stat_ensemble`
+are included in `include_models='light'` and SmartRouter's safe portfolio.
+They are dependency-free, train in milliseconds, and are ideal baseline champions.
+
+```python
+from PipelineTS.statistic_model import AutoARIMAModel, ProphetModel
+
+model = AutoARIMAModel(
+    time_col="date",
+    target_col="value",
+    lags=12,
+    quantile=0.9,
+    max_p=5, max_q=5, max_d=2,
+)
+model.fit(data)
+pred = model.predict(12)
+
+model2 = ProphetModel(
+    time_col="date",
+    target_col="value",
+    lags=12,
+    quantile=0.9,
+    known_covariates=["promotion"],
+    past_covariates=["temperature"],
+)
+model2.fit(data)
+pred2 = model2.predict(12)
+```
 
 ---
 
@@ -688,8 +1173,21 @@ explainer.plot_importance(importance_df=None, top_k=20)  # Bar chart / 柱状图
 ```python
 from PipelineTS.io import save_model, load_model
 
-save_model(path: str, model, scaler=None)  # Save model / 保存模型
-load_model(path: str)                       # Load model / 加载模型
+save_model(path: str, model, metadata=None)  # Save model to .pts file
+load_model(path: str, verify_checksum=True)  # Load model from .pts file
+```
+
+Or use the `.save()` / `.load()` methods directly on any fitted object:
+
+```python
+pipeline.save("my_pipeline.pts")
+loaded = ModelPipeline.load("my_pipeline.pts")
+
+router.save("my_router.pts", metadata={"version": "1.0"})
+loaded = SmartRouter.load("my_router.pts")
+
+model.save("forecaster.pts")
+loaded = AutoForecast.load("forecaster.pts")
 ```
 
 ---

@@ -4,6 +4,8 @@ from PipelineTS.statistic_model import *
 from PipelineTS.ml_model import *
 from PipelineTS.nn_model import *
 from PipelineTS.nn_model.backends import is_mlx_available, is_torch_available
+from PipelineTS.nn_model._foundation_specs import FOUNDATION_MODEL_SPECS
+from PipelineTS.nn_model._nn_specs import CORE_NN_MODEL_SPECS
 
 from PipelineTS.base.base_utils import get_model_name_before_initial
 
@@ -45,34 +47,10 @@ def get_all_available_models():
     }
 
     if is_torch_available() or is_mlx_available():
-        models.update({
-            'd_linear': DLinearModel,
-            'n_linear': NLinearModel,
-            'n_beats': NBeatsModel,
-            'n_hits': NHitsModel,
-            'tcn': TCNModel,
-            'tft': TFTModel,
-            'gau': GAUModel,
-            'stacking_rnn': StackingRNNModel,
-            'time2vec': Time2VecModel,
-            'transformer': TransformerModel,
-            'tide': TiDEModel,
-            'patch_rnn': PatchRNNModel,
-            'itransformer': ITransformerModel,
-            'srs_net': SRSNetModel,
-            'deepar': DeepARModel,
-        })
+        models.update({spec.key: globals()[spec.wrapper_class] for spec in CORE_NN_MODEL_SPECS})
+        models.update(MODERN_TS_MODEL_CLASSES)
 
-    # Chronos-2 family is optional — only register if chronos-forecasting is installed
-    try:
-        from PipelineTS.nn_model.chronos import (
-            Chronos2Model, Chronos2SynthModel, Chronos2SmallModel,
-        )
-        models['chronos_2'] = Chronos2Model
-        models['chronos_2_synth'] = Chronos2SynthModel
-        models['chronos_2_small'] = Chronos2SmallModel
-    except ImportError:
-        pass
+    models.update({spec.key: globals()[spec.wrapper_class] for spec in FOUNDATION_MODEL_SPECS})
 
     return frozendict(models)
 

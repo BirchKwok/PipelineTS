@@ -1,10 +1,9 @@
 from PipelineTS.nn_model.backbones import DeepAR
-from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.model_mixins import NNForecastingMixin
+from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
 
 
-class DeepARModel(NNForecastingMixin):
+class DeepARModel(NNBackboneForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -94,10 +93,29 @@ class DeepARModel(NNForecastingMixin):
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
-        self.all_configs['model_configs'] = generate_function_kwargs(
-            DeepAR,
-            in_features=lags,
-            out_features=lags,
+        self._init_backbone_model(
+            backbone_cls=DeepAR,
+            lags=lags,
+            quantile=quantile,
+            time_col=time_col,
+            target_col=target_col,
+            verbose=verbose,
+            epochs=epochs,
+            batch_size=batch_size,
+            patience=patience,
+            min_delta=min_delta,
+            lr_scheduler=lr_scheduler,
+            lr_scheduler_patience=lr_scheduler_patience,
+            lr_factor=lr_factor,
+            restore_best_weights=restore_best_weights,
+            loss_type=loss_type,
+            use_ema=use_ema,
+            ema_decay=ema_decay,
+            use_swa=use_swa,
+            swa_start_frac=swa_start_frac,
+            warmup_epochs=warmup_epochs,
+            use_residual_gate=use_residual_gate,
+            model_kwargs=dict(
             d_model=d_model,
             n_blocks=n_blocks,
             n_rwkv_blocks=n_rwkv_blocks,
@@ -106,47 +124,5 @@ class DeepARModel(NNForecastingMixin):
             learning_rate=learning_rate,
             random_seed=random_state,
             device=self.accelerator,
+            ),
         )
-
-        self.last_dt = None
-
-        self.all_configs.update(
-            {
-                'lags': lags,
-                'quantile': quantile,
-                'time_col': time_col,
-                'target_col': target_col,
-                'quantile_error': (0, 0),
-                'verbose': verbose,
-                'epochs': epochs,
-                'batch_size': batch_size,
-                'patience': patience,
-                'min_delta': min_delta,
-                'lr_scheduler': lr_scheduler,
-                'lr_scheduler_patience': lr_scheduler_patience,
-                'lr_factor': lr_factor,
-                'restore_best_weights': restore_best_weights,
-                'loss_type': loss_type,
-                'use_ema': use_ema,
-                'ema_decay': ema_decay,
-                'use_swa': use_swa,
-                'swa_start_frac': swa_start_frac,
-                'warmup_epochs': warmup_epochs,
-                'use_residual_gate': use_residual_gate,
-            }
-        )
-
-        self.x = None
-
-        self.model = self._define_model()
-
-    def _define_model(self):
-        """
-        Define the DeepAR backbone model.
-
-        Returns
-        -------
-        PipelineTS.nn_model.backbones.DeepAR
-            The DeepAR model.
-        """
-        return DeepAR(**self.all_configs['model_configs'])

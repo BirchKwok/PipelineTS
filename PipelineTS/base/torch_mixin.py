@@ -188,6 +188,8 @@ def detect_available_device(device='auto'):
     elif mps_available and (auto_selector or device == 'mps'):
         device = 'mps'
         mps_use = True
+        import os
+        os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.0')
     elif cpu_available and (auto_selector or device == 'cpu'):
         device = 'cpu'
         cpu_use = True

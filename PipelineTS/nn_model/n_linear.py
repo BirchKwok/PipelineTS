@@ -1,10 +1,9 @@
 from PipelineTS.nn_model.backbones import NLinear
-from spinesUtils.asserts import generate_function_kwargs
 
-from PipelineTS.base.model_mixins import NNForecastingMixin
+from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
 
 
-class NLinearModel(NNForecastingMixin):
+class NLinearModel(NNBackboneForecastingMixin):
     def __init__(
             self,
             time_col,
@@ -82,6 +81,24 @@ class NLinearModel(NNForecastingMixin):
             The loss type for early stopping.
         weight_decay : float, optional, default: 1e-4
             Weight decay for AdamW optimizer.
+        use_gtb : bool, optional, default: False
+            Whether to use Gated Temporal Blocks (GTB).
+        gtb_d_model : int, optional, default: 64
+            The dimension of the model in GTB.
+        routing_mode : str, optional, default: 'static'
+            The routing mode for GTB.
+        use_ema : bool, optional, default: False
+            Whether to use Exponential Moving Average (EMA) of model weights.
+        ema_decay : float, optional, default: 0.999
+            The decay rate for EMA.
+        use_swa : bool, optional, default: False
+            Whether to use Stochastic Weight Averaging (SWA).
+        swa_start_frac : float, optional, default: 0.75
+            The fraction of total epochs to start SWA.
+        warmup_epochs : int, optional, default: 0
+            The number of warmup epochs for learning rate scheduling.
+        use_residual_gate : bool, optional, default: False
+            Whether to use a residual gate in the model.
 
         Attributes
         ----------
@@ -90,10 +107,29 @@ class NLinearModel(NNForecastingMixin):
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)
 
-        self.all_configs['model_configs'] = generate_function_kwargs(
-            NLinear,
-            in_features=lags,
-            out_features=lags,
+        self._init_backbone_model(
+            backbone_cls=NLinear,
+            lags=lags,
+            quantile=quantile,
+            time_col=time_col,
+            target_col=target_col,
+            verbose=verbose,
+            epochs=epochs,
+            batch_size=batch_size,
+            patience=patience,
+            min_delta=min_delta,
+            lr_scheduler=lr_scheduler,
+            lr_scheduler_patience=lr_scheduler_patience,
+            lr_factor=lr_factor,
+            restore_best_weights=restore_best_weights,
+            loss_type=loss_type,
+            use_ema=use_ema,
+            ema_decay=ema_decay,
+            use_swa=use_swa,
+            swa_start_frac=swa_start_frac,
+            warmup_epochs=warmup_epochs,
+            use_residual_gate=use_residual_gate,
+            model_kwargs=dict(
             use_revin=use_revin,
             dropout=dropout,
             loss_fn='huber',
@@ -104,47 +140,5 @@ class NLinearModel(NNForecastingMixin):
             use_gtb=use_gtb,
             gtb_d_model=gtb_d_model,
             routing_mode=routing_mode,
+            ),
         )
-
-        self.last_dt = None
-
-        self.all_configs.update(
-            {
-                'lags': lags,
-                'quantile': quantile,
-                'time_col': time_col,
-                'target_col': target_col,
-                'quantile_error': (0, 0),
-                'verbose': verbose,
-                'epochs': epochs,
-                'batch_size': batch_size,
-                'patience': patience,
-                'min_delta': min_delta,
-                'lr_scheduler': lr_scheduler,
-                'lr_scheduler_patience': lr_scheduler_patience,
-                'lr_factor': lr_factor,
-                'restore_best_weights': restore_best_weights,
-                'loss_type': loss_type,
-                'use_ema': use_ema,
-                'ema_decay': ema_decay,
-                'use_swa': use_swa,
-                'swa_start_frac': swa_start_frac,
-                'warmup_epochs': warmup_epochs,
-                'use_residual_gate': use_residual_gate,
-            }
-        )
-
-        self.x = None
-
-        self.model = self._define_model()
-
-    def _define_model(self):
-        """
-        Define the NLinear backbone model.
-
-        Returns
-        -------
-        PipelineTS.nn_model.backbones.NLinear
-            The NLinear model.
-        """
-        return NLinear(**self.all_configs['model_configs'])
