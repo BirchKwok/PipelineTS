@@ -36,20 +36,14 @@ dependencies = [
     "tabulate>=0.8.9",
     "cloudpickle>=2.2.1",
     "scipy>=1.7.3",
-    "flask>=2.0",
     "apexbase>=1.16.0",
 ]
 
 [project.optional-dependencies]
-openai = ["openai>=1.0"]
-anthropic = ["anthropic>=0.30"]
 torch = ["torch>=1.8.0"]
 mlx = ["mlx>=0.20.0; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 nn = ["torch>=1.8.0", "mlx>=0.20.0; platform_system == 'Darwin' and platform_machine == 'arm64'"]
-all = ["openai>=1.0", "anthropic>=0.30", "torch>=1.8.0", "mlx>=0.20.0; platform_system == 'Darwin' and platform_machine == 'arm64'"]
-
-[project.scripts]
-pipelinets = "PipelineTS.agent.cli:main"
+all = ["torch>=1.8.0", "mlx>=0.20.0; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 
 [project.urls]
 Homepage = "https://github.com/BirchKwok/PipelineTS"
