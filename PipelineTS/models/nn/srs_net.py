@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import SRSNet
+from PipelineTS.models.nn.backbones import SRSNet
 
-from PipelineTS.nn_model._wrapper import MultivariateNNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import MultivariateNNBackboneForecastingMixin
 
 
 class SRSNetModel(MultivariateNNBackboneForecastingMixin):
@@ -111,7 +111,7 @@ class SRSNetModel(MultivariateNNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.SRSNet
+        model : PipelineTS.models.nn.backbones.SRSNet
             The SRSNet model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col,

@@ -5,8 +5,8 @@ import torch.nn.functional as F
 from torch import nn
 
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.nn_model.layers import MultivariateWrapper, GlobalTemporalBlock
-from PipelineTS.nn_model.layers import RWKVEncoder
+from PipelineTS.models.nn.layers import MultivariateWrapper, GlobalTemporalBlock
+from PipelineTS.models.nn.layers import RWKVEncoder
 
 
 class GatedResBlock(nn.Module):

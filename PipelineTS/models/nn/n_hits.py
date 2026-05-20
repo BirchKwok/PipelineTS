@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import NHiTS
+from PipelineTS.models.nn.backbones import NHiTS
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class NHitsModel(NNBackboneForecastingMixin):
@@ -102,7 +102,7 @@ class NHitsModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.NHiTS
+        model : PipelineTS.models.nn.backbones.NHiTS
             The N-HiTS model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

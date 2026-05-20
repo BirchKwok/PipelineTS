@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import TFT
+from PipelineTS.models.nn.backbones import TFT
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class TFTModel(NNBackboneForecastingMixin):
@@ -93,7 +93,7 @@ class TFTModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.TFT
+        model : PipelineTS.models.nn.backbones.TFT
             The TFT model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

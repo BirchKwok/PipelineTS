@@ -3,14 +3,14 @@ import math
 import numpy as np
 
 from PipelineTS.base import ForecastingMixin
-from PipelineTS.nn_model._modern_ts_specs import (
+from PipelineTS.models.nn._modern_ts_specs import (
     MODERN_TS_NATIVE_ATTENTION_KINDS,
     MODERN_TS_NATIVE_DEFAULTS,
     MODERN_TS_NATIVE_FEATURE_BANK_KINDS,
     MODERN_TS_NATIVE_RNN_KINDS,
 )
-from PipelineTS.nn_model.backends import resolve_nn_backend
-from PipelineTS.nn_model.backends._linear_models import _batch_size
+from PipelineTS.models.nn.backends import resolve_nn_backend
+from PipelineTS.models.nn.backends._linear_models import _batch_size
 
 
 _NATIVE_KIND_DEFAULTS = {

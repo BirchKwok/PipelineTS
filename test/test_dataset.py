@@ -44,8 +44,8 @@ class TestRandomEventGenerator:
 
 class TestLoadElectricDataSets:
     def test_load(self):
-        from PipelineTS.dataset import LoadElectric
-        data = LoadElectricProduction()
+        from PipelineTS.datasets import LoadElectric
+        data = LoadElectric()
         assert isinstance(data, pd.DataFrame), "Should return a DataFrame"
         assert len(data) > 0, "Dataset should not be empty"
         assert data.shape[1] >= 2, "Should have at least 2 columns"

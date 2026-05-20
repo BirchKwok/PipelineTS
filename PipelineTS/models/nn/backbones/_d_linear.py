@@ -28,12 +28,12 @@ except ImportError:
 
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
 if torch is not None:
-    from PipelineTS.nn_model.layers import MultivariateWrapper, GlobalTemporalBlock
+    from PipelineTS.models.nn.layers import MultivariateWrapper, GlobalTemporalBlock
 else:
     MultivariateWrapper = None
     GlobalTemporalBlock = None
-from PipelineTS.nn_model.backends import resolve_nn_backend
-from PipelineTS.nn_model.backends._linear_models import MLXLinearModel
+from PipelineTS.models.nn.backends import resolve_nn_backend
+from PipelineTS.models.nn.backends._linear_models import MLXLinearModel
 
 
 class MovingAvgBlock(nn.Module):

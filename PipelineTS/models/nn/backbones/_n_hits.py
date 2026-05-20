@@ -24,7 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.nn_model.layers import MultivariateWrapper, GlobalTemporalBlock
+from PipelineTS.models.nn.layers import MultivariateWrapper, GlobalTemporalBlock
 
 
 class NHiTSBlock(nn.Module):

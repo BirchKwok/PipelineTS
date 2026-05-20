@@ -1,12 +1,12 @@
-from PipelineTS.ml_model.native_tree_models import (
+from PipelineTS.models.ml.native_tree_models import (
     CatBoostModel,
     XGBoostModel,
     RandomForestModel,
     ExtraForestModel,
     gcForestModel,
 )
-from PipelineTS.ml_model.wide_gbrt import WideGBRTModel
-from PipelineTS.ml_model.multi_output_model import (
+from PipelineTS.models.ml.wide_gbrt import WideGBRTModel
+from PipelineTS.models.ml.multi_output_model import (
     MultiOutputRegressorModel,
     MultiStepRegressorModel,
     RegressorChainModel
@@ -18,7 +18,7 @@ TorchBaggingForestModel = RandomForestModel
 DeepForestModel = gcForestModel
 TorchDeepForestModel = gcForestModel
 
-from PipelineTS.ml_model.regressor_wrappers import MultiStepRegressor, MultiOutputRegressor
-from PipelineTS.ml_model.wide_gbrt_preprocessing import GBRTPreprocessing
-from PipelineTS.ml_model.dummy import DummyModel
-from PipelineTS.ml_model.estimator_pipeline import Pipeline
+from PipelineTS.models.ml.regressor_wrappers import MultiStepRegressor, MultiOutputRegressor
+from PipelineTS.models.ml.wide_gbrt_preprocessing import GBRTPreprocessing
+from PipelineTS.models.ml.dummy import DummyModel
+from PipelineTS.models.ml.estimator_pipeline import Pipeline

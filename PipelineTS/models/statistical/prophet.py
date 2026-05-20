@@ -3,7 +3,7 @@ import pandas as pd
 from spinesUtils.preprocessing import gc_collector
 
 from PipelineTS.base.base import StatisticModelMixin, IntervalEstimationMixin
-from PipelineTS.statistic_model._prophet_core import PipelineProphet
+from PipelineTS.models.statistical._prophet_core import PipelineProphet
 from PipelineTS.utils import check_time_col_is_timestamp
 
 

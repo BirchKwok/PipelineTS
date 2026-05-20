@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.nn_model._modern_ts_specs import MODERN_TS_MODEL_SPECS
-from PipelineTS.nn_model.layers import (
+from PipelineTS.models.nn._modern_ts_specs import MODERN_TS_MODEL_SPECS
+from PipelineTS.models.nn.layers import (
     MultivariateWrapper, GlobalTemporalBlock, ModernEncoderBlock,
     ModernMixerBlock, ModernSeriesTokenizer, TemporalProjectionHead,
 )

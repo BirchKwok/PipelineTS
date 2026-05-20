@@ -41,7 +41,12 @@ from .sequence import (
 from .scaling import GaussRankScaler, MultiDimScaler
 from .denoise import moving_average
 try:
-    from PipelineTS.feature_engineering.neural_features import (
+    from PipelineTS.preprocessing.features import (
+        DateExtendFeatures,
+        FourierFeatures,
+        HolidayFeatures,
+        LagFeatureExtractor,
+        TimeSeriesFeatureEngineer,
         TimeSeriesFeatureExtractor,
         TimeSeriesAugmenter,
         GAUDataPreprocessor,

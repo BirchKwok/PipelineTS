@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import TSTransformer
+from PipelineTS.models.nn.backbones import TSTransformer
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class TransformerModel(NNBackboneForecastingMixin):
@@ -97,7 +97,7 @@ class TransformerModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.TSTransformer
+        model : PipelineTS.models.nn.backbones.TSTransformer
             The Transformer model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

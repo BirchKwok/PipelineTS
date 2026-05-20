@@ -1,11 +1,11 @@
 from frozendict import frozendict
 
-from PipelineTS.statistic_model import *
-from PipelineTS.ml_model import *
-from PipelineTS.nn_model import *
-from PipelineTS.nn_model.backends import is_mlx_available, is_torch_available
-from PipelineTS.nn_model._foundation_specs import FOUNDATION_MODEL_SPECS
-from PipelineTS.nn_model._nn_specs import CORE_NN_MODEL_SPECS
+from PipelineTS.models.statistical import *
+from PipelineTS.models.ml import *
+from PipelineTS.models.nn import *
+from PipelineTS.models.nn.backends import is_mlx_available, is_torch_available
+from PipelineTS.models.nn._foundation_specs import FOUNDATION_MODEL_SPECS
+from PipelineTS.models.nn._nn_specs import CORE_NN_MODEL_SPECS
 
 from PipelineTS.base.base_utils import get_model_name_before_initial
 

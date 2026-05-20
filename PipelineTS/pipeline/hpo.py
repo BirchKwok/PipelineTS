@@ -12,8 +12,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from PipelineTS.nn_model._nn_specs import NN_KEYS_BY_CATEGORY
-from PipelineTS.nn_model._foundation_specs import FOUNDATION_MODEL_KEYS
+from PipelineTS.models.nn._nn_specs import NN_KEYS_BY_CATEGORY
+from PipelineTS.models.nn._foundation_specs import FOUNDATION_MODEL_KEYS
 
 
 def _lazy_import_optuna():

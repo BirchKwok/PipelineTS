@@ -32,7 +32,7 @@ from PipelineTS.pipeline.pipeline_models import (
 from PipelineTS.pipeline.pipeline_configs import PipelineConfigs
 from PipelineTS.utils import update_dict_without_conflict, check_time_col_is_timestamp
 from PipelineTS.base.base_utils import generate_models_set
-from PipelineTS.nn_model._nn_specs import NN_MODEL_KEYS
+from PipelineTS.models.nn._nn_specs import NN_MODEL_KEYS
 
 
 _UNSET = object()  # sentinel to distinguish "not set" from None
@@ -1364,7 +1364,7 @@ class ModelPipeline:
         -------
         fig : matplotlib Figure
         """
-        from PipelineTS.plot.ts_plot import plot_forecast
+        from PipelineTS.utils.plot.ts_plot import plot_forecast
         if n is None:
             n = self.lags
         pred = self.predict(n=n, data=data, model_name=model_name)
@@ -1387,7 +1387,7 @@ class ModelPipeline:
         -------
         fig : matplotlib Figure
         """
-        from PipelineTS.plot.ts_plot import plot_leaderboard_detail
+        from PipelineTS.utils.plot.ts_plot import plot_leaderboard_detail
         if self.leader_board_ is None or self.leader_board_.empty:
             raise ValueError("No leaderboard available. Call fit() first.")
         return plot_leaderboard_detail(

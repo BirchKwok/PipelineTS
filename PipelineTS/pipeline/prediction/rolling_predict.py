@@ -37,7 +37,7 @@ class RollingPredictor:
 
     Examples
     --------
-    >>> from PipelineTS.ml_model import TorchBoostingForestModel
+    >>> from PipelineTS.models.ml import TorchBoostingForestModel
     >>> model = TorchBoostingForestModel(time_col='date', target_col='value', lags=12)
     >>> rp = RollingPredictor(model, time_col='date', target_col='value',
     ...                       train_size=100, horizon=10, step=10)

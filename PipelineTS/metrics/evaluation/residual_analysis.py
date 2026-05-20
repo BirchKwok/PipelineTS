@@ -5,11 +5,37 @@ and optional plotting. All computations are vectorized with numpy.
 """
 
 import numpy as np
-import pandas as pd
-from typing import Optional
 
 from PipelineTS.utils.native_stats import acf as native_acf
 from PipelineTS.utils.native_stats import ljung_box
+
+
+def _skew_kurtosis(values: np.ndarray, mean: float) -> tuple[float, float]:
+    """Return pandas-compatible unbiased skewness and excess kurtosis."""
+    n = values.size
+    skewness = np.nan
+    kurtosis = np.nan
+
+    centered = values - mean
+    centered_sq = centered * centered
+    m2 = float(np.sum(centered_sq) / n)
+    if m2 <= np.finfo(np.float64).eps:
+        if n >= 3:
+            skewness = 0.0
+        if n >= 4:
+            kurtosis = 0.0
+        return skewness, kurtosis
+
+    if n >= 3:
+        m3 = float(np.sum(centered_sq * centered) / n)
+        skewness = float(np.sqrt(n * (n - 1)) / (n - 2) * m3 / (m2 ** 1.5))
+
+    if n >= 4:
+        m4 = float(np.sum(centered_sq * centered_sq) / n)
+        g2 = m4 / (m2 * m2) - 3.0
+        kurtosis = float((n - 1) / ((n - 2) * (n - 3)) * ((n + 1) * g2 + 6.0))
+
+    return skewness, kurtosis
 
 
 class ResidualAnalyzer:
@@ -45,16 +71,18 @@ class ResidualAnalyzer:
             'kurtosis', 'mean_abs', 'rmse'.
         """
         r = self.residuals
+        mean = float(np.mean(r))
+        skewness, kurtosis = _skew_kurtosis(r, mean)
         return {
-            'mean': float(np.mean(r)),
+            'mean': mean,
             'std': float(np.std(r, ddof=1)) if len(r) > 1 else 0.0,
             'min': float(np.min(r)),
             'max': float(np.max(r)),
             'median': float(np.median(r)),
-            'skewness': float(pd.Series(r).skew()),
-            'kurtosis': float(pd.Series(r).kurtosis()),
+            'skewness': skewness,
+            'kurtosis': kurtosis,
             'mean_abs': float(np.mean(np.abs(r))),
-            'rmse': float(np.sqrt(np.mean(r ** 2))),
+            'rmse': float(np.sqrt(np.dot(r, r) / r.size)),
         }
 
     def normality_test(self) -> dict:

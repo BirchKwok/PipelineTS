@@ -3,7 +3,7 @@ from typing import Any, Union
 import torch
 from torch import nn
 
-from PipelineTS.nn_model.layers import GAU, PositionalEncoding, MultivariateWrapper, GlobalTemporalBlock
+from PipelineTS.models.nn.layers import GAU, PositionalEncoding, MultivariateWrapper, GlobalTemporalBlock
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
 
 

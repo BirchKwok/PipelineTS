@@ -1,6 +1,6 @@
-from PipelineTS.nn_model import backbones as _backbones
-from PipelineTS.nn_model._modern_ts_specs import MODERN_TS_MODEL_SPECS
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn import backbones as _backbones
+from PipelineTS.models.nn._modern_ts_specs import MODERN_TS_MODEL_SPECS
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class _ModernTSForecastingModel(NNBackboneForecastingMixin):

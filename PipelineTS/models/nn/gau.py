@@ -1,5 +1,5 @@
-from PipelineTS.nn_model.backbones import GAUNet
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn.backbones import GAUNet
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class GAUModel(NNBackboneForecastingMixin):
@@ -93,7 +93,7 @@ class GAUModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.GAUNet
+        model : PipelineTS.models.nn.backbones.GAUNet
             The GAUNet neural network model.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

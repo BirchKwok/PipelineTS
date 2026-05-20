@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import Time2VecNet
+from PipelineTS.models.nn.backbones import Time2VecNet
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class Time2VecModel(NNBackboneForecastingMixin):
@@ -77,7 +77,7 @@ class Time2VecModel(NNBackboneForecastingMixin):
         ----------
         x : None
             Placeholder for input data (not used in this implementation).
-        model : PipelineTS.nn_model.backbones.Time2VecNet
+        model : PipelineTS.models.nn.backbones.Time2VecNet
             The Time2VecNet model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

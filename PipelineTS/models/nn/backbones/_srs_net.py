@@ -19,7 +19,7 @@ import torch
 from torch import nn
 
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.nn_model.layers._srs import RevIN, SRSBlock
+from PipelineTS.models.nn.layers._srs import RevIN, SRSBlock
 
 
 class SRSBackbone(nn.Module):

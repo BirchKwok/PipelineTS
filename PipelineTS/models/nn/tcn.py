@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import TCN
+from PipelineTS.models.nn.backbones import TCN
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class TCNModel(NNBackboneForecastingMixin):
@@ -83,7 +83,7 @@ class TCNModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.TCN
+        model : PipelineTS.models.nn.backbones.TCN
             The TCN model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

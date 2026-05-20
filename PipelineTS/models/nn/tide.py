@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import TiDE
+from PipelineTS.models.nn.backbones import TiDE
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class TiDEModel(NNBackboneForecastingMixin):
@@ -99,7 +99,7 @@ class TiDEModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.TiDE
+        model : PipelineTS.models.nn.backbones.TiDE
             The TiDE model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

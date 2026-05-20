@@ -21,7 +21,7 @@ from spinesUtils.asserts import ParameterTypeAssert, raise_if
 from PipelineTS.pipeline.pipeline import ModelPipeline
 from PipelineTS.pipeline.pipeline_models import get_all_available_models
 from PipelineTS.metrics import resolve_metric
-from PipelineTS.dataset import (
+from PipelineTS.datasets import (
     LoadElectric,
     LoadMessagesSentHour,
     LoadMessagesSent,
@@ -38,7 +38,7 @@ from PipelineTS.preprocessing.time_series_diagnostics import (
     hurst_exponent,
     spectral_entropy,
 )
-from PipelineTS.nn_model._nn_specs import (
+from PipelineTS.models.nn._nn_specs import (
     NN_FOUNDATION_MODEL_KEYS,
     NN_GTB_MODEL_KEYS,
     NN_KEYS_BY_CATEGORY,

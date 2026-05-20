@@ -1,7 +1,7 @@
 from collections import namedtuple
 
-from PipelineTS.nn_model._modern_ts_specs import MODERN_TS_MODEL_KEYS, MODERN_TS_MODEL_SPECS, MODERN_TS_KEYS_BY_CATEGORY
-from PipelineTS.nn_model._foundation_specs import FOUNDATION_MODEL_KEYS
+from PipelineTS.models.nn._modern_ts_specs import MODERN_TS_MODEL_KEYS, MODERN_TS_MODEL_SPECS, MODERN_TS_KEYS_BY_CATEGORY
+from PipelineTS.models.nn._foundation_specs import FOUNDATION_MODEL_KEYS
 
 
 NNModelSpec = namedtuple('NNModelSpec', 'key wrapper_class category family')

@@ -2,7 +2,7 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from PipelineTS.ml_model.wide_gbrt_preprocessing import GBRTPreprocessing
+from PipelineTS.models.ml.wide_gbrt_preprocessing import GBRTPreprocessing
 from sklearn.multioutput import RegressorChain
 from sklearn.ensemble import ExtraTreesRegressor as _DefaultEstimator
 from spinesUtils.asserts import generate_function_kwargs, ParameterValuesAssert
@@ -61,7 +61,7 @@ class WideGBRTModel(GBDTModelMixin, IntervalEstimationMixin, MLForecastingMixin)
         ----------
         estimator : BaseEstimator
             The base estimator for the GBRT model.
-        processor : PipelineTS.ml_model.wide_gbrt_preprocessing.GBRTPreprocessing
+        processor : PipelineTS.models.ml.wide_gbrt_preprocessing.GBRTPreprocessing
             The preprocessor for transforming input data.
         model : sklearn.multioutput.RegressorChain
             The GBRT model wrapped in a regressor chain.

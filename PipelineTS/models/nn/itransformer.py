@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import ITransformer
+from PipelineTS.models.nn.backbones import ITransformer
 
-from PipelineTS.nn_model._wrapper import MultivariateNNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import MultivariateNNBackboneForecastingMixin
 
 
 class ITransformerModel(MultivariateNNBackboneForecastingMixin):
@@ -125,7 +125,7 @@ class ITransformerModel(MultivariateNNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.ITransformer
+        model : PipelineTS.models.nn.backbones.ITransformer
             The ITransformer model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col,

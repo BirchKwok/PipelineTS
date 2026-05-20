@@ -1,13 +1,13 @@
 import numpy as np
 import pandas as pd
 
-from PipelineTS.ml_model.regressor_wrappers import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
+from PipelineTS.models.ml.regressor_wrappers import MultiOutputRegressor as MOR, MultiStepRegressor as MSR
 from sklearn.multioutput import RegressorChain
 from PipelineTS.preprocessing.sequence import split_series, lag_splits
 from sklearn.ensemble import ExtraTreesRegressor as _DefaultEstimator
 from spinesUtils.asserts import generate_function_kwargs, ParameterTypeAssert, ParameterValuesAssert
 from spinesUtils.asserts import raise_if_not
-from PipelineTS.ml_model.estimator_pipeline import Pipeline
+from PipelineTS.models.ml.estimator_pipeline import Pipeline
 
 from PipelineTS.base.base import GBDTModelMixin, IntervalEstimationMixin
 from PipelineTS.base.model_mixins import MLForecastingMixin
@@ -303,7 +303,7 @@ class MultiOutputRegressorModel(_MultiOutputModelMixin):
 
         Attributes
         ----------
-        model : PipelineTS.ml_model.estimator_pipeline.Pipeline
+        model : PipelineTS.models.ml.estimator_pipeline.Pipeline
             The pipeline containing the multi-output regressor model.
         """
         super().__init__(
@@ -322,7 +322,7 @@ class MultiOutputRegressorModel(_MultiOutputModelMixin):
 
         Returns
         -------
-        PipelineTS.ml_model.estimator_pipeline.Pipeline
+        PipelineTS.models.ml.estimator_pipeline.Pipeline
             The pipeline containing the multi-output regressor model.
         """
         return Pipeline([
@@ -360,7 +360,7 @@ class MultiStepRegressorModel(_MultiOutputModelMixin):
 
         Attributes
         ----------
-        model : PipelineTS.ml_model.estimator_pipeline.Pipeline
+        model : PipelineTS.models.ml.estimator_pipeline.Pipeline
             The pipeline containing the multi-step regressor model.
         """
         super().__init__(
@@ -379,7 +379,7 @@ class MultiStepRegressorModel(_MultiOutputModelMixin):
 
         Returns
         -------
-        PipelineTS.ml_model.estimator_pipeline.Pipeline
+        PipelineTS.models.ml.estimator_pipeline.Pipeline
             The pipeline containing the multi-step regressor model.
         """
         return Pipeline([

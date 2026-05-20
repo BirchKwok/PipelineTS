@@ -1,7 +1,7 @@
 from importlib import import_module
 
-from PipelineTS.nn_model._modern_ts_specs import MODERN_TS_MODEL_SPECS
-from PipelineTS.nn_model.backends._native_models import make_native_dispatcher
+from PipelineTS.models.nn._modern_ts_specs import MODERN_TS_MODEL_SPECS
+from PipelineTS.models.nn.backends._native_models import make_native_dispatcher
 
 
 def _missing_model(name, error):

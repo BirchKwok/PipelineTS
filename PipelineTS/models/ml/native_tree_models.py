@@ -15,7 +15,7 @@ import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin, clone
 from sklearn.multioutput import RegressorChain
 
-from PipelineTS.ml_model.gbdt import _DirectGBDTMixin
+from PipelineTS.models.ml.gbdt import _DirectGBDTMixin
 
 
 # ---------------------------------------------------------------------------

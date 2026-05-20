@@ -13,11 +13,11 @@ class Pipeline(ForecastingMixin):
         """
         Demo:
             '''python
-            from PipelineTS.ml_model.estimator_pipeline import Pipeline
+            from PipelineTS.models.ml.estimator_pipeline import Pipeline
             from PipelineTS.preprocessing import split_array
             from PipelineTS.datasets import LoadElectricDataSets
             from sklearn.preprocessing import StandardScaler
-            from PipelineTS.nn_model.backbones import TCN1D
+            from PipelineTS.models.nn.backbones import TCN1D
 
             X_train, X_test, y_train, y_test =  LoadElectricDataSets().split_ds()
 

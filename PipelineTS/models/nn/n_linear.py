@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import NLinear
+from PipelineTS.models.nn.backbones import NLinear
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class NLinearModel(NNBackboneForecastingMixin):
@@ -102,7 +102,7 @@ class NLinearModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.NLinear
+        model : PipelineTS.models.nn.backbones.NLinear
             The NLinear model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

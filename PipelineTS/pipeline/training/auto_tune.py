@@ -38,7 +38,7 @@ class AutoTune:
 
     Examples
     --------
-    >>> from PipelineTS.ml_model import TorchBoostingForestModel
+    >>> from PipelineTS.models.ml import TorchBoostingForestModel
     >>> from PipelineTS.metrics import mae
     >>> tuner = AutoTune(
     ...     model_class=TorchBoostingForestModel,

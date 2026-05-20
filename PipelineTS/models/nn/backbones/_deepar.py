@@ -29,8 +29,8 @@ import torch.nn.functional as F
 from torch import nn
 
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.nn_model.layers import MultivariateWrapper
-from PipelineTS.nn_model.layers import RWKVEncoder
+from PipelineTS.models.nn.layers import MultivariateWrapper
+from PipelineTS.models.nn.layers import RWKVEncoder
 
 
 class GaussianHead(nn.Module):

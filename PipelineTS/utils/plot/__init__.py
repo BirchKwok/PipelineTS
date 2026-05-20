@@ -2,7 +2,7 @@ import pandas as pd
 
 from spinesUtils.asserts import ParameterTypeAssert, raise_if_not
 
-from PipelineTS.plot.ts_plot import (
+from PipelineTS.utils.plot.ts_plot import (
     configure_chinese_font,
     TSPlotter,
     plot_series,
@@ -188,4 +188,4 @@ def plot_single_series(series, time_col, target_col, label=None, date_fmt='%Y-%m
     # Display the plot
     plt.show()
 
-from PipelineTS.plot.basic import plot1d, plot2d
+from PipelineTS.utils.plot.basic import plot1d, plot2d

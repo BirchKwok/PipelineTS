@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import DeepAR
+from PipelineTS.models.nn.backbones import DeepAR
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class DeepARModel(NNBackboneForecastingMixin):
@@ -88,7 +88,7 @@ class DeepARModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.DeepAR
+        model : PipelineTS.models.nn.backbones.DeepAR
             The DeepAR model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

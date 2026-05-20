@@ -1,6 +1,6 @@
-from PipelineTS.statistic_model.auto_arima import AutoARIMAModel
-from PipelineTS.statistic_model.prophet import ProphetModel
-from PipelineTS.statistic_model.baseline import (
+from PipelineTS.models.statistical.auto_arima import AutoARIMAModel
+from PipelineTS.models.statistical.prophet import ProphetModel
+from PipelineTS.models.statistical.baseline import (
     NaiveModel,
     SeasonalNaiveModel,
     ThetaModel,

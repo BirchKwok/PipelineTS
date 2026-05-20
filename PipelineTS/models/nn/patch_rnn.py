@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import PatchRNN
+from PipelineTS.models.nn.backbones import PatchRNN
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class PatchRNNModel(NNBackboneForecastingMixin):
@@ -82,7 +82,7 @@ class PatchRNNModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.PatchRNN
+        model : PipelineTS.models.nn.backbones.PatchRNN
             The PatchRNN model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

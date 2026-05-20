@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import StackingRNN
+from PipelineTS.models.nn.backbones import StackingRNN
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class StackingRNNModel(NNBackboneForecastingMixin):
@@ -79,7 +79,7 @@ class StackingRNNModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.StackingRNN
+        model : PipelineTS.models.nn.backbones.StackingRNN
             The StackingRNN model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

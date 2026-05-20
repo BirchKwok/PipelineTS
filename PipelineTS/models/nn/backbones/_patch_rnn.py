@@ -5,10 +5,10 @@ from spinesUtils.asserts import raise_if_not
 from torch import nn
 
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.nn_model.layers._position_encoder import LearnablePositionalEncoding
-from PipelineTS.nn_model.layers import MultivariateWrapper, GlobalTemporalBlock
-from PipelineTS.nn_model.layers._srs import SRSBlock
-from PipelineTS.nn_model.backbones.utils import get_weight_norm
+from PipelineTS.models.nn.layers._position_encoder import LearnablePositionalEncoding
+from PipelineTS.models.nn.layers import MultivariateWrapper, GlobalTemporalBlock
+from PipelineTS.models.nn.layers._srs import SRSBlock
+from PipelineTS.models.nn.backbones.utils import get_weight_norm
 
 
 class SegmentationBlock(nn.Module):

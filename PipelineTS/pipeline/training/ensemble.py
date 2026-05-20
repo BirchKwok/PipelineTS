@@ -29,7 +29,7 @@ class WeightedEnsemble:
 
     Examples
     --------
-    >>> from PipelineTS.ml_model import TorchBoostingForestModel, TorchBaggingForestModel
+    >>> from PipelineTS.models.ml import TorchBoostingForestModel, TorchBaggingForestModel
     >>> models = [
     ...     ('boosting', TorchBoostingForestModel(time_col='date', target_col='value', lags=12)),
     ...     ('bagging', TorchBaggingForestModel(time_col='date', target_col='value', lags=12)),

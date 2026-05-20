@@ -6,7 +6,7 @@ from spinesUtils.asserts import raise_if_not
 from PipelineTS.utils import check_is_fitted
 from PipelineTS.preprocessing.sequence import split_series, lag_splits
 from PipelineTS.preprocessing.denoise import moving_average
-from PipelineTS.feature_engineering.calendar_features import DateExtendFeatures
+from PipelineTS.preprocessing.features.calendar_features import DateExtendFeatures
 
 
 class GBRTPreprocessing:

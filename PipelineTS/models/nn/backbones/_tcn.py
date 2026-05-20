@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 
 from PipelineTS.base import TorchModelMixin, ForecastingMixin
-from PipelineTS.nn_model.layers import MultivariateWrapper, GlobalTemporalBlock
-from PipelineTS.nn_model.backbones.utils import get_weight_norm
+from PipelineTS.models.nn.layers import MultivariateWrapper, GlobalTemporalBlock
+from PipelineTS.models.nn.backbones.utils import get_weight_norm
 
 
 class Chomp1d(nn.Module):

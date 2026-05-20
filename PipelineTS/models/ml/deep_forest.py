@@ -1,5 +1,5 @@
-from PipelineTS.ml_model.gbdt import _DirectGBDTMixin
-from PipelineTS.ml_model.native_tree_models import gcForestModel
+from PipelineTS.models.ml.gbdt import _DirectGBDTMixin
+from PipelineTS.models.ml.native_tree_models import gcForestModel
 
 
 class DeepForestModel(_DirectGBDTMixin):
@@ -37,7 +37,7 @@ class DeepForestModel(_DirectGBDTMixin):
 
     Examples
     --------
-    >>> from PipelineTS.ml_model import DeepForestModel
+    >>> from PipelineTS.models.ml import DeepForestModel
     >>> model = DeepForestModel(time_col='date', target_col='value', lags=16)
     >>> model.fit(train_data)
     >>> preds = model.predict(n=8)

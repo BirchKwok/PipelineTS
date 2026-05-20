@@ -1,23 +1,23 @@
-from PipelineTS.nn_model.d_linear import DLinearModel
-from PipelineTS.nn_model.n_linear import NLinearModel
-from PipelineTS.nn_model.n_beats import NBeatsModel
-from PipelineTS.nn_model.n_hits import NHitsModel
-from PipelineTS.nn_model.tft import TFTModel
-from PipelineTS.nn_model.gau import GAUModel
-from PipelineTS.nn_model.stacking_rnn import StackingRNNModel
-from PipelineTS.nn_model.time2vec import Time2VecModel
-from PipelineTS.nn_model.transformer import TransformerModel
-from PipelineTS.nn_model.tide import TiDEModel
-from PipelineTS.nn_model.patch_rnn import PatchRNNModel
-from PipelineTS.nn_model.tcn import TCNModel
-from PipelineTS.nn_model.itransformer import ITransformerModel
-from PipelineTS.nn_model.srs_net import SRSNetModel
-from PipelineTS.nn_model.deepar import DeepARModel
-from PipelineTS.nn_model.modern_ts import *
-from PipelineTS.nn_model.foundation import TiRexFoundationModel, SundialModel, TimeMoEModel
+from PipelineTS.models.nn.d_linear import DLinearModel
+from PipelineTS.models.nn.n_linear import NLinearModel
+from PipelineTS.models.nn.n_beats import NBeatsModel
+from PipelineTS.models.nn.n_hits import NHitsModel
+from PipelineTS.models.nn.tft import TFTModel
+from PipelineTS.models.nn.gau import GAUModel
+from PipelineTS.models.nn.stacking_rnn import StackingRNNModel
+from PipelineTS.models.nn.time2vec import Time2VecModel
+from PipelineTS.models.nn.transformer import TransformerModel
+from PipelineTS.models.nn.tide import TiDEModel
+from PipelineTS.models.nn.patch_rnn import PatchRNNModel
+from PipelineTS.models.nn.tcn import TCNModel
+from PipelineTS.models.nn.itransformer import ITransformerModel
+from PipelineTS.models.nn.srs_net import SRSNetModel
+from PipelineTS.models.nn.deepar import DeepARModel
+from PipelineTS.models.nn.modern_ts import *
+from PipelineTS.models.nn.foundation import TiRexFoundationModel, SundialModel, TimeMoEModel
 
 try:
-    from PipelineTS.nn_model.chronos import (
+    from PipelineTS.models.nn.chronos import (
         Chronos2Model, Chronos2SynthModel, Chronos2SmallModel, ChronosModel,
     )
 except ImportError:

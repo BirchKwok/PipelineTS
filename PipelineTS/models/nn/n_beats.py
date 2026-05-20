@@ -1,6 +1,6 @@
-from PipelineTS.nn_model.backbones import NBeats
+from PipelineTS.models.nn.backbones import NBeats
 
-from PipelineTS.nn_model._wrapper import NNBackboneForecastingMixin
+from PipelineTS.models.nn._wrapper import NNBackboneForecastingMixin
 
 
 class NBeatsModel(NNBackboneForecastingMixin):
@@ -105,7 +105,7 @@ class NBeatsModel(NNBackboneForecastingMixin):
 
         Attributes
         ----------
-        model : PipelineTS.nn_model.backbones.NBeats
+        model : PipelineTS.models.nn.backbones.NBeats
             The N-BEATS model from PipelineTS backbones.
         """
         super().__init__(time_col=time_col, target_col=target_col, accelerator=accelerator)

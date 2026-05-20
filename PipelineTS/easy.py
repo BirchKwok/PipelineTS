@@ -1301,7 +1301,7 @@ def backtest(
     verbose : bool, default False
         Print progress during backtesting.
     return_backtester : bool, default False
-        When ``True``, include the :class:`~PipelineTS.evaluation.Backtester`
+        When ``True``, include the :class:`~PipelineTS.metrics.evaluation.Backtester`
         instance in the returned dict under key ``'backtester'``.
     **router_kwargs
         Additional keyword arguments forwarded to SmartRouter.
@@ -1317,7 +1317,7 @@ def backtest(
         - ``time_col``, ``target_col``, ``id_col`` : resolved column names.
         - ``horizon`` : int — effective test window size.
         - ``n_splits`` : int — number of folds evaluated.
-        - ``backtester`` : :class:`~PipelineTS.evaluation.Backtester`
+        - ``backtester`` : :class:`~PipelineTS.metrics.evaluation.Backtester`
           instance (only when *return_backtester* is ``True``).
 
     Examples
@@ -1328,7 +1328,7 @@ def backtest(
     >>> result = backtest(df, n=12, metric='smape', mode='sliding',
     ...                   train_size=200)
     """
-    from PipelineTS.evaluation import Backtester
+    from PipelineTS.metrics.evaluation import Backtester
 
     data = _validate_dataframe(data)
     resolved_time_col = infer_time_col(data, time_col)

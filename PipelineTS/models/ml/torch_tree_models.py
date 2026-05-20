@@ -11,8 +11,8 @@ lag feature engineering, autoregressive multi-step prediction, multi-series
 (id_col) support, covariate support, and conformal prediction intervals.
 """
 
-from PipelineTS.ml_model.gbdt import _DirectGBDTMixin
-from PipelineTS.ml_model.native_tree_models import _XGBoostWrapper
+from PipelineTS.models.ml.gbdt import _DirectGBDTMixin
+from PipelineTS.models.ml.native_tree_models import _XGBoostWrapper
 from sklearn.ensemble import RandomForestRegressor
 
 
@@ -164,7 +164,7 @@ class BaggingForestModel(_DirectGBDTMixin):
 
 
 # Backward compatibility aliases
-from PipelineTS.ml_model.deep_forest import DeepForestModel
+from PipelineTS.models.ml.deep_forest import DeepForestModel
 
 TorchBoostingForestModel = BoostingForestModel
 TorchBaggingForestModel = BaggingForestModel
